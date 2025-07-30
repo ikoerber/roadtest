@@ -65,3 +65,6 @@ config.local.*
 *.raw
 *.net
 *.cir
+
+# Third-party libraries (embedded git repos)
+arduino-CAN/
