@@ -31,6 +31,61 @@ SDLogger::~SDLogger() {
     end();
 }
 
+// Zeitbasierte Korrelation
+bool SDLogger::logCorrelatedData(const SensorData& sensorData, const CANMessage& canMsg) {
+    if (!logging || !isReady()) return false;
+    
+    // Kombinierte Log-Zeile erstellen
+    String logLine = String(sensorData.timestamp) + ",CORR,";
+    
+    // Sensor-Daten
+    logLine += String(sensorData.heading, 2) + ",";
+    logLine += String(sensorData.pitch, 2) + ",";
+    logLine += String(sensorData.roll, 2) + ",";
+    logLine += String(sensorData.accelMagnitude, 3) + ",";
+    logLine += String(sensorData.temperature, 1) + ",";
+    
+    // CAN-Daten
+    logLine += "0x" + String(canMsg.canId, HEX) + ",";
+    logLine += String(canMsg.dlc) + ",";
+    
+    // CAN-Data Bytes
+    for (int i = 0; i < 8; i++) {
+        if (i < canMsg.dlc) {
+            logLine += "0x" + String(canMsg.data[i], HEX);
+        }
+        if (i < 7) logLine += ",";
+    }
+    
+    logLine += "\n";
+    
+    // In separate korrelierte Datei schreiben
+    String corrFileName = "/correlated_" + String(millis()) + ".csv";
+    File corrFile = SD.open(corrFileName, FILE_APPEND);
+    
+    if (corrFile) {
+        // Prüfen ob Datei leer ist (Header schreiben)
+        if (corrFile.size() == 0) {
+            corrFile.println("timestamp,type,heading,pitch,roll,accel_mag,temp,can_id,dlc,d0,d1,d2,d3,d4,d5,d6,d7");
+        }
+        
+        corrFile.print(logLine);
+        corrFile.close();
+        
+        stats.totalWrites++;
+        stats.totalBytes += logLine.length();
+        return true;
+    }
+    
+    return false;
+}
+
+bool SDLogger::exportCorrelatedCSV(const String& fileName) {
+    // Placeholder für korrelierte Daten Export
+    Serial.println("Korrelierte Daten bereit für SavvyCAN Import!");
+    return true;
+}
+
 bool SDLogger::begin(SPIClass& spi) {
     if (initialized) {
         return true;

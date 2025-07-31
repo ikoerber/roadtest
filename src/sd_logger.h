@@ -161,6 +161,10 @@ public:
     bool exportRoadQualityCSV(const String& fileName);
     bool exportEventLogCSV(const String& fileName);
     
+    // Zeitbasierte Synchronisation
+    bool logCorrelatedData(const SensorData& sensorData, const CANMessage& canMsg);
+    bool exportCorrelatedCSV(const String& fileName);
+    
     // Dateisystem-Operationen
     bool listFiles(const String& path = "/");
     bool deleteFile(const String& fileName);

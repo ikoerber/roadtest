@@ -396,7 +396,9 @@ void setup() {
     }
     
     lastUpdate = millis();
-    Serial.println("\nStarte Straßenqualitäts-Messung...\n");
+    Serial.println("\nStarte Straßenqualitäts-Messung...");
+    Serial.println("📊 Zeitbasierte Korrelation: Sensor ↔ CAN aktiviert");
+    Serial.println("📁 Separate Logs: sensor_data.csv, can_log.csv, correlated.csv\n");
 }
 
 void loop() {
@@ -404,12 +406,15 @@ void loop() {
     static unsigned long lastStatusReport = 0;
     static unsigned long lastSensorRead = 0;
     static int canMessageCount = 0;
+    static SensorData lastSensorData = {0};
+    static CANMessage lastCANMessage = {0};
     
     unsigned long currentTime = millis();
     
     // BNO055 Sensor-Daten lesen (alle 100ms)
     if (bnoManager.isReady() && (currentTime - lastSensorRead >= 100)) {
         SensorData sensorData = bnoManager.getCurrentData();
+        lastSensorData = sensorData;  // Für Zeitkorrelation speichern
         
         // Daten auf SD-Karte loggen
         if (sdLogger.isLogging()) {
@@ -434,6 +439,12 @@ void loop() {
                 float curveAngle = bnoManager.getCurveAngle();
                 sdLogger.logCurve(curveAngle, 0);
             }
+            
+            // Zeitkorrelation: Wenn aktuelle CAN-Nachricht vorhanden
+            if (lastCANMessage.timestamp > 0 && 
+                abs((long)(sensorData.timestamp - lastCANMessage.timestamp)) < 1000) {
+                sdLogger.logCorrelatedData(sensorData, lastCANMessage);
+            }
         }
         
         lastSensorRead = currentTime;
@@ -447,10 +458,17 @@ void loop() {
             if (msg.canId != 0) { // Gültige Nachricht empfangen
                 canMessageCount++;
                 totalCANMessages++;
+                lastCANMessage = msg;  // Für Zeitkorrelation speichern
                 
                 // In SDLogger aufzeichnen
                 if (sdLogger.isLogging()) {
                     sdLogger.logCANMessage(msg);
+                    
+                    // Zeitkorrelation: Wenn aktuelle Sensor-Daten vorhanden
+                    if (lastSensorData.timestamp > 0 && 
+                        abs((long)(msg.timestamp - lastSensorData.timestamp)) < 1000) {
+                        sdLogger.logCorrelatedData(lastSensorData, msg);
+                    }
                 }
                 
                 // Detaillierte Ausgabe für die ersten 10 Nachrichten

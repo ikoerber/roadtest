@@ -6,7 +6,8 @@ Integriertes ESP32-S3 Straßenqualitäts-Messsystem mit Hardware-Tests. Kombinie
 - **Adafruit 2472** von Reichelt (BNO055 9-DOF Sensor) 
 - **MicroSD Card Adapter** mit SPI-Schnittstelle
 - **OLED SSD1306 Display** (128x64) für Live-Anzeige
-- DEBO CON Modul mit MCP2515 CAN Interface & MCP2562 Transceiver
+- **DEBO CON Modul mit MCP2515 CAN Interface & MCP2562 Transceiver
+- **Geekstory BN-880 GPS-Modul Mit HMC5883 Kompass
 
 ### Description DEBO CON Modul mit MCP2515 CAN Interface & MCP2562 Transceiver
 
@@ -70,6 +71,28 @@ VCC 3.3V - 5V
 | SO/MISO | GPIO 11   | Master In Slave Out (potentiell problematisch) |
 | SCK     | GPIO 3    | Serial Clock |
 | INT     | GPIO 2    | Interrupt |
+
+### GPS Empfänger: Geekstory BN-880 GPS-Modul Mit HMC5883 Kompass
+Chipsatz: 8.
+Stromversorgung:DC Spannung 2.8V~6.0V,Typisch:3.3V oder 5.0V
+Verbrauch:Capture 50mA@5V
+Empfangsformat: GPS, GLONASS, Galileo, BeiDou, QZSS und SBAS
+Empfangskanal: 72 Suchkanäle
+Empfangsempfindlichkeit: Trace -167dBm , Capture-148dBm
+Positionierungszeit: Kaltstart: avg26s, Warmstart: avg25s, Heißstart: avg3s
+Pegel-Positionierungsgenauigkeit: 2m bei offenem Wind
+Ausgangsfrequenz: 1Hz-10Hz, Standard 1Hz
+Geschwindigkeitsgenauigkeit: 0,1 m/s (ohne Hilfe)
+Beschleunigungsgenauigkeit: 0,1 m/s (ohne Hilfsmittel)
+Dynamische Eigenschaften: Max Höhe: 18000m, Max Geschwindigkeit: 5153m/s, Max Beschleunigung: 4G
+UART-Schnittstelle:UART-Anschluss:TXDA und RXDA
+Unterstützungsrate: 4800bps bis 115200bps, Standard 38400dps
+Größe:28mm x 28mm x 10mm
+Pins des Moduls: SDA, GND, TX, RX, VCC, SCL
+Merkmale:
+GPS Modul,Dual Modul Kompass
+Mit elektronischem Kompass IC HMC5883L
+
 
 ## Software-Funktionen
 
