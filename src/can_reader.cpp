@@ -3,8 +3,8 @@
 
 // Include arduino-CAN Library - Wir nutzen MCP2515 auf ESP32
 #undef ARDUINO_ARCH_ESP32  // ESP32-internen CAN deaktivieren
-#include "../arduino-CAN/src/CANController.h"
-#include "../arduino-CAN/src/MCP2515.h"
+#include "CANController.h"
+#include "MCP2515.h"
 
 // Globale CAN-Reader Instanz
 CANReader canReader;

@@ -1,8 +1,6 @@
 // Copyright (c) Sandeep Mistry. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
-// Aktiviert für ESP32 + MCP2515 Hardware
-
 #ifndef MCP2515_H
 #define MCP2515_H
 
@@ -70,6 +68,6 @@ private:
   long _clockFrequency;
 };
 
-// extern MCP2515Class CAN; // Wird in can_reader.cpp instanziiert
+extern MCP2515Class CAN;
 
 #endif

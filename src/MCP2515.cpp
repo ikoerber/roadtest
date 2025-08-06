@@ -1,8 +1,6 @@
 // Copyright (c) Sandeep Mistry. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
-// Aktiviert für ESP32 + MCP2515 Hardware
-
 #include "MCP2515.h"
 
 #define REG_BFPCTRL                0x0c
@@ -267,13 +265,15 @@ void MCP2515Class::onReceive(void(*callback)(int))
   pinMode(_intPin, INPUT);
 
   if (callback) {
-    // ESP32 SPI.usingInterrupt nicht verfügbar
+    // ESP32 doesn't have SPI.usingInterrupt
+    // SPI.usingInterrupt(digitalPinToInterrupt(_intPin));
     attachInterrupt(digitalPinToInterrupt(_intPin), MCP2515Class::onInterrupt, LOW);
   } else {
     detachInterrupt(digitalPinToInterrupt(_intPin));
-#ifdef SPI_HAS_NOTUSINGINTERRUPT
-    SPI.notUsingInterrupt(digitalPinToInterrupt(_intPin));
-#endif
+    // ESP32 doesn't have SPI.notUsingInterrupt
+    // #ifdef SPI_HAS_NOTUSINGINTERRUPT
+    //   SPI.notUsingInterrupt(digitalPinToInterrupt(_intPin));
+    // #endif
   }
 }
 
@@ -489,7 +489,7 @@ void MCP2515Class::writeRegister(uint8_t address, uint8_t value)
 
 void MCP2515Class::onInterrupt()
 {
-  // Statische Interrupt-Behandlung - TODO: canController globale Instanz
+  CAN.handleInterrupt();
 }
 
-// MCP2515Class CAN; // Wird in can_reader.cpp instanziiert
+MCP2515Class CAN;

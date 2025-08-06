@@ -8,13 +8,17 @@
 #include "can_reader.h"
 #include "road_quality.h"
 
+// Forward declaration für GPS-Daten
+struct GPSData;
+
 // Log-Typen
 enum LogType {
     LOG_TYPE_SENSOR,    // BNO055 Sensor-Daten
     LOG_TYPE_CAN,       // CAN-Bus Nachrichten
     LOG_TYPE_ROAD,      // Straßenqualitäts-Metriken
     LOG_TYPE_EVENT,     // Ereignisse (Schlaglöcher, Kurven)
-    LOG_TYPE_SYSTEM     // System-Status
+    LOG_TYPE_SYSTEM,    // System-Status
+    LOG_TYPE_GPS        // GPS-Daten
 };
 
 // Log-Konfiguration
@@ -24,6 +28,7 @@ struct LogConfig {
     bool enableRoadLog;
     bool enableEventLog;
     bool enableSystemLog;
+    bool enableGPSLog;
     
     uint32_t sensorLogInterval;  // ms
     uint32_t roadLogInterval;    // ms
@@ -83,10 +88,16 @@ private:
     unsigned long lastFlush;
     unsigned long sessionStartTime;
     
-    // Puffer für Performance
+    // Puffer für Performance mit Overflow-Schutz
     static const int BUFFER_SIZE = 512;
+    static const int BUFFER_SAFETY_MARGIN = 32;  // Sicherheitspuffer
     char writeBuffer[BUFFER_SIZE];
     int bufferIndex;
+    
+    // Buffer-Overflow Schutz Funktionen
+    bool safeAppendToBuffer(const char* data, size_t dataLen);
+    bool safeAppendToBuffer(const String& data);
+    size_t getAvailableBufferSpace() const;
     
     // Hilfsfunktionen
     String generateFileName(LogType type);
@@ -123,6 +134,10 @@ public:
     // CAN-Daten loggen
     bool logCANMessage(const CANMessage& msg);
     bool logCANStatistics(uint32_t received, uint32_t errors);
+    
+    // GPS-Daten loggen
+    bool logGPSData(const GPSData& gps);
+    bool logGPSStatus(uint8_t satellites, bool fix, float hdop);
     
     // Straßenqualität loggen
     bool logRoadQuality(float quality, float smoothness, 
@@ -163,7 +178,9 @@ public:
     
     // Zeitbasierte Synchronisation
     bool logCorrelatedData(const SensorData& sensorData, const CANMessage& canMsg);
+    bool logGeolocatedData(const SensorData& sensorData, const GPSData& gpsData);
     bool exportCorrelatedCSV(const String& fileName);
+    bool exportGeolocatedCSV(const String& fileName);
     
     // Dateisystem-Operationen
     bool listFiles(const String& path = "/");
@@ -179,5 +196,6 @@ extern SDLogger sdLogger;
 String formatSensorDataCSV(const SensorData& data);
 String formatCANMessageCSV(const CANMessage& msg);
 String formatRoadMetricsCSV(const RoadMetrics& metrics);
+String formatGPSDataCSV(const GPSData& gps);
 
 #endif // SD_LOGGER_H

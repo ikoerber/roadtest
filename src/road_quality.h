@@ -38,12 +38,12 @@ extern const int ACCEL_BUFFER_SIZE;
 extern float accelBuffer[];
 extern int accelBufferIndex;
 
-// Funktionsdeklarationen
-void updateCurveDetection();
-void updateSurfaceQuality();
-float calculateOverallScore();
-void displayResults();
-void displaySensorData();
-void readCANMessages();
+// Funktionsdeklarationen - nicht mehr benötigt, da in Manager-Klassen implementiert
+// void updateCurveDetection();        // -> BNO055Manager::detectCurve()
+// void updateSurfaceQuality();        // -> BNO055Manager::analyzeVibration() 
+// float calculateOverallScore();      // -> BNO055Manager::calculateRoadQuality()
+// void displayResults();              // -> OLEDManager::showRoadQuality()
+// void displaySensorData();           // -> OLEDManager::showSensorData()
+// void readCANMessages();             // -> CANReader::readMessage()
 
 #endif

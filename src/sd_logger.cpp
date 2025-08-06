@@ -1,5 +1,6 @@
 #include "sd_logger.h"
 #include "road_quality.h"
+#include "gps_manager.h"
 
 // Forward-Deklaration
 float calculateOverallQuality(const RoadMetrics& metrics);
@@ -15,7 +16,7 @@ SDLogger::SDLogger(int cs)
     
     // Standard-Konfiguration
     config = {
-        true, true, true, true, true,  // Alle Logs aktiviert
+        true, true, true, true, true, true,  // Alle Logs aktiviert inkl. GPS
         100,   // Sensor-Log alle 100ms
         1000,  // Road-Log alle 1s
         5000,  // Flush alle 5s
@@ -274,9 +275,64 @@ bool SDLogger::checkSDCard() {
 
 void SDLogger::flushBuffer() {
     if (bufferIndex > 0 && currentLogFile) {
-        currentLogFile.write((const uint8_t*)writeBuffer, bufferIndex);
+        // Sicherheits-Check vor Buffer-Zugriff
+        if (bufferIndex <= BUFFER_SIZE) {
+            currentLogFile.write((const uint8_t*)writeBuffer, bufferIndex);
+        } else {
+            // Kritischer Fehler: Buffer-Overflow erkannt
+            Serial.printf("❌ KRITISCH: Buffer-Overflow erkannt! Index: %d, Max: %d\n", 
+                         bufferIndex, BUFFER_SIZE);
+            stats.errorCount++;
+            
+            // Notfall-Flush nur bis zur sicheren Grenze
+            currentLogFile.write((const uint8_t*)writeBuffer, BUFFER_SIZE - BUFFER_SAFETY_MARGIN);
+        }
         bufferIndex = 0;
     }
+}
+
+bool SDLogger::safeAppendToBuffer(const char* data, size_t dataLen) {
+    if (!data || dataLen == 0) return false;
+    
+    // Prüfe verfügbaren Platz mit Sicherheitspuffer
+    size_t availableSpace = getAvailableBufferSpace();
+    
+    if (dataLen > availableSpace) {
+        // Nicht genug Platz - Buffer leeren und erneut versuchen
+        flushBuffer();
+        availableSpace = getAvailableBufferSpace();
+        
+        // Wenn immer noch nicht genug Platz, Daten kürzen
+        if (dataLen > availableSpace) {
+            Serial.printf("⚠️ Datenzeile zu lang (%zu Bytes), kürze auf %zu\n", 
+                         dataLen, availableSpace);
+            dataLen = availableSpace;
+        }
+    }
+    
+    // Sichere Kopierung
+    memcpy(writeBuffer + bufferIndex, data, dataLen);
+    bufferIndex += dataLen;
+    
+    // Zusätzlicher Sicherheits-Check
+    if (bufferIndex > BUFFER_SIZE) {
+        Serial.println("❌ FATAL: Buffer-Index außerhalb der Grenzen!");
+        bufferIndex = BUFFER_SIZE - BUFFER_SAFETY_MARGIN; // Notfall-Korrektur
+        return false;
+    }
+    
+    return true;
+}
+
+bool SDLogger::safeAppendToBuffer(const String& data) {
+    return safeAppendToBuffer(data.c_str(), data.length());
+}
+
+size_t SDLogger::getAvailableBufferSpace() const {
+    if (bufferIndex >= BUFFER_SIZE - BUFFER_SAFETY_MARGIN) {
+        return 0;
+    }
+    return (BUFFER_SIZE - BUFFER_SAFETY_MARGIN) - bufferIndex;
 }
 
 String SDLogger::formatTimestamp() {
@@ -292,27 +348,36 @@ bool SDLogger::logSensorData(const SensorData& data) {
         return true; // Noch nicht Zeit für nächsten Log
     }
     
-    String logLine = formatTimestamp() + "," +
-                    String(data.heading, 1) + "," +
-                    String(data.pitch, 1) + "," +
-                    String(data.roll, 1) + "," +
-                    String(data.accelX, 3) + "," +
-                    String(data.accelY, 3) + "," +
-                    String(data.accelZ, 3) + "," +
-                    String(data.gyroX, 3) + "," +
-                    String(data.gyroY, 3) + "," +
-                    String(data.gyroZ, 3) + "," +
-                    String(data.temperature, 1) + "," +
-                    String(data.calibration.system) + "," +
-                    String(data.calibration.gyro) + "," +
-                    String(data.calibration.accel) + "," +
-                    String(data.calibration.mag) + "\n";
+    // Sichere Formatierung mit begrenzter Puffergröße
+    char logBuffer[256]; // Maximale Zeilenlänge begrenzt
+    int written = snprintf(logBuffer, sizeof(logBuffer), 
+        "%lu,%.1f,%.1f,%.1f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.1f,%d,%d,%d,%d\n",
+        now - sessionStartTime,
+        data.heading, data.pitch, data.roll,
+        data.accelX, data.accelY, data.accelZ,
+        data.gyroX, data.gyroY, data.gyroZ,
+        data.temperature,
+        data.calibration.system, data.calibration.gyro, 
+        data.calibration.accel, data.calibration.mag);
     
-    if (currentLogFile) {
-        currentLogFile.print(logLine);
+    // Überprüfe auf Truncation
+    if (written >= sizeof(logBuffer)) {
+        Serial.println("⚠️ Sensor-Log-Zeile wurde gekürzt!");
+        stats.errorCount++;
+    }
+    
+    // Verwende sichere Buffer-Append-Funktion
+    bool success = safeAppendToBuffer(logBuffer, strlen(logBuffer));
+    
+    if (success) {
         stats.totalWrites++;
-        stats.totalBytes += logLine.length();
+        stats.totalBytes += strlen(logBuffer);
         lastSensorLog = now;
+        
+        // Auto-Flush bei 80% Buffer-Auslastung
+        if (getAvailableBufferSpace() < BUFFER_SIZE * 0.2) {
+            flushBuffer();
+        }
         return true;
     }
     
@@ -351,28 +416,55 @@ bool SDLogger::logCalibration(const CalibrationData& cal) {
 bool SDLogger::logCANMessage(const CANMessage& msg) {
     if (!logging || !config.enableCANLog) return false;
     
-    // Nutze can_reader's CSV-Funktionalität
-    String logLine = String(msg.timestamp) + "," + 
-                    String(msg.canId, HEX) + "," +
-                    String(msg.extended) + "," +
-                    String(msg.rtr) + "," +
-                    String(msg.dlc);
+    // Sichere CAN-Message-Formatierung mit begrenztem Buffer
+    char logBuffer[128]; // Ausreichend für CAN-Message (max 64 Zeichen + Header)
+    char dataBytes[32] = {0}; // Buffer für Daten-Bytes
     
+    // Formatiere Daten-Bytes sicher
     for (int i = 0; i < 8; i++) {
-        logLine += ",";
-        if (i < msg.dlc) {
-            logLine += String(msg.data[i], HEX);
+        char byteStr[8];
+        if (i < msg.dlc && i >= 0) {
+            snprintf(byteStr, sizeof(byteStr), ",%02X", msg.data[i]);
+        } else {
+            snprintf(byteStr, sizeof(byteStr), ",");
+        }
+        
+        // Sichere String-Verkettung
+        if (strlen(dataBytes) + strlen(byteStr) < sizeof(dataBytes) - 1) {
+            strcat(dataBytes, byteStr);
+        } else {
+            Serial.println("⚠️ CAN-Daten-Buffer-Overflow verhindert!");
+            break;
         }
     }
-    logLine += "\n";
     
-    if (currentLogFile) {
-        currentLogFile.print(logLine);
+    // Formatiere komplette CAN-Message
+    int written = snprintf(logBuffer, sizeof(logBuffer), 
+        "%lu,%lX,%d,%d,%d%s\n",
+        msg.timestamp, msg.canId, msg.extended ? 1 : 0, 
+        msg.rtr ? 1 : 0, msg.dlc, dataBytes);
+    
+    // Überprüfe Truncation
+    if (written >= sizeof(logBuffer)) {
+        Serial.println("⚠️ CAN-Log-Zeile wurde gekürzt!");
+        stats.errorCount++;
+    }
+    
+    // Verwende sichere Buffer-Funktion
+    bool success = safeAppendToBuffer(logBuffer, strlen(logBuffer));
+    
+    if (success) {
         stats.totalWrites++;
-        stats.totalBytes += logLine.length();
+        stats.totalBytes += strlen(logBuffer);
+        
+        // Auto-Flush bei vielen CAN-Messages
+        if (getAvailableBufferSpace() < BUFFER_SIZE * 0.3) {
+            flushBuffer();
+        }
         return true;
     }
     
+    stats.droppedLogs++;
     return false;
 }
 
