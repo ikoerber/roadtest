@@ -13,9 +13,7 @@
 extern const int I2C_SDA;          // GPIO 8  - I2C Data Line
 extern const int I2C_SCL;          // GPIO 9  - I2C Clock Line
 
-// I2C-Geräte-Adressen
-#define BNO055_ADDRESS_A    0x28    // BNO055 mit ADDR -> GND
-#define BNO055_ADDRESS_B    0x29    // BNO055 mit ADDR -> 3.3V
+// I2C-Geräte-Adressen (BNO055_ADDRESS_* bereits in Adafruit_BNO055.h definiert)
 #define OLED_ADDRESS_A      0x3C    // OLED Standard-Adresse
 #define OLED_ADDRESS_B      0x3D    // OLED Alternative-Adresse
 
@@ -60,7 +58,6 @@ extern const int GPS_BAUD_RATE;    // 9600    - GPS Baudrate
 #define OLED_RESET          -1      // OLED Reset Pin (nicht verwendet)
 
 // Sensor-Konfiguration  
-#define ACCEL_BUFFER_SIZE   10      // BNO055 Beschleunigungspuffer
 #define VIBRATION_THRESHOLD 2.0     // Vibrations-Schwellwert (m/s²)
 #define CURVE_THRESHOLD     5.0     // Kurven-Erkennungs-Schwellwert (°)
 

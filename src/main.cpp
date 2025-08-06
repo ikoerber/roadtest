@@ -421,7 +421,27 @@ void testBufferSafety() {
     
     // Ausgabe Statistiken
     Serial.println("\n--- Buffer-Statistiken ---");
-    printBufferStats();
+    
+    // Buffer-Statistiken manuell ausgeben (printBufferStats aus buffer_utils.cpp)
+    Serial.println("=== Buffer Statistics ===");
+    
+    // Memory Pool Stats
+    globalMemoryPool.printStats();
+    
+    // Format Buffer Stats  
+    Serial.printf("Format Buffer: %zu/%zu bytes used (%.1f%%)\n",
+                 formatBuffer.used(), 1024, 
+                 (float)formatBuffer.used() / 1024.0f * 100.0f);
+                 
+    if (formatBuffer.hasOverflowed()) {
+        Serial.println("⚠️ Format Buffer overflow detected!");
+    }
+    
+    // ESP32 Heap Stats
+    Serial.printf("ESP32 Heap: %zu bytes free, %zu largest block\n",
+                 ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+                 
+    Serial.println("========================");
     
     Serial.println("✅ Buffer-Sicherheits-Test abgeschlossen!");
 }
