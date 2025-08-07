@@ -148,6 +148,25 @@ Sensor-Platzierung:
 #define DEBUG_BUTTON_PIN 0      // Test-Taster  
 #define DEBUG_PWM_PIN    4      // Oszilloskop-Ausgang
 
+### Belegung OBD2 OBDII 16-poliger Stecker
+Pin-Karte: 
+1 – Schwarz, 
+2 – Braun, 
+3 – Rot, 
+4 – Orange, 
+5 – Gelb, 
+6 – Grün     // CAN High (J-2284)
+7 – Blau, 
+8 – Lila, 
+9 – Grau, 
+10 – Weiß, 
+11 – Rosa, 
+12 – Hell Grün, 
+13 – Schwarz und Weiß, 
+14 – Braun und Weiß,  // CAN Low (J-2284)
+15 – Rot und Weiß, 
+16 – Grün und Weiß.
+
 // Im Code verwenden:
 digitalWrite(DEBUG_LED_PIN, HIGH);  // Status signalisieren
 ```
