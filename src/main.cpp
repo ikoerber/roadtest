@@ -16,25 +16,7 @@
 #include "hardware_test.h"
 #include "gps_manager.h"
 
-// Pin-Definitionen (zentral definiert in hardware_config.h)
-const int SD_CS_PIN = 4;
-const int I2C_SDA = 8;
-const int I2C_SCL = 9;
-const int SD_MOSI_PIN = 5;
-const int SD_MISO_PIN = 6;
-const int SD_SCK_PIN = 7;
-
-// CAN-Bus Pin-Definitionen
-const int CAN_CS_PIN = 1;
-const int CAN_INT_PIN = 2;
-const int CAN_SCK_PIN = 3;
-const int CAN_MOSI_PIN = 13;
-const int CAN_MISO_PIN = 11;
-
-// GPS-Pins
-const int GPS_RX_PIN = 16;
-const int GPS_TX_PIN = 15;
-const int GPS_BAUD_RATE = 9600;
+// Pin-Definitionen sind nun in hardware_config.cpp zentralisiert
 
 // Hardware-Instanzen
 SPIClass spiSD(HSPI);   // Separate SPI-Instanz für SD-Karte
@@ -600,6 +582,11 @@ void setup() {
     if (gpsManager.begin(GPS_RX_PIN, GPS_TX_PIN, GPS_BAUD_RATE)) {
         gpsAvailable = true;
         Serial.println("✅ GPS-Manager erfolgreich initialisiert");
+        
+        // Interrupt-Modus aktivieren für bessere Performance
+        gpsManager.enableInterruptMode(true);
+        Serial.println("✅ GPS Interrupt-Modus aktiviert - keine Daten werden verpasst!");
+        
         Serial.println("GPS benötigt 15-30 Sekunden für ersten Fix");
         
         // Test-Kommunikation
@@ -689,9 +676,10 @@ void loop() {
         lastSensorRead = currentTime;
     }
     
-    // GPS-Daten aktualisieren (alle 200ms)
+    // GPS-Daten verarbeiten (alle 200ms)
+    // Im Interrupt-Modus verarbeitet update() die gepufferten Daten
     if (gpsAvailable && (currentTime - lastGPSUpdate >= 200)) {
-        gpsManager.update();
+        gpsManager.update();  // Verarbeitet Interrupt-Buffer
         
         if (gpsManager.available()) {
             GPSData gpsData = gpsManager.getCurrentData();

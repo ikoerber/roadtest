@@ -430,8 +430,10 @@ bool SDLogger::logCANMessage(const CANMessage& msg) {
         }
         
         // Sichere String-Verkettung
-        if (strlen(dataBytes) + strlen(byteStr) < sizeof(dataBytes) - 1) {
-            strcat(dataBytes, byteStr);
+        size_t currentLen = strlen(dataBytes);
+        size_t remainingSpace = sizeof(dataBytes) - currentLen - 1;
+        if (strlen(byteStr) < remainingSpace) {
+            strncat(dataBytes, byteStr, remainingSpace);
         } else {
             Serial.println("⚠️ CAN-Daten-Buffer-Overflow verhindert!");
             break;

@@ -296,16 +296,28 @@ void CANReader::dumpRegisters() {
 }
 
 String CANReader::getStatusString() {
-    String status = "CAN-Reader Status:\n";
-    status += "  Initialisiert: " + String(initialized ? "Ja" : "Nein") + "\n";
-    status += "  Nachrichten empfangen: " + String(messageCount) + "\n";
-    status += "  Gesamt-Nachrichten: " + String(totalMessages) + "\n";
-    status += "  Fehler: " + String(errorCount) + "\n";
-    status += "  Logging: " + String(loggingEnabled ? "Aktiv" : "Inaktiv") + "\n";
-    if (loggingEnabled) {
-        status += "  Log-Datei: " + logFileName + "\n";
+    static char statusBuffer[512];
+    
+    int written = snprintf(statusBuffer, sizeof(statusBuffer),
+        "CAN-Reader Status:\n"
+        "  Initialisiert: %s\n"
+        "  Nachrichten empfangen: %lu\n"
+        "  Gesamt-Nachrichten: %lu\n"
+        "  Fehler: %lu\n"
+        "  Logging: %s\n",
+        initialized ? "Ja" : "Nein",
+        (unsigned long)messageCount,
+        (unsigned long)totalMessages,
+        (unsigned long)errorCount,
+        loggingEnabled ? "Aktiv" : "Inaktiv"
+    );
+    
+    if (loggingEnabled && written > 0 && written < (int)sizeof(statusBuffer) - 1) {
+        snprintf(statusBuffer + written, sizeof(statusBuffer) - written,
+                 "  Log-Datei: %s\n", logFileName.c_str());
     }
-    return status;
+    
+    return String(statusBuffer);
 }
 
 void CANReader::onReceive(void(*callback)(int)) {
@@ -320,38 +332,71 @@ void CANReader::onReceive(void(*callback)(int)) {
 
 // Hilfsfunktionen
 String formatCANMessage(const CANMessage& msg) {
-    String result = "";
-    result += "Time: " + String(msg.timestamp) + "ms, ";
-    result += "ID: " + getCANIdString(msg.canId, msg.extended) + ", ";
+    static char msgBuffer[256];
+    char* ptr = msgBuffer;
+    size_t remaining = sizeof(msgBuffer);
     
-    if (msg.extended) result += "EXT, ";
-    if (msg.rtr) result += "RTR, ";
+    // Time und ID
+    int written = snprintf(ptr, remaining, "Time: %lums, ID: %s, ", 
+                          msg.timestamp, getCANIdString(msg.canId, msg.extended).c_str());
+    if (written > 0 && written < (int)remaining) {
+        ptr += written;
+        remaining -= written;
+    }
     
-    result += "DLC: " + String(msg.dlc);
+    // Flags
+    if (msg.extended && remaining > 5) {
+        strncpy(ptr, "EXT, ", remaining);
+        ptr += 5;
+        remaining -= 5;
+    }
+    if (msg.rtr && remaining > 5) {
+        strncpy(ptr, "RTR, ", remaining);
+        ptr += 5;
+        remaining -= 5;
+    }
     
-    if (!msg.rtr && msg.dlc > 0) {
-        result += ", Data: ";
-        for (int i = 0; i < msg.dlc; i++) {
-            String hexByte = String(msg.data[i], HEX);
-            hexByte.toUpperCase();
-            result += hexByte;
-            if (i < msg.dlc - 1) result += " ";
+    // DLC
+    written = snprintf(ptr, remaining, "DLC: %d", msg.dlc);
+    if (written > 0 && written < (int)remaining) {
+        ptr += written;
+        remaining -= written;
+    }
+    
+    // Data bytes
+    if (!msg.rtr && msg.dlc > 0 && remaining > 10) {
+        strncpy(ptr, ", Data: ", remaining);
+        ptr += 8;
+        remaining -= 8;
+        
+        for (int i = 0; i < msg.dlc && remaining > 3; i++) {
+            written = snprintf(ptr, remaining, "%02X", msg.data[i]);
+            if (written > 0 && written < (int)remaining) {
+                ptr += written;
+                remaining -= written;
+                
+                if (i < msg.dlc - 1 && remaining > 1) {
+                    *ptr++ = ' ';
+                    remaining--;
+                }
+            }
         }
     }
     
-    return result;
+    *ptr = '\0';
+    return String(msgBuffer);
 }
 
 String getCANIdString(long id, bool extended) {
+    static char idBuffer[32];
+    
     if (extended) {
-        String hexId = String(id, HEX);
-        hexId.toUpperCase();
-        return "0x" + hexId + " (29-bit)";
+        snprintf(idBuffer, sizeof(idBuffer), "0x%lX (29-bit)", id);
     } else {
-        String hexId = String(id, HEX);
-        hexId.toUpperCase();
-        return "0x" + hexId + " (11-bit)";
+        snprintf(idBuffer, sizeof(idBuffer), "0x%lX (11-bit)", id);
     }
+    
+    return String(idBuffer);
 }
 
 void printCANMessage(const CANMessage& msg) {

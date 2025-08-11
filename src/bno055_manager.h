@@ -4,6 +4,7 @@
 #include <Arduino.h>
 #include <Adafruit_BNO055.h>
 #include <utility/imumaths.h>
+#include <Preferences.h>
 
 // Kalibrierungs-Datenstruktur
 struct CalibrationData {
@@ -76,6 +77,7 @@ private:
     // Kalibrierungs-Management
     bool calibrationSaved;
     adafruit_bno055_offsets_t calibrationOffsets;
+    Preferences preferences;  // NVS für persistente Speicherung
     
     // Daten-Puffer für Analyse
     static const int BUFFER_SIZE = 100;
@@ -109,6 +111,7 @@ public:
     CalibrationData getCalibration();
     bool saveCalibration();
     bool loadCalibration();
+    bool clearCalibration();  // Löscht gespeicherte Kalibrierung aus NVS
     void getCalibrationOffsets(adafruit_bno055_offsets_t* offsets);
     void setCalibrationOffsets(const adafruit_bno055_offsets_t* offsets);
     String getCalibrationInstructions();

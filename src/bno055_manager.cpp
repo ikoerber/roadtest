@@ -21,8 +21,13 @@ bool BNO055Manager::begin() {
         return true;
     }
     
-    // Sensor-Instanz erstellen
+    // Sensor-Instanz erstellen mit Null-Check
     sensor = new Adafruit_BNO055(55, i2cAddress);
+    
+    if (!sensor) {
+        Serial.println("FEHLER: Speicherallokation für BNO055 fehlgeschlagen!");
+        return false;
+    }
     
     if (!sensor->begin()) {
         Serial.printf("BNO055 nicht gefunden auf Adresse 0x%02X\n", i2cAddress);
@@ -96,26 +101,86 @@ CalibrationData BNO055Manager::getCalibration() {
 bool BNO055Manager::saveCalibration() {
     if (!initialized) return false;
     
-    // TODO: Implementiere NVS-Speicherung für ESP32
-    // Vorerst nur in RAM speichern
+    // Kalibrierungsdaten vom Sensor holen
     sensor->getSensorOffsets(calibrationOffsets);
-    calibrationSaved = true;
     
-    Serial.println("Kalibrierung gespeichert (RAM)");
+    // NVS öffnen
+    preferences.begin("bno055_cal", false);  // false = Read/Write-Modus
+    
+    // Kalibrierungsdaten speichern
+    preferences.putBytes("offsets", &calibrationOffsets, sizeof(calibrationOffsets));
+    
+    // Kalibrierungsstatus speichern
+    CalibrationData cal = getCalibration();
+    preferences.putUChar("cal_sys", cal.system);
+    preferences.putUChar("cal_gyro", cal.gyro);
+    preferences.putUChar("cal_accel", cal.accel);
+    preferences.putUChar("cal_mag", cal.mag);
+    
+    // Zeitstempel speichern
+    preferences.putULong("timestamp", millis());
+    
+    preferences.end();
+    
+    calibrationSaved = true;
+    Serial.println("✅ Kalibrierung in NVS gespeichert!");
+    Serial.printf("   System=%d, Gyro=%d, Accel=%d, Mag=%d\n", 
+                  cal.system, cal.gyro, cal.accel, cal.mag);
+    
     return true;
 }
 
 bool BNO055Manager::loadCalibration() {
     if (!initialized) return false;
     
-    // TODO: Implementiere NVS-Laden für ESP32
-    if (calibrationSaved) {
-        sensor->setSensorOffsets(calibrationOffsets);
-        Serial.println("Kalibrierung geladen (RAM)");
-        return true;
+    // NVS öffnen
+    preferences.begin("bno055_cal", true);  // true = Read-Only-Modus
+    
+    // Prüfen ob Kalibrierungsdaten vorhanden
+    size_t offsetsLen = preferences.getBytesLength("offsets");
+    if (offsetsLen != sizeof(calibrationOffsets)) {
+        preferences.end();
+        Serial.println("⚠️ Keine gültigen Kalibrierungsdaten in NVS gefunden");
+        return false;
     }
     
-    return false;
+    // Kalibrierungsdaten laden
+    preferences.getBytes("offsets", &calibrationOffsets, sizeof(calibrationOffsets));
+    
+    // Kalibrierungsstatus laden
+    uint8_t savedSys = preferences.getUChar("cal_sys", 0);
+    uint8_t savedGyro = preferences.getUChar("cal_gyro", 0);
+    uint8_t savedAccel = preferences.getUChar("cal_accel", 0);
+    uint8_t savedMag = preferences.getUChar("cal_mag", 0);
+    unsigned long savedTime = preferences.getULong("timestamp", 0);
+    
+    preferences.end();
+    
+    // Kalibrierungsdaten auf Sensor anwenden
+    sensor->setSensorOffsets(calibrationOffsets);
+    
+    // Alter der Kalibrierung berechnen
+    unsigned long ageMinutes = (millis() - savedTime) / 60000;
+    
+    calibrationSaved = true;
+    Serial.println("✅ Kalibrierung aus NVS geladen!");
+    Serial.printf("   Gespeichert vor %lu Minuten\n", ageMinutes);
+    Serial.printf("   Kalibrierungsstatus: System=%d, Gyro=%d, Accel=%d, Mag=%d\n", 
+                  savedSys, savedGyro, savedAccel, savedMag);
+    
+    return true;
+}
+
+bool BNO055Manager::clearCalibration() {
+    // NVS öffnen und alle Kalibrierungsdaten löschen
+    preferences.begin("bno055_cal", false);
+    preferences.clear();
+    preferences.end();
+    
+    calibrationSaved = false;
+    Serial.println("✅ Kalibrierungsdaten aus NVS gelöscht");
+    
+    return true;
 }
 
 void BNO055Manager::getCalibrationOffsets(adafruit_bno055_offsets_t* offsets) {

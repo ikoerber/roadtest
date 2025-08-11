@@ -1,18 +1,25 @@
 #include "gps_manager.h"
 #include <math.h>
 
+// Statische Member-Variablen
+GPSManager* GPSManager::instance = nullptr;
+
 // Globale GPS-Manager Instanz
 GPSManager gpsManager;
 
 GPSManager::GPSManager() : 
     serial(nullptr), initialized(false), rxPin(16), txPin(15), 
-    baudRate(9600), lastDataUpdate(0) {
+    baudRate(9600), lastDataUpdate(0), dataReady(false), 
+    interruptEnabled(false), rxIndex(0), rxProcessIndex(0) {
     
     // Status initialisieren
     status = {false, false, 0, 0, 0, 0};
     
     // Leere GPS-Daten
     lastValidData = {0.0, 0.0, 0.0, 0.0, 0.0, 0, false, 0, 0.0, false, false, false};
+    
+    // Instance für Interrupt-Handler setzen
+    instance = this;
 }
 
 GPSManager::~GPSManager() {
@@ -54,6 +61,11 @@ bool GPSManager::begin(int rx, int tx, uint32_t baud) {
 }
 
 void GPSManager::end() {
+    // Interrupt-Modus deaktivieren falls aktiv
+    if (interruptEnabled) {
+        enableInterruptMode(false);
+    }
+    
     if (serial) {
         serial->end();
         serial = nullptr;
@@ -69,9 +81,63 @@ void GPSManager::update() {
         return;
     }
     
-    // Alle verfügbaren Zeichen vom GPS lesen
-    while (serial->available() > 0) {
-        char c = serial->read();
+    if (interruptEnabled) {
+        // Im Interrupt-Modus: Verarbeite gepufferte Daten
+        processInterruptData();
+    } else {
+        // Polling-Modus: Direkt vom UART lesen
+        while (serial->available() > 0) {
+            char c = serial->read();
+            
+            if (gps.encode(c)) {
+                // Neuer kompletter NMEA-Satz verarbeitet
+                status.sentences_received++;
+                lastDataUpdate = millis();
+                status.communicating = true;
+                status.last_update = lastDataUpdate;
+            }
+            status.chars_processed++;
+        }
+    }
+    
+    // Status aktualisieren
+    updateStatus();
+}
+
+// Interrupt-Handler (muss static und IRAM_ATTR sein)
+void IRAM_ATTR GPSManager::onReceiveInterrupt() {
+    if (!instance || !instance->serial) return;
+    
+    // Alle verfügbaren Bytes in den Ring-Buffer kopieren
+    while (instance->serial->available() > 0) {
+        uint8_t byte = instance->serial->read();
+        
+        // Ring-Buffer Index berechnen
+        size_t nextIndex = (instance->rxIndex + 1) % RX_BUFFER_SIZE;
+        
+        // Prüfen ob Buffer voll ist
+        if (nextIndex != instance->rxProcessIndex) {
+            instance->rxBuffer[instance->rxIndex] = byte;
+            instance->rxIndex = nextIndex;
+            instance->dataReady = true;
+        }
+        // Bei Überlauf wird das älteste Byte überschrieben
+    }
+}
+
+// Verarbeitet Daten aus dem Interrupt-Buffer
+void GPSManager::processInterruptData() {
+    if (!dataReady) return;
+    
+    // Interrupts temporär deaktivieren für Thread-Sicherheit
+    noInterrupts();
+    size_t currentRxIndex = rxIndex;
+    interrupts();
+    
+    // Alle gepufferten Bytes verarbeiten
+    while (rxProcessIndex != currentRxIndex) {
+        char c = rxBuffer[rxProcessIndex];
+        rxProcessIndex = (rxProcessIndex + 1) % RX_BUFFER_SIZE;
         
         if (gps.encode(c)) {
             // Neuer kompletter NMEA-Satz verarbeitet
@@ -83,8 +149,40 @@ void GPSManager::update() {
         status.chars_processed++;
     }
     
-    // Status aktualisieren
-    updateStatus();
+    // Prüfen ob alle Daten verarbeitet wurden
+    noInterrupts();
+    if (rxProcessIndex == rxIndex) {
+        dataReady = false;
+    }
+    interrupts();
+}
+
+// Interrupt-Modus aktivieren/deaktivieren
+void GPSManager::enableInterruptMode(bool enable) {
+    if (!initialized || !serial) {
+        Serial.println("GPS nicht initialisiert!");
+        return;
+    }
+    
+    if (enable && !interruptEnabled) {
+        // Buffer zurücksetzen
+        rxIndex = 0;
+        rxProcessIndex = 0;
+        dataReady = false;
+        
+        // Interrupt-Handler registrieren
+        serial->onReceive(onReceiveInterrupt);
+        
+        interruptEnabled = true;
+        Serial.println("GPS Interrupt-Modus aktiviert");
+        
+    } else if (!enable && interruptEnabled) {
+        // Interrupt-Handler entfernen
+        serial->onReceive(nullptr);
+        
+        interruptEnabled = false;
+        Serial.println("GPS Polling-Modus aktiviert");
+    }
 }
 
 bool GPSManager::available() {
@@ -175,27 +273,56 @@ String GPSManager::getLocationString() const {
 String GPSManager::getStatusString() const {
     if (!initialized) return "Nicht initialisiert";
     if (!status.communicating) return "Keine Kommunikation";
-    if (!hasValidFix()) return "Suche Satelliten (" + String(getSatelliteCount()) + " sichtbar)";
+    if (!hasValidFix()) {
+        static char searchBuffer[64];
+        snprintf(searchBuffer, sizeof(searchBuffer), "Suche Satelliten (%d sichtbar)", getSatelliteCount());
+        return String(searchBuffer);
+    }
     
-    return "Fix OK (" + String(getSatelliteCount()) + " Satelliten, HDOP: " + String(getHDOP(), 1) + ")";
+    static char fixBuffer[64];
+    snprintf(fixBuffer, sizeof(fixBuffer), "Fix OK (%d Satelliten, HDOP: %.1f)", 
+             getSatelliteCount(), getHDOP());
+    return String(fixBuffer);
 }
 
 String GPSManager::getDiagnosticString() const {
-    String diag = "GPS-Diagnose:\n";
-    diag += "Initialisiert: " + String(initialized ? "Ja" : "Nein") + "\n";
-    diag += "Kommunikation: " + String(status.communicating ? "Aktiv" : "Inaktiv") + "\n";
-    diag += "NMEA-Sätze: " + String(status.sentences_received) + " OK, " + String(status.sentences_failed) + " Fehler\n";
-    diag += "Zeichen: " + String(status.chars_processed) + "\n";
-    diag += "Letzte Daten: vor " + String((millis() - status.last_update) / 1000) + "s\n";
+    static char diagBuffer[512];
+    char* ptr = diagBuffer;
+    size_t remaining = sizeof(diagBuffer);
     
-    if (hasValidFix()) {
-        GPSData data = const_cast<GPSManager*>(this)->getCurrentData();
-        diag += "Position: " + String(data.latitude, 6) + "°N, " + String(data.longitude, 6) + "°E\n";
-        diag += "Geschwindigkeit: " + String(data.speed_kmh, 1) + " km/h\n";
-        diag += "Satelliten: " + String(data.satellites) + ", HDOP: " + String(data.hdop, 1);
+    int written = snprintf(ptr, remaining,
+        "GPS-Diagnose:\n"
+        "Initialisiert: %s\n"
+        "Kommunikation: %s\n"
+        "NMEA-Sätze: %lu OK, %lu Fehler\n"
+        "Zeichen: %lu\n"
+        "Letzte Daten: vor %lus\n",
+        initialized ? "Ja" : "Nein",
+        status.communicating ? "Aktiv" : "Inaktiv",
+        status.sentences_received,
+        status.sentences_failed,
+        status.chars_processed,
+        (millis() - status.last_update) / 1000
+    );
+    
+    if (written > 0 && written < (int)remaining) {
+        ptr += written;
+        remaining -= written;
+        
+        if (hasValidFix()) {
+            GPSData data = const_cast<GPSManager*>(this)->getCurrentData();
+            snprintf(ptr, remaining,
+                "Position: %.6f°N, %.6f°E\n"
+                "Geschwindigkeit: %.1f km/h\n"
+                "Satelliten: %d, HDOP: %.1f",
+                data.latitude, data.longitude,
+                data.speed_kmh,
+                data.satellites, data.hdop
+            );
+        }
     }
     
-    return diag;
+    return String(diagBuffer);
 }
 
 bool GPSManager::testCommunication() {
@@ -252,6 +379,15 @@ void GPSManager::printRawData() {
 
 void GPSManager::printDiagnostics() {
     Serial.println("\n=== GPS-Diagnostics ===");
+    Serial.printf("Modus: %s\n", interruptEnabled ? "Interrupt-basiert" : "Polling");
+    
+    if (interruptEnabled) {
+        Serial.printf("Buffer-Auslastung: %zu/%zu Bytes\n", 
+                     (rxIndex >= rxProcessIndex) ? (rxIndex - rxProcessIndex) : 
+                     (RX_BUFFER_SIZE - rxProcessIndex + rxIndex), RX_BUFFER_SIZE);
+        Serial.printf("Daten bereit: %s\n", dataReady ? "Ja" : "Nein");
+    }
+    
     Serial.println(getDiagnosticString());
     
     if (hasValidFix()) {

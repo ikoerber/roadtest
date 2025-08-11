@@ -48,6 +48,19 @@ private:
     GPSData lastValidData;
     unsigned long lastDataUpdate;
     
+    // Interrupt-Support
+    static GPSManager* instance;  // Für statische Interrupt-Handler
+    volatile bool dataReady;
+    volatile bool interruptEnabled;
+    static const size_t RX_BUFFER_SIZE = 512;
+    volatile uint8_t rxBuffer[RX_BUFFER_SIZE];
+    volatile size_t rxIndex;
+    volatile size_t rxProcessIndex;
+    
+    // Interrupt-Handler
+    static void IRAM_ATTR onReceiveInterrupt();
+    void processInterruptData();
+    
     // Hilfsfunktionen
     void updateStatus();
     bool isDataFresh(unsigned long maxAge = 5000);
@@ -62,8 +75,12 @@ public:
     void end();
     bool isReady() const { return initialized; }
     
+    // Interrupt-Modus
+    void enableInterruptMode(bool enable = true);
+    bool isInterruptModeEnabled() const { return interruptEnabled; }
+    
     // Daten-Updates
-    void update();
+    void update();  // Für Polling oder Interrupt-Verarbeitung
     bool available();
     GPSData getCurrentData();
     GPSStatus getStatus() const { return status; }
