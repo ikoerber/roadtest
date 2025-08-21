@@ -42,6 +42,9 @@ private:
     uint8_t i2cAddress;
     bool addressFound;
     
+    // Display-Rotation
+    bool rotated180;
+    
     // Hilfsfunktionen
     void clearAndSetup();
     void drawHeader(const String& title);
@@ -90,6 +93,7 @@ public:
     // Utility-Funktionen
     void setBrightness(uint8_t brightness);
     void setContrast(uint8_t contrast);
+    void setRotation(bool rotate180);
     bool testDisplay();
     String getDisplayInfo();
     

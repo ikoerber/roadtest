@@ -6,7 +6,8 @@ OLEDManager oledManager;
 
 OLEDManager::OLEDManager() : 
     display(nullptr), initialized(false), currentMode(DISPLAY_MODE_STATUS),
-    lastModeSwitch(0), lastUpdate(0), i2cAddress(0x3C), addressFound(false) {
+    lastModeSwitch(0), lastUpdate(0), i2cAddress(0x3C), addressFound(false),
+    rotated180(false) {
     
     // Standard-Konfiguration
     config = {
@@ -63,6 +64,9 @@ bool OLEDManager::begin(uint8_t address) {
     
     Serial.printf("✅ OLED erfolgreich initialisiert auf Adresse 0x%02X\n", i2cAddress);
     Serial.printf("Display: %dx%d Pixel\n", SCREEN_WIDTH, SCREEN_HEIGHT);
+    
+    // Standard-Rotation setzen (normal)
+    display->setRotation(0);
     
     // Initialer Display-Test
     showBootMessage("OLED Manager", 100);
@@ -463,4 +467,18 @@ void displaySensorData(float heading, float accel, float temp, int canCount) {
 
 void displayGPSStatus(float lat, float lon, float speed, int satellites, bool fix) {
     oledManager.showGPSStatus(lat, lon, speed, satellites, fix);
+}
+
+void OLEDManager::setRotation(bool rotate180) {
+    if (!initialized || !display) return;
+    
+    rotated180 = rotate180;
+    
+    // Rotation setzen: 0 = normal, 2 = 180 Grad gedreht
+    display->setRotation(rotated180 ? 2 : 0);
+    
+    Serial.printf("Display-Rotation: %s\n", rotated180 ? "180 Grad" : "Normal");
+    
+    // Display neu zeichnen
+    refresh();
 }

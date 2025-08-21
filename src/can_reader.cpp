@@ -423,3 +423,27 @@ void printCANMessage(const CANMessage& msg) {
     
     Serial.println("---------------------");
 }
+
+// Neue Methoden für Integration-Tests
+
+bool CANReader::available() {
+    // Alias für hasMessage
+    return hasMessage();
+}
+
+void CANReader::update() {
+    // Prozessiert anstehende Nachrichten
+    if (!initialized) return;
+    
+    // Prüfe ob neue Nachrichten vorhanden sind
+    if (hasMessage()) {
+        // Lese und speichere die letzte Nachricht
+        lastMessage = readMessage();
+        lastMessage.timestamp = millis();
+    }
+}
+
+CANMessage CANReader::getLastMessage() {
+    // Gibt die zuletzt empfangene Nachricht zurück
+    return lastMessage;
+}

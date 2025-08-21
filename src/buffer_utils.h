@@ -150,6 +150,11 @@ public:
     void clearOverflowFlag() { overflow_occurred = false; }
     
     /**
+     * Reset overflow (alias for clearOverflowFlag)
+     */
+    void resetOverflow() { overflow_occurred = false; }
+    
+    /**
      * Buffer leeren
      */
     void clear() {

@@ -33,6 +33,9 @@ private:
     unsigned long totalMessages;
     unsigned long errorCount;
     
+    // Letzte empfangene Nachricht
+    CANMessage lastMessage;
+    
 public:
     CANReader(int cs = 1, int interrupt = 2);
     ~CANReader();
@@ -47,6 +50,9 @@ public:
     bool hasMessage();
     CANMessage readMessage();
     int getAvailableMessages();
+    bool available();  // Alias für hasMessage
+    void update();     // Prozessiert anstehende Nachrichten
+    CANMessage getLastMessage();  // Gibt letzte empfangene Nachricht zurück
     
     // Logging-Funktionen
     bool enableLogging(const String& fileName);
@@ -61,6 +67,7 @@ public:
     
     // Status und Statistiken
     bool isInitialized() const { return initialized; }
+    bool isReady() const { return initialized; }  // Alias für isInitialized
     unsigned long getMessageCount() const { return messageCount; }
     unsigned long getTotalMessages() const { return totalMessages; }
     unsigned long getErrorCount() const { return errorCount; }

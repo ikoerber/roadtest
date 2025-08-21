@@ -32,6 +32,7 @@ struct LogConfig {
     
     uint32_t sensorLogInterval;  // ms
     uint32_t roadLogInterval;    // ms
+    uint32_t gpsLogInterval;     // ms
     uint32_t flushInterval;      // ms
     
     String filePrefix;
@@ -46,7 +47,12 @@ struct LogStats {
     uint32_t droppedLogs;
     uint32_t fileCount;
     uint32_t errorCount;
+    uint32_t bufferOverflows;  // Für Integration-Tests
     unsigned long startTime;
+    
+    LogStats() : totalWrites(0), totalBytes(0), droppedLogs(0), 
+                 fileCount(0), errorCount(0), bufferOverflows(0),
+                 startTime(millis()) {}
     
     float getWriteRate() const {
         unsigned long elapsed = millis() - startTime;
@@ -60,6 +66,9 @@ struct LogStats {
         return (float)totalBytes * 1000.0f / elapsed;
     }
 };
+
+// Alias für Integration-Tests
+typedef LogStats SDLoggerStats;
 
 class SDLogger {
 private:
@@ -85,6 +94,7 @@ private:
     // Timing
     unsigned long lastSensorLog;
     unsigned long lastRoadLog;
+    unsigned long lastGPSLog;
     unsigned long lastFlush;
     unsigned long sessionStartTime;
     
@@ -95,8 +105,6 @@ private:
     int bufferIndex;
     
     // Buffer-Overflow Schutz Funktionen
-    bool safeAppendToBuffer(const char* data, size_t dataLen);
-    bool safeAppendToBuffer(const String& data);
     size_t getAvailableBufferSpace() const;
     
     // Hilfsfunktionen
@@ -187,6 +195,11 @@ public:
     bool deleteFile(const String& fileName);
     bool renameFile(const String& oldName, const String& newName);
     bool copyFile(const String& source, const String& dest);
+    
+    // Für Integration-Tests
+    bool safeAppendToBuffer(const char* data, size_t dataLen);
+    bool safeAppendToBuffer(const String& data);
+    String getCurrentLogFile() const { return currentFileName; }
 };
 
 // Globale Instanz

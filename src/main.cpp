@@ -15,8 +15,12 @@
 #include "road_quality.h"
 #include "hardware_test.h"
 #include "gps_manager.h"
+#include "integration_tests.h"
 
 // Pin-Definitionen sind nun in hardware_config.cpp zentralisiert
+
+// Forward declaration für Buffer-Statistik Funktion
+void printBufferStats();
 
 // Hardware-Instanzen
 SPIClass spiSD(HSPI);   // Separate SPI-Instanz für SD-Karte
@@ -112,14 +116,19 @@ void i2cScanner() {
 bool testSDWithSafePins() {
     Serial.println("\n--- SD-Karten Test mit sicheren ESP32-S3 Pins ---");
     
+    // Debug: Zeige die konfigurierten Pins aus hardware_config.h
+    Serial.println("\nKonfigurierte SD-Pins aus hardware_config.h:");
+    Serial.printf("SD_CS_PIN=%d, SD_MOSI_PIN=%d, SD_MISO_PIN=%d, SD_SCK_PIN=%d\n", 
+                  SD_CS_PIN, SD_MOSI_PIN, SD_MISO_PIN, SD_SCK_PIN);
+    
     // Sichere Pin-Sets für ESP32-S3
     int pinSets[][4] = {
-        {4, 5, 6, 7},     // CS, MOSI, MISO, SCK - GPIO 4-7
+        {SD_CS_PIN, SD_MOSI_PIN, SD_MISO_PIN, SD_SCK_PIN},  // Primär aus hardware_config.h
         {10, 11, 13, 12}, // CS, MOSI, MISO, SCK - Standard Backup
         {15, 16, 17, 18}  // CS, MOSI, MISO, SCK - Alternative Backup
     };
     const char* pinSetNames[] = {
-        "GPIO 4-7 (4,5,6,7)", 
+        "Hardware Config Pins", 
         "Standard Backup (10,11,13,12)", 
         "Alternative Backup (15,16,17,18)"
     };
@@ -130,8 +139,19 @@ bool testSDWithSafePins() {
     Serial.println("• FAT32 formatierte SD-Karte");
     Serial.println("• Stabile Kabelverbindungen");
     Serial.println("• SD-Karte fest eingesteckt");
+    Serial.println("\nAktuelle Verkabelung prüfen:");
+    Serial.println("• VCC    -> 5V (für SD-Modul mit Spannungsregler)");
+    Serial.println("• GND    -> GND");
+    Serial.printf("• CS     -> GPIO %d\n", SD_CS_PIN);
+    Serial.printf("• MOSI   -> GPIO %d\n", SD_MOSI_PIN);
+    Serial.printf("• MISO   -> GPIO %d (ggf. 10kΩ Pull-up nach 3.3V!)\n", SD_MISO_PIN);
+    Serial.printf("• SCK    -> GPIO %d\n", SD_SCK_PIN);
+    Serial.println("\n⚠️  WICHTIG: Falls externe Pull-ups nötig:");
+    Serial.println("    - NUR gegen 3.3V, NIEMALS gegen 5V!");
+    Serial.println("    - ESP32 GPIOs sind NICHT 5V-tolerant!");
     
-    for (int set = 0; set < 3; set++) {
+    // Nur das primäre Pin-Set testen, da SD-Karte fest an GPIO 4-7 angeschlossen ist
+    for (int set = 0; set < 1; set++) {  // Nur Set 0 testen
         Serial.print("\n"); Serial.print(set + 1); Serial.print(". Teste "); 
         Serial.print(pinSetNames[set]); Serial.print("...");
         
@@ -144,6 +164,8 @@ bool testSDWithSafePins() {
         int miso = pinSets[set][2];
         int sck = pinSets[set][3];
         
+        Serial.printf("   Pins: CS=%d, MOSI=%d, MISO=%d, SCK=%d\n", cs, mosi, miso, sck);
+        
         // Sichere Pin-Konfiguration
         pinMode(cs, OUTPUT);
         digitalWrite(cs, HIGH);
@@ -151,16 +173,124 @@ bool testSDWithSafePins() {
         pinMode(sck, OUTPUT);
         pinMode(miso, INPUT_PULLUP);
         
+        // Zusätzliche Pull-ups für Stabilität
+        pinMode(mosi, INPUT_PULLUP);
+        digitalWrite(mosi, HIGH);
+        pinMode(sck, INPUT_PULLUP);
+        digitalWrite(sck, LOW);
+        
         delay(50);
+        
+        // Debug: Pin-Status vor SPI-Init
+        Serial.printf("   Pin-Status vor SPI: CS=%d, MISO=%d\n", 
+                      digitalRead(cs), digitalRead(miso));
         
         // SPI mit sicheren Parametern starten
         spiSD.begin(sck, miso, mosi, cs);
+        spiSD.setFrequency(400000);  // Explizit niedrige Frequenz
+        spiSD.setDataMode(SPI_MODE0); // SD-Karten verwenden Mode 0
         delay(100);
         
-        bool success = false;
-        Serial.print(" 400kHz: ");
+        // Debug: Pin-Status nach SPI-Init
+        Serial.printf("   Pin-Status nach SPI: CS=%d, MISO=%d\n", 
+                      digitalRead(cs), digitalRead(miso));
         
-        if (SD.begin(cs, spiSD, 400000)) {
+        // Teste SPI-Kommunikation direkt
+        Serial.println("   Teste SPI-Kommunikation...");
+        
+        // Sende 80 Clock-Zyklen mit CS=HIGH zur Initialisierung
+        digitalWrite(cs, HIGH);
+        for (int i = 0; i < 10; i++) {
+            spiSD.transfer(0xFF);
+        }
+        
+        digitalWrite(cs, LOW);
+        delay(1);
+        
+        // Sende CMD0 (GO_IDLE_STATE) - sollte 0x01 zurückgeben
+        spiSD.transfer(0x40);  // CMD0
+        spiSD.transfer(0x00);
+        spiSD.transfer(0x00);
+        spiSD.transfer(0x00);
+        spiSD.transfer(0x00);
+        spiSD.transfer(0x95);  // CRC für CMD0
+        
+        delay(1);
+        
+        // Lese Antwort (max 10 Versuche)
+        uint8_t response = 0xFF;
+        for (int i = 0; i < 10; i++) {
+            response = spiSD.transfer(0xFF);
+            if (response != 0xFF) break;
+            delay(1);
+        }
+        
+        digitalWrite(cs, HIGH);
+        Serial.printf("   SPI-Antwort auf CMD0: 0x%02X (erwartet: 0x01)\n", response);
+        
+        // Wenn keine Antwort, Problem mit Hardware
+        if (response == 0xFF) {
+            Serial.println("   ⚠️  KEINE SPI-Antwort! Mögliche Ursachen:");
+            Serial.println("      - SD-Karte nicht eingesteckt");
+            Serial.println("      - MISO-Leitung nicht verbunden");
+            Serial.println("      - Defektes SD-Modul");
+            Serial.println("      - Fehlende Pull-up Widerstände (10kΩ an MISO gegen 3.3V!)");
+            Serial.println("      - WICHTIG: Pull-ups IMMER gegen 3.3V, NICHT 5V!");
+            
+            // Zusätzliches Debugging für primäres Pin-Set
+            if (set == 0) {
+                Serial.println("\n   Erweiterte Diagnose für GPIO 4-7:");
+                
+                // Teste ob MISO überhaupt reagiert
+                digitalWrite(cs, LOW);
+                Serial.print("   MISO-Test: ");
+                bool misoChanges = false;
+                for (int i = 0; i < 20; i++) {
+                    spiSD.transfer(0xFF);
+                    int misoState = digitalRead(miso);
+                    Serial.print(misoState);
+                    if (i > 0 && misoState != 1) misoChanges = true;
+                }
+                digitalWrite(cs, HIGH);
+                Serial.println(misoChanges ? " (MISO reagiert)" : " (MISO tot - Kabel prüfen!)");
+                
+                // Teste alle Pins einzeln
+                Serial.println("   Pin-Kontinuität:");
+                Serial.printf("   - CS (GPIO %d): %s\n", cs, digitalRead(cs) ? "HIGH" : "LOW");
+                Serial.printf("   - MOSI (GPIO %d): Ausgang\n", mosi);
+                Serial.printf("   - MISO (GPIO %d): %s\n", miso, digitalRead(miso) ? "HIGH" : "LOW");
+                Serial.printf("   - SCK (GPIO %d): Ausgang\n", sck);
+                
+                // CS-Toggle-Test
+                Serial.print("   CS-Toggle-Test: ");
+                digitalWrite(cs, LOW);
+                delay(1);
+                Serial.print(digitalRead(cs) == LOW ? "LOW-OK " : "LOW-FEHLER ");
+                digitalWrite(cs, HIGH);
+                delay(1);
+                Serial.println(digitalRead(cs) == HIGH ? "HIGH-OK" : "HIGH-FEHLER");
+                
+                // Empfehlung
+                Serial.println("\n   ⚡ SOFORT-MAßNAHMEN:");
+                Serial.println("   1. MISO-Kabel (GPIO 6 -> SD MISO) prüfen!");
+                Serial.println("   2. SD-Karte herausnehmen und wieder einsetzen");
+                Serial.println("   3. Mit Multimeter Durchgang MISO prüfen");
+                Serial.println("   4. 10kΩ Pull-up von GPIO 6 nach 3.3V löten");
+                Serial.println("   5. Anderes SD-Modul testen");
+            }
+        }
+        
+        bool success = false;
+        Serial.print("   Teste SD.begin() mit 400kHz... ");
+        
+        // Mehrere Versuche mit verschiedenen Frequenzen
+        uint32_t frequencies[] = {400000, 1000000, 4000000};
+        const char* freqNames[] = {"400kHz", "1MHz", "4MHz"};
+        
+        for (int f = 0; f < 3; f++) {
+            if (f > 0) Serial.printf("\n   Versuche %s... ", freqNames[f]);
+            
+            if (SD.begin(cs, spiSD, frequencies[f])) {
             uint8_t cardType = SD.cardType();
             if (cardType != CARD_NONE) {
                 Serial.print("ERFOLG! ");
@@ -192,15 +322,27 @@ bool testSDWithSafePins() {
                     Serial.println("Schreibfehler");
                 }
                 
+                break; // Erfolg, keine weiteren Frequenzen testen
             } else {
                 Serial.println("Keine Karte erkannt");
             }
         } else {
-            Serial.println("Init fehlgeschlagen");
+            if (f == 0) {
+                Serial.println("Init fehlgeschlagen");
+            } else {
+                Serial.println("Fehlgeschlagen");
+            }
+        }
+        
+        if (success) break; // Erfolg bei dieser Frequenz
         }
         
         if (success) {
             Serial.println("✓ SD-Karte funktioniert!");
+            // SD-Karte ordnungsgemäß beenden für spätere Neuinitialisierung
+            SD.end();
+            spiSD.end();
+            delay(100);
             return true;
         }
         
@@ -490,6 +632,10 @@ void setup() {
     
     if (oledManager.begin()) {
         Serial.println("OLED erfolgreich initialisiert!");
+        
+        // Display um 180 Grad drehen wenn es auf dem Kopf steht
+        oledManager.setRotation(true);  // true = 180 Grad, false = normal
+        
         oledManager.showTestResults("Straßenqualität", true, "Starte System...");
         delay(2000);
         
@@ -533,8 +679,19 @@ void setup() {
     sdCardAvailable = testSDWithSafePins();
     
     // SDLogger initialisieren
-    if (sdCardAvailable && sdLogger.begin(spiSD)) {
-        Serial.println("✅ SDLogger erfolgreich initialisiert");
+    if (sdCardAvailable) {
+        // SPI für SD-Karte neu initialisieren mit den richtigen Pins
+        spiSD.begin(SD_SCK_PIN, SD_MISO_PIN, SD_MOSI_PIN, SD_CS_PIN);
+        
+        if (sdLogger.begin(spiSD)) {
+            Serial.println("✅ SDLogger erfolgreich initialisiert");
+        } else {
+            Serial.println("❌ SDLogger Initialisierung fehlgeschlagen");
+            sdCardAvailable = false;
+        }
+    }
+    
+    if (sdCardAvailable) {
         
         // Logging-Konfiguration
         LogConfig logConfig = sdLogger.getConfig();
@@ -776,6 +933,91 @@ void loop() {
         }
         
         lastStatusReport = currentTime;
+    }
+    
+    // Serial-Kommandos für Tests
+    if (Serial.available()) {
+        String command = Serial.readStringUntil('\n');
+        command.trim();
+        
+        if (command == "test") {
+            Serial.println("\n=== Test-Kommandos ===");
+            Serial.println("hardware - Hardware-Test-Suite");
+            Serial.println("integration - Vollständige Integration-Tests");
+            Serial.println("stress - Stress-Test-Suite");
+            Serial.println("recovery - Failure-Recovery-Tests");
+            Serial.println("quick - Schnelle Integration-Tests");
+            Serial.println("buffer - Buffer-Sicherheits-Test");
+            Serial.println("memory - Memory-Leak-Test (2 Min)");
+            Serial.println("calibration - BNO055 Kalibrierung speichern");
+            Serial.println("clear_cal - BNO055 Kalibrierung löschen");
+            Serial.println("gps_mode - GPS Interrupt/Polling umschalten");
+            Serial.println("diag - System-Diagnose");
+        }
+        else if (command == "hardware") {
+            hardwareTest.runAllTests();
+        }
+        else if (command == "integration") {
+            Serial.println("\n🚀 Starte umfassende Integration-Tests...");
+            Serial.println("Dies dauert etwa 5-10 Minuten.");
+            integrationTests.runAllTests();
+        }
+        else if (command == "stress") {
+            runStressTestSuite();
+        }
+        else if (command == "recovery") {
+            runFailureRecoveryTests();
+        }
+        else if (command == "quick") {
+            Serial.println("\n⚡ Starte schnelle Integration-Tests...");
+            integrationTests.testAllModulesConcurrent();
+            integrationTests.testSensorDataCorrelation();
+            integrationTests.testBufferOverflowRecovery();
+            integrationTests.printResults();
+        }
+        else if (command == "buffer") {
+            testBufferSafety();
+        }
+        else if (command == "memory") {
+            integrationTests.testMemoryLeakDetection();
+        }
+        else if (command == "calibration") {
+            if (bnoManager.saveCalibration()) {
+                Serial.println("✅ Kalibrierung gespeichert!");
+            } else {
+                Serial.println("❌ Kalibrierung konnte nicht gespeichert werden!");
+            }
+        }
+        else if (command == "clear_cal") {
+            if (bnoManager.clearCalibration()) {
+                Serial.println("✅ Kalibrierung gelöscht!");
+            }
+        }
+        else if (command == "gps_mode") {
+            bool currentMode = gpsManager.isInterruptModeEnabled();
+            gpsManager.enableInterruptMode(!currentMode);
+            Serial.printf("GPS-Modus: %s\n", !currentMode ? "Interrupt" : "Polling");
+        }
+        else if (command == "diag") {
+            Serial.println("\n=== System-Diagnose ===");
+            Serial.printf("Free Heap: %d bytes\n", ESP.getFreeHeap());
+            Serial.printf("Heap Size: %d bytes\n", ESP.getHeapSize());
+            Serial.printf("Min Free Heap: %d bytes\n", ESP.getMinFreeHeap());
+            Serial.printf("Chip Model: %s\n", ESP.getChipModel());
+            Serial.printf("CPU Freq: %d MHz\n", ESP.getCpuFreqMHz());
+            Serial.println("\nModule-Status:");
+            Serial.printf("BNO055: %s\n", bnoManager.isReady() ? "OK" : "Fehler");
+            Serial.printf("GPS: %s\n", gpsManager.isReady() ? "OK" : "Fehler");
+            Serial.printf("CAN: %s\n", canReader.isReady() ? "OK" : "Fehler");
+            Serial.printf("SD: %s\n", sdLogger.isReady() ? "OK" : "Fehler");
+            Serial.printf("OLED: %s\n", oledManager.isReady() ? "OK" : "Fehler");
+            
+            // GPS-Details
+            gpsManager.printDiagnostics();
+            
+            // Buffer-Statistiken
+            printBufferStats();
+        }
     }
     
     // Kurze Pause um CPU zu entlasten

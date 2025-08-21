@@ -11,7 +11,7 @@ SDLogger sdLogger;
 SDLogger::SDLogger(int cs) 
     : csPin(cs), spiInstance(nullptr), initialized(false), 
       cardAvailable(false), logging(false), bufferIndex(0),
-      lastSensorLog(0), lastRoadLog(0), lastFlush(0),
+      lastSensorLog(0), lastRoadLog(0), lastGPSLog(0), lastFlush(0),
       sessionStartTime(0) {
     
     // Standard-Konfiguration
@@ -19,13 +19,14 @@ SDLogger::SDLogger(int cs)
         true, true, true, true, true, true,  // Alle Logs aktiviert inkl. GPS
         100,   // Sensor-Log alle 100ms
         1000,  // Road-Log alle 1s
+        200,   // GPS-Log alle 200ms
         5000,  // Flush alle 5s
         "road", // Datei-Prefix
         true,   // Zeitstempel verwenden
         false   // Keine Kompression
     };
     
-    stats = {0, 0, 0, 0, 0, 0};
+    // Stats werden durch den Konstruktor von LogStats initialisiert
 }
 
 SDLogger::~SDLogger() {
@@ -470,6 +471,42 @@ bool SDLogger::logCANMessage(const CANMessage& msg) {
     return false;
 }
 
+bool SDLogger::logGPSData(const GPSData& gps) {
+    if (!logging || !config.enableGPSLog) return false;
+    
+    unsigned long now = millis();
+    if (now - lastGPSLog < config.gpsLogInterval) {
+        return true;
+    }
+    
+    // Sichere GPS-Daten-Formatierung
+    char logBuffer[256];
+    int written = snprintf(logBuffer, sizeof(logBuffer),
+        "%lu,%.6f,%.6f,%.2f,%.1f,%.1f,%d,%d,%.2f\n",
+        now, gps.latitude, gps.longitude, gps.altitude,
+        gps.speed_kmh, gps.heading_deg, gps.satellites, 
+        gps.valid_fix ? 1 : 0, gps.hdop);
+    
+    // Überprüfe Truncation
+    if (written >= sizeof(logBuffer)) {
+        Serial.println("⚠️ GPS-Log-Zeile wurde gekürzt!");
+        stats.errorCount++;
+    }
+    
+    // Verwende sichere Buffer-Funktion
+    bool success = safeAppendToBuffer(logBuffer, strlen(logBuffer));
+    
+    if (success) {
+        stats.totalWrites++;
+        stats.totalBytes += strlen(logBuffer);
+        lastGPSLog = now;
+        return true;
+    }
+    
+    stats.droppedLogs++;
+    return false;
+}
+
 bool SDLogger::logRoadQuality(float quality, float smoothness, 
                              float curveFrequency, float vibrationRMS) {
     if (!logging || !config.enableRoadLog) return false;
@@ -597,7 +634,13 @@ uint32_t SDLogger::getFreeSpace() {
 }
 
 void SDLogger::resetStatistics() {
-    stats = {0, 0, 0, 0, 0, millis()};
+    stats.totalWrites = 0;
+    stats.totalBytes = 0;
+    stats.droppedLogs = 0;
+    stats.fileCount = 0;
+    stats.errorCount = 0;
+    stats.bufferOverflows = 0;
+    stats.startTime = millis();
 }
 
 void SDLogger::printStatistics() {
