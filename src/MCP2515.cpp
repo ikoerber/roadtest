@@ -73,8 +73,8 @@ int MCP2515Class::begin(long baudRate)
 
   pinMode(_csPin, OUTPUT);
 
-  // start SPI
-  SPI.begin();
+  // start SPI - ENTFERNT! SPI sollte bereits in main.cpp konfiguriert sein
+  // SPI.begin(); // Dies überschreibt die Pin-Konfiguration!
 
   reset();
 

@@ -1,4 +1,5 @@
 #include "can_reader.h"
+#include "hardware_config.h"
 #include <SPI.h>
 
 // Include arduino-CAN Library - Wir nutzen MCP2515 auf ESP32
@@ -38,24 +39,108 @@ bool CANReader::begin(long baudRate) {
     pinMode(intPin, INPUT_PULLUP);
     
     // SPI-Bus für CAN sauber initialisieren
+    Serial.println("Initialisiere SPI für CAN...");
     SPI.end();  // Beende eventuelle SD-SPI Nutzung
     delay(100);
     
-    // ESP32-S3 sichere SPI-Pins nutzen
-    SPI.begin(3, 11, 13, csPin);  // SCK=3, MISO=11, MOSI=13, CS=1
+    // ESP32-S3 sichere SPI-Pins nutzen - CS wird NICHT hier angegeben!
+    Serial.printf("SPI.begin(SCK=%d, MISO=%d, MOSI=%d)\n", CAN_SCK_PIN, CAN_MISO_PIN, CAN_MOSI_PIN);
+    SPI.begin(CAN_SCK_PIN, CAN_MISO_PIN, CAN_MOSI_PIN);  // Verwende Pins aus hardware_config.h
     delay(100);
+    Serial.println("SPI initialisiert");
     
     // Pin-Konfiguration setzen
     canController.setPins(csPin, intPin);
     
+    // Pin als Output setzen bevor SPI-Test
+    pinMode(csPin, OUTPUT);
+    digitalWrite(csPin, HIGH);
+    
+    // Zusätzliche Pins als Output
+    pinMode(CAN_SCK_PIN, OUTPUT);  // SCK
+    pinMode(CAN_MOSI_PIN, OUTPUT); // MOSI
+    pinMode(CAN_MISO_PIN, INPUT_PULLUP); // MISO
+    delay(10);
+    
     // Debug: Teste SPI-Kommunikation direkt
     Serial.println("Teste SPI-Kommunikation...");
-    SPI.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE0));
+    Serial.printf("CS-Pin GPIO%d ist %s\n", csPin, digitalRead(csPin) ? "HIGH" : "LOW");
+    Serial.printf("MISO-Pin GPIO%d ist %s\n", CAN_MISO_PIN, digitalRead(CAN_MISO_PIN) ? "HIGH" : "LOW");
+    Serial.printf("MOSI-Pin GPIO%d\n", CAN_MOSI_PIN);
+    Serial.printf("SCK-Pin GPIO%d\n", CAN_SCK_PIN);
+    
+    // Teste ob SCK überhaupt toggeln kann
+    Serial.println("\nTeste SCK-Pin Toggle...");
+    pinMode(CAN_SCK_PIN, OUTPUT);
+    for(int i = 0; i < 5; i++) {
+        digitalWrite(CAN_SCK_PIN, HIGH);
+        delayMicroseconds(10);
+        bool sckHigh = (digitalRead(CAN_SCK_PIN) == HIGH);
+        digitalWrite(CAN_SCK_PIN, LOW);
+        delayMicroseconds(10);
+        bool sckLow = (digitalRead(CAN_SCK_PIN) == LOW);
+        if(!sckHigh || !sckLow) {
+            Serial.printf("❌ SCK-Pin GPIO%d reagiert nicht!\n", CAN_SCK_PIN);
+            return false;
+        }
+    }
+    Serial.println("✓ SCK-Pin funktioniert");
+    
+    // Teste ob CS-Pin überhaupt funktioniert
+    Serial.println("Teste CS-Pin Toggle...");
     digitalWrite(csPin, LOW);
-    uint8_t testResult = SPI.transfer(0x00);  // RESET command
+    delayMicroseconds(100);
+    bool csLow = (digitalRead(csPin) == LOW);
+    Serial.printf("CS LOW Test: %s\n", csLow ? "OK" : "FEHLER");
+    
     digitalWrite(csPin, HIGH);
+    delayMicroseconds(100);
+    bool csHigh = (digitalRead(csPin) == HIGH);
+    Serial.printf("CS HIGH Test: %s\n", csHigh ? "OK" : "FEHLER");
+    
+    if (!csLow || !csHigh) {
+        Serial.println("❌ CS-Pin reagiert nicht! GPIO1 könnte blockiert sein.");
+        Serial.println("   GPIO1 wird möglicherweise für USB verwendet.");
+        return false;
+    }
+    
+    Serial.println("CS-Pin funktioniert, teste SPI-Transfer...");
+    
+    Serial.println("Starte SPI Transaction...");
+    SPI.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE0));
+    Serial.println("SPI Transaction gestartet");
+    
+    digitalWrite(csPin, LOW);
+    delayMicroseconds(10);
+    
+    Serial.println("Sende RESET Command...");
+    uint8_t testResult = SPI.transfer(0xC0);  // RESET command
+    Serial.printf("Empfangen: 0x%02X\n", testResult);
+    
+    delayMicroseconds(10);
+    digitalWrite(csPin, HIGH);
+    
+    Serial.println("Beende SPI Transaction...");
     SPI.endTransaction();
     Serial.printf("SPI Test-Response: 0x%02X\n", testResult);
+    
+    // Wenn immer noch 0xFF, versuche anderen Ansatz
+    if (testResult == 0xFF) {
+        Serial.println("\nVersuche alternativen SPI-Test...");
+        
+        // Versuche CANSTAT Register zu lesen
+        digitalWrite(csPin, LOW);
+        delayMicroseconds(10);
+        SPI.transfer(0x03);  // READ instruction
+        SPI.transfer(0x0E);  // CANSTAT address
+        uint8_t canstat = SPI.transfer(0x00);  // Dummy byte to read
+        digitalWrite(csPin, HIGH);
+        
+        Serial.printf("CANSTAT Register: 0x%02X\n", canstat);
+    }
+    
+    // Warte nach Reset
+    delay(100);
     
     // MCP2515 Konfiguration - 16MHz Kristall versuchen (DEBO CON Standard)
     Serial.println("Teste 16MHz Kristall...");

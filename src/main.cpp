@@ -24,6 +24,7 @@ void printBufferStats();
 
 // Hardware-Instanzen
 SPIClass spiSD(HSPI);   // Separate SPI-Instanz für SD-Karte
+// CAN-Reader verwendet die globale SPI-Instanz
 
 // Status-Variablen
 bool canBusAvailable = false;
@@ -615,20 +616,16 @@ void setup() {
         Serial.print("Unerwarteter Status: "); Serial.println(error);
     }
     
-    // I2C Scanner ausführen
-    i2cScanner();
-    delay(1000);
+    // I2C Scanner übersprungen - Adressen sind bekannt:
+    // BNO055: 0x28 oder 0x29
+    // OLED: 0x3C oder 0x3D
+    Serial.println("I2C-Scan übersprungen - verwende bekannte Adressen");
     
     // OLED Display initialisieren
     Serial.println("\nInitialisiere OLED Display...");
     
-    // Vorab-Scan für OLED-Adressen
-    bool oledDetected = OLEDManager::scanI2CAddresses();
-    if (oledDetected) {
-        Serial.println("OLED auf I2C-Bus erkannt - starte Initialisierung");
-    } else {
-        Serial.println("⚠️ Kein OLED auf Standard-Adressen gefunden");
-    }
+    // OLED-Scan übersprungen - verwende direkt bekannte Adresse 0x3C
+    Serial.println("Verwende OLED-Adresse 0x3C (fest verlötet)");
     
     if (oledManager.begin()) {
         Serial.println("OLED erfolgreich initialisiert!");
@@ -706,12 +703,29 @@ void setup() {
     }
     
     // CAN-Reader mit arduino-CAN Library initialisieren
-    if (sdCardAvailable) {
-        Serial.println("\n--- CAN-Reader mit arduino-CAN Library ---");
-        canReader.setPins(CAN_CS_PIN, CAN_INT_PIN);
-        canReader.setClockFrequency(8E6); // 8MHz erkannt
-        
-        if (canReader.begin(500E3)) {
+    Serial.println("\n--- CAN-Reader mit arduino-CAN Library ---");
+    
+    // WICHTIG: CAN-Reader verwendet die globale SPI-Instanz
+    // Wir müssen sicherstellen, dass die globale SPI richtig konfiguriert ist
+    SPI.end(); // Beende eventuelle andere SPI-Nutzung
+    delay(50);
+    
+    // Initialisiere globale SPI mit CAN-Pins
+    Serial.printf("Initialisiere globale SPI mit CAN-Pins: SCK=%d, MISO=%d, MOSI=%d\n", 
+                  CAN_SCK_PIN, CAN_MISO_PIN, CAN_MOSI_PIN);
+    SPI.begin(CAN_SCK_PIN, CAN_MISO_PIN, CAN_MOSI_PIN);
+    delay(50);
+    
+    // Setze SPI-Modus für MCP2515
+    SPI.setFrequency(1000000);  // 1MHz für MCP2515
+    SPI.setDataMode(SPI_MODE0);
+    SPI.setBitOrder(MSBFIRST);
+    
+    // CAN-Reader konfigurieren
+    canReader.setPins(CAN_CS_PIN, CAN_INT_PIN);
+    canReader.setClockFrequency(8E6); // 8MHz Standard
+    
+    if (canReader.begin(500E3)) {
             canBusAvailable = true;
             
             // CAN-Logging auf SD-Karte aktivieren
@@ -725,12 +739,49 @@ void setup() {
             // canReader.clearFilters(); // Alle Nachrichten empfangen
             
             Serial.println("✅ CAN-Reader mit arduino-CAN bereit!");
-        } else {
-            Serial.println("❌ CAN-Reader Initialisierung fehlgeschlagen");
-            canBusAvailable = false;
-        }
     } else {
-        Serial.println("⚠️ SD-Karte nicht verfügbar - CAN-Logging deaktiviert");
+        Serial.println("❌ CAN-Reader Initialisierung fehlgeschlagen");
+        canBusAvailable = false;
+        
+        // Debug: Teste direkte SPI-Kommunikation
+        Serial.println("\nDebug: Teste MCP2515 SPI-Kommunikation...");
+        pinMode(CAN_CS_PIN, OUTPUT);
+        digitalWrite(CAN_CS_PIN, HIGH);
+        delay(10);
+        
+        SPI.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE0));
+        digitalWrite(CAN_CS_PIN, LOW);
+        delayMicroseconds(10);
+        
+        // Sende RESET command (0xC0)
+        uint8_t cmd = SPI.transfer(0xC0);
+        digitalWrite(CAN_CS_PIN, HIGH);
+        SPI.endTransaction();
+        
+        Serial.printf("Reset-Antwort: 0x%02X\n", cmd);
+        
+        delay(100);
+        
+        // Lese CANSTAT Register (0x0E)
+        SPI.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE0));
+        digitalWrite(CAN_CS_PIN, LOW);
+        SPI.transfer(0x03); // READ instruction
+        SPI.transfer(0x0E); // CANSTAT address
+        uint8_t canstat = SPI.transfer(0x00);
+        digitalWrite(CAN_CS_PIN, HIGH);
+        SPI.endTransaction();
+        
+        Serial.printf("CANSTAT Register: 0x%02X (erwartet: 0x80 für Config Mode)\n", canstat);
+        
+        if (canstat == 0xFF || canstat == 0x00) {
+            Serial.println("⚠️  Keine Antwort vom MCP2515!");
+            Serial.println("Prüfe: CS=GPIO1, SCK=GPIO3, MOSI=GPIO13, MISO=GPIO11");
+            Serial.println("\nMögliche Hardware-Lösungen:");
+            Serial.println("• 10kΩ Pull-up von CS (GPIO1) nach 3.3V");
+            Serial.println("• 10kΩ Pull-up von MISO (GPIO11) nach 3.3V (optional)");
+            Serial.println("• Stromversorgung: MCP2515 VCC an 5V");
+            Serial.println("• CAN-Terminierung: 120Ω zwischen CAN-H und CAN-L");
+        }
     }
     
     // GPS-Manager initialisieren
