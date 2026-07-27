@@ -5,6 +5,17 @@ Alle wichtigen Änderungen am ESP32-S3 Straßenqualitäts-Messsystem werden in d
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt hält sich an [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unveröffentlicht]
+
+### Dokumentation
+- Hardwarebeschreibung auf den tatsächlichen LOLIN S3 Mini mit 4 MB Flash
+  umgestellt
+- Verbindliche GPIO-Belegung mit dem Firmwarecode abgeglichen
+- Versorgung des PZSMOCN-SD-Moduls auf 3,3 V korrigiert
+- Unbenutzte BNO055- und GPS-Pins sowie der deaktivierte CAN-Aufbau eindeutig
+  dokumentiert
+- Unsichere pauschale Angaben zu CAN-Versorgung und Busterminierung entfernt
+
 ## [1.5.10] - 2026-07-27
 
 ### Behoben

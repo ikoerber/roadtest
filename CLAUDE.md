@@ -55,9 +55,9 @@ if (bufferIndex > BUFFER_SIZE) {
 
 #### Hardware-Fehler-Recovery
 - **I2C-Bus-Recovery** bei Sensor-Ausfällen mit Timeout-Detection
-- **SD-Karten-Fallback** auf alternative Pin-Sets bei Initialisierungsfehlern  
-- **CAN-Bus-Oszillator-Erkennung** automatisch 8MHz/16MHz
-- **GPS-Cold-Start-Handling** mit bis zu 30s Wartezeit
+- **SD-Wiederanlauf** auf den fest verdrahteten GPIOs 4 bis 7
+- **CAN optional** und standardmäßig deaktiviert
+- **GPS-Wiederanlauf** ohne blockierendes Warten auf einen Satelliten-Fix
 
 ### 📊 Performance-Optimierungen
 
@@ -72,8 +72,8 @@ Status-Reports:      0.2Hz (5s)    ✓ Minimaler Debug-Impact
 
 #### Memory-Management  
 ```cpp
-Static RAM Usage:    ~8KB / 512KB    (1.6% Auslastung)
-Flash Usage:         ~220KB / 8MB    (2.7% Auslastung) 
+RAM Usage:           ~57KB / 320KB
+Flash Usage:         ~1,16MB / 1,31MB OTA-App-Partition
 Heap-Fragmentierung: Verhindert durch Memory-Pool
 Stack-Overflow:      SafeStackBuffer mit 1KB Reserve
 ```
@@ -84,7 +84,7 @@ Stack-Overflow:      SafeStackBuffer mit 1KB Reserve
 - ✅ **I2C-Deep-Scan** - Detaillierte Adress- und Fehler-Analyse
 - ✅ **BNO055-Volltest** - Selbsttest, Kalibrierung, Datenqualität
 - ✅ **OLED-8-Modi-Test** - Alle Display-Funktionen validiert
-- ✅ **SD-Multi-Pin-Test** - Fallback-Strategien für Pin-Konflikte
+- ✅ **SD-Test** - feste GPIOs 4 bis 7 mit mehreren SPI-Taktraten
 - ✅ **CAN-Register-Test** - MCP2515-Funktionalität komplett
 - ✅ **GPS-Kommunikationstest** - NMEA-Parsing und Fix-Detection
 
@@ -104,53 +104,23 @@ Stack-Overflow:      SafeStackBuffer mit 1KB Reserve
 - ✅ **Memory-Leak Detection** - 2-Minuten Überwachung
 - ✅ **24+ Test-Szenarien** - Umfassende Abdeckung
 
-### 🔌 FEST VERLÖTETE HARDWARE-VERBINDUNGEN (NICHT ÄNDERBAR!)
+### 🔌 Fest verdrahtete Hardware
 
-**⚠️ KRITISCH**: Diese Verbindungen sind FEST VERLÖTET und können NICHT geändert werden!
-- Änderungen in hardware_config.h haben KEINE Wirkung auf die physischen Verbindungen
-- Die Software MUSS diese Pin-Belegung verwenden
-- Bei Konflikten muss die Software angepasst werden, NICHT die Hardware
+Die verbindliche Pinliste, Modulanschlüsse, Spannungen und Sicherheitshinweise
+stehen ausschließlich in [HARDWARE.md](HARDWARE.md). Der logische Plan ist in
+[schematic.md](schematic.md) dargestellt.
 
-**🔴 BEKANNTE HARDWARE-PROBLEME:**
-- CAN-Bus SPI.transfer() blockiert - vermutlich MISO (GPIO 11) Verbindungsproblem
-- Mögliche Ursachen: Lötfehler, falscher Pin, defektes MCP2515-Modul
+Kurzfassung:
 
-#### I2C-Bus (BNO055 + OLED)
-- **SDA**: GPIO 8
-- **SCL**: GPIO 9
-- **BNO055 Adresse**: 0x28 oder 0x29
-- **OLED Adresse**: 0x3C oder 0x3D
+- Controller: LOLIN S3 Mini mit ESP32-S3 und 4 MB Flash
+- I²C: SDA GPIO 8, SCL GPIO 9
+- GPS: ESP32-RX GPIO 16 an GPS-TX; ESP32-TX GPIO 15 an GPS-RX
+- SD: CS 4, MOSI 5, MISO 6, SCLK 7; PZSMOCN-Modul an 3,3 V
+- CAN: GPIO 1, 2, 3, 11 und 13; derzeit deaktiviert und elektrisch noch zu
+  prüfen
 
-#### SD-Karte (HSPI)
-- **CS (Chip Select)**: GPIO 4
-- **MOSI**: GPIO 5
-- **MISO**: GPIO 6
-- **SCK**: GPIO 7
-- **VCC**: 5V
-- **GND**: GND
-
-#### CAN-Bus MCP2515 (Standard SPI)
-- **CS (Chip Select)**: GPIO 1
-- **INT (Interrupt)**: GPIO 2
-- **SCK**: GPIO 3
-- **MISO**: GPIO 11
-- **MOSI**: GPIO 13
-- **VCC**: 5V
-- **GND**: GND
-
-#### GPS BN-880 (UART2)
-- **RX (ESP empfängt)**: GPIO 16
-- **TX (ESP sendet)**: GPIO 15
-- **VCC**: 3.3V oder 5V
-- **GND**: GND
-
-#### Stromversorgung
-- **ESP32-S3**: USB-C oder externe 5V
-- **SD-Modul**: 5V (mit integriertem 3.3V Regler)
-- **MCP2515**: 5V (mit Level-Shifter)
-- **BNO055**: 3.3V (vom ESP32)
-- **OLED**: 3.3V (vom ESP32)
-- **GPS**: 3.3V oder 5V
+Die Software muss der fest verlöteten Pinbelegung folgen. ESP32-S3-GPIOs sind
+nicht 5-V-tolerant.
 
 ### 🎛️ Konfigurierbare Parameter
 

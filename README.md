@@ -39,7 +39,7 @@ Das System erfasst Bewegungsdaten, GPS-Position und CAN-Bus-Signale, um die Qual
 ### 📊 Datenerfassung
 - **Beschleunigungsdaten** (10Hz) mit Vibrations-Analyse
 - **GPS-Tracking** (5Hz) mit Fix-Detection und HDOP
-- **CAN-Bus-Integration** (100Hz Check-Rate) mit MCP2515
+- **Optionale CAN-Bus-Unterstützung** für MCP2515, standardmäßig deaktiviert
 - **Korrelierte Datenlogs** mit präzisen Zeitstempeln
 - **NEU: Interrupt-basiertes GPS** ohne Datenverlust bei hoher CPU-Last
 - **NEU: Optimierte String-Operationen** für bessere Performance
@@ -49,7 +49,8 @@ Das System erfasst Bewegungsdaten, GPS-Position und CAN-Bus-Signale, um die Qual
 ### ESP32-S3 Entwicklungsboard
 - **Mikrocontroller:** ESP32-S3 (240MHz, LOLIN S3 Mini mit 4MB Flash)
 - **USB:** USB-C für Programming und Debug
-- **Power:** 3.3V/5V kompatibel
+- **Versorgung:** USB-C oder vorhandener LiPo-Anschluss
+- **GPIO-Pegel:** ausschließlich 3,3 V; die GPIOs sind nicht 5-V-tolerant
 
 ### Sensoren und Module
 
@@ -58,10 +59,15 @@ Das System erfasst Bewegungsdaten, GPS-Position und CAN-Bus-Signale, um die Qual
 | **IMU-Sensor** | BNO055 | I2C | GPIO 8/9 | IMUPLUS mit Gyro + Beschleunigung |
 | **Display** | SSD1306 | I2C | GPIO 8/9 | 128x64 OLED |
 | **GPS-Modul** | BN-880 | UART2 | GPIO 15/16 | Position & Geschwindigkeit |
-| **CAN-Interface** | MCP2515 | SPI | GPIO 1,2,3,11,13 | Fahrzeugdaten |
+| **CAN-Interface** | MCP2515 | SPI | GPIO 1,2,3,11,13 | optional, derzeit deaktiviert |
 | **SD-Speicher** | MicroSD | SPI | GPIO 4,5,6,7 | Datenlogging |
 
 ## 📐 Schaltplan & Verkabelung
+
+Die vollständige und verbindliche Beschreibung des vorhandenen
+Lochrasteraufbaus steht in [HARDWARE.md](HARDWARE.md). Eine kompakte grafische
+Übersicht enthält [schematic.md](schematic.md). Maßgeblich sind GPIO- und
+Signalnamen, nicht die Kabelfarben.
 
 ### I2C-Bus (BNO055 + OLED)
 ```
@@ -69,9 +75,12 @@ ESP32-S3        BNO055          SSD1306 OLED
 --------        ------          ------------
 GPIO 8    <-->  SDA      <-->   SDA
 GPIO 9    <-->  SCL      <-->   SCL  
-3.3V      -->   VCC      -->    VCC
+3.3V      -->   VIN      -->    VCC
 GND       -->   GND      -->    GND
 ```
+
+Am BNO055 bleiben `3Vo`, `RST`, `PS0`, `PS1` und `INT` unbeschaltet. `ADR`
+bleibt für die Standardadresse `0x28` ebenfalls unbeschaltet.
 
 ### GPS-Modul (UART2)
 ```
@@ -81,6 +90,7 @@ GPIO 16   <--   TX (NMEA-Daten)
 GPIO 15   -->   RX (Konfiguration)
 3.3V      -->   VCC
 GND       -->   GND
+offen           PPS (von der Firmware nicht verwendet)
 ```
 
 ### CAN-Bus Interface
@@ -92,9 +102,12 @@ GPIO 2    <--   INT
 GPIO 3    -->   SCK
 GPIO 13   -->   MOSI
 GPIO 11   <--   MISO
-3.3V      -->   VCC
 GND       -->   GND
 ```
+
+CAN ist standardmäßig deaktiviert. Die Versorgung und SPI-Logikpegel des
+konkreten MCP2515/TJA1050-Moduls müssen vor dem Anschluss geprüft werden; viele
+dieser Module sind nicht direkt 3,3-V-kompatibel.
 
 ### SD-Karten-Modul
 ```
@@ -384,7 +397,7 @@ sdLogger.setConfig(config);
 Lösung:
 1. I2C-Verkabelung prüfen (SDA=8, SCL=9)
 2. Pull-up Widerstände 4.7kΩ auf SDA/SCL
-3. ADDR-Pin: GND=0x28, 3.3V=0x29
+3. ADR-Pin unbeschaltet lassen: Standardadresse 0x28
 4. Serial Monitor: I2C-Scanner-Ausgabe prüfen
 ```
 
@@ -392,9 +405,9 @@ Lösung:
 ```
 Lösung:
 1. FAT32-Formatierung (nicht exFAT/NTFS)
-2. 5V Stromversorgung (nicht 3.3V!)
+2. PZSMOCN-Modul am beschrifteten 3.3V-Eingang versorgen
 3. Pin-Konfiguration: CS=4, MOSI=5, MISO=6, SCK=7
-4. Alternative Pin-Sets werden automatisch getestet
+4. Karte, Modulstecker, Masse und Lötstellen mechanisch prüfen
 ```
 
 **Problem: GPS kein Fix**
@@ -409,10 +422,10 @@ Lösung:
 **Problem: CAN-Bus Fehler**
 ```
 Lösung:
-1. MCP2515-Verkabelung prüfen
-2. Oszillator-Frequenz: 8MHz oder 16MHz
-3. CAN-Bus-Terminierung (120Ω) 
-4. Fahrzeug: Zündung an für CAN-Bus-Aktivität
+1. Prüfen, ob CAN in der Firmware bewusst aktiviert wurde
+2. Versorgung und 3,3-V-Kompatibilität des Moduls prüfen
+3. MCP2515-Verkabelung und Oszillator-Frequenz prüfen
+4. Terminierung und aktiven Fahrzeug-CAN-Bus kontrollieren
 ```
 
 ### Debug-Features
