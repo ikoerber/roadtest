@@ -1,6 +1,7 @@
 #include "sd_logger.h"
 #include "road_quality.h"
 #include "gps_manager.h"
+#include <time.h>
 
 // Forward-Deklaration
 float calculateOverallQuality(const RoadMetrics& metrics);
@@ -12,7 +13,8 @@ SDLogger::SDLogger(int cs)
     : csPin(cs), spiInstance(nullptr), initialized(false), 
       cardAvailable(false), logging(false), bufferIndex(0),
       lastSensorLog(0), lastRoadLog(0), lastGPSLog(0), lastFlush(0),
-      sessionStartTime(0) {
+      sessionStartTime(0), qualitySum(0), hasLastRideGPS(false),
+      lastRideLatitude(0), lastRideLongitude(0), lastRideGPSTime(0) {
     
     // Standard-Konfiguration
     config = {
@@ -35,10 +37,15 @@ SDLogger::~SDLogger() {
 
 // Zeitbasierte Korrelation
 bool SDLogger::logCorrelatedData(const SensorData& sensorData, const CANMessage& canMsg) {
-    if (!logging || !isReady()) return false;
+    if (!logging || !isReady() || canMsg.timestamp == 0) return false;
+
+    if (!correlatedLogFile &&
+        !openLogFile(correlatedLogFile, correlatedFileName, LOG_TYPE_CORRELATED)) {
+        return false;
+    }
     
     // Kombinierte Log-Zeile erstellen
-    String logLine = String(sensorData.timestamp) + ",CORR,";
+    String logLine = formatTimestamp() + ",CORR,";
     
     // Sensor-Daten
     logLine += String(sensorData.heading, 2) + ",";
@@ -61,24 +68,14 @@ bool SDLogger::logCorrelatedData(const SensorData& sensorData, const CANMessage&
     
     logLine += "\n";
     
-    // In separate korrelierte Datei schreiben
-    String corrFileName = "/correlated_" + String(millis()) + ".csv";
-    File corrFile = SD.open(corrFileName, FILE_APPEND);
-    
-    if (corrFile) {
-        // Prüfen ob Datei leer ist (Header schreiben)
-        if (corrFile.size() == 0) {
-            corrFile.println("timestamp,type,heading,pitch,roll,accel_mag,temp,can_id,dlc,d0,d1,d2,d3,d4,d5,d6,d7");
-        }
-        
-        corrFile.print(logLine);
-        corrFile.close();
-        
+    if (correlatedLogFile &&
+        correlatedLogFile.print(logLine) == logLine.length()) {
         stats.totalWrites++;
         stats.totalBytes += logLine.length();
         return true;
     }
-    
+
+    handleCardFailure("Korrelationsdaten konnten nicht geschrieben werden", 1);
     return false;
 }
 
@@ -103,11 +100,17 @@ bool SDLogger::begin(SPIClass& spi) {
         Serial.println("❌ SD-Karte nicht gefunden!");
         return false;
     }
-    
-    cardAvailable = true;
-    
+
     // Karteninfo ausgeben
     uint8_t cardType = SD.cardType();
+    uint64_t totalBytesRaw = SD.totalBytes();
+    if (cardType == CARD_NONE || totalBytesRaw == 0) {
+        Serial.println("❌ SD-Karte antwortet, liefert aber kein gültiges Dateisystem");
+        SD.end();
+        return false;
+    }
+
+    cardAvailable = true;
     Serial.print("SD-Karten Typ: ");
     switch(cardType) {
         case CARD_MMC: Serial.println("MMC"); break;
@@ -120,7 +123,7 @@ bool SDLogger::begin(SPIClass& spi) {
     Serial.printf("Kartengröße: %llu MB\n", cardSize);
     
     uint64_t usedBytes = SD.usedBytes() / (1024 * 1024);
-    uint64_t totalBytes = SD.totalBytes() / (1024 * 1024);
+    uint64_t totalBytes = totalBytesRaw / (1024 * 1024);
     Serial.printf("Verwendet: %llu MB / %llu MB (%.1f%%)\n", 
                   usedBytes, totalBytes, 
                   (float)usedBytes * 100.0f / totalBytes);
@@ -137,13 +140,7 @@ void SDLogger::end() {
         stopLogging();
     }
     
-    if (currentLogFile) {
-        currentLogFile.close();
-    }
-    
-    if (eventLogFile) {
-        eventLogFile.close();
-    }
+    closeLogFiles();
     
     SD.end();
     initialized = false;
@@ -161,45 +158,88 @@ bool SDLogger::startLogging() {
     }
     
     sessionStartTime = millis();
+    sessionId = generateSessionId();
     
-    // Haupt-Log-Datei erstellen
+    // Getrennte Dateien verhindern gemischte CSV-Zeilen.
     if (!createLogFile(LOG_TYPE_SENSOR)) {
         return false;
     }
-    
-    // Event-Log-Datei erstellen
-    eventFileName = generateFileName(LOG_TYPE_EVENT);
-    eventLogFile = SD.open(eventFileName, FILE_WRITE);
-    if (!eventLogFile) {
-        currentLogFile.close();
+
+    if ((config.enableRoadLog &&
+         !openLogFile(roadLogFile, roadFileName, LOG_TYPE_ROAD)) ||
+        (config.enableGPSLog &&
+         !openLogFile(gpsLogFile, gpsFileName, LOG_TYPE_GPS)) ||
+        (config.enableEventLog &&
+         !openLogFile(eventLogFile, eventFileName, LOG_TYPE_EVENT))) {
+        closeLogFiles();
         return false;
     }
-    
-    // Header schreiben
-    writeHeader(currentLogFile, LOG_TYPE_SENSOR);
-    writeHeader(eventLogFile, LOG_TYPE_EVENT);
-    
+
+    // Neue Fahrt beginnt immer mit einer leeren Zusammenfassung.
+    rideSummary = RideSummary();
+    rideSummary.active = true;
+    rideSummary.sessionId = sessionId;
+    rideSummary.startUTC = formatUTC();
+    qualitySum = 0;
+    hasLastRideGPS = false;
+    lastRideLatitude = 0;
+    lastRideLongitude = 0;
+    lastRideGPSTime = 0;
+    bufferIndex = 0;
+    lastSensorLog = 0;
+    lastRoadLog = 0;
+    lastGPSLog = 0;
+
     logging = true;
-    Serial.printf("✅ Logging gestartet: %s\n", currentFileName.c_str());
+    Serial.printf("✅ Sensor-Log: %s\n", currentFileName.c_str());
+    if (roadLogFile) Serial.printf("✅ Straßen-Log: %s\n", roadFileName.c_str());
+    if (gpsLogFile) Serial.printf("✅ GPS-Log: %s\n", gpsFileName.c_str());
+    if (eventLogFile) Serial.printf("✅ Ereignis-Log: %s\n", eventFileName.c_str());
     
     return true;
 }
 
 void SDLogger::stopLogging() {
     if (!logging) return;
-    
+
+    rideSummary.durationSeconds = (millis() - sessionStartTime) / 1000;
+    rideSummary.endUTC = formatUTC();
+    rideSummary.active = false;
+    rideSummary.completed = true;
+    rideSummary.interrupted = false;
+    if (rideSummary.qualitySamples > 0) {
+        rideSummary.averageQuality =
+            qualitySum / rideSummary.qualitySamples;
+    }
+
     flush();
-    
-    if (currentLogFile) {
-        currentLogFile.close();
+    if (!isReady()) {
+        logging = false;
+        Serial.println("⚠️ Messfahrt wegen SD-Schreibfehler abgebrochen");
+        return;
     }
-    
-    if (eventLogFile) {
-        eventLogFile.close();
-    }
-    
+
+    writeRideSummaryFile();
+    closeLogFiles();
     logging = false;
-    Serial.println("Logging gestoppt");
+
+    Serial.println("✅ Messfahrt beendet und alle Dateien geschlossen");
+    Serial.printf("   Dauer: %lu s, Strecke: %.2f km, Schlaglöcher: %lu, "
+                  "Durchschnitt: %.1f\n",
+                  rideSummary.durationSeconds, rideSummary.distanceKm,
+                  rideSummary.potholeCount, rideSummary.averageQuality);
+}
+
+RideSummary SDLogger::getRideSummary() const {
+    RideSummary result = rideSummary;
+    if (logging) {
+        result.active = true;
+        result.durationSeconds = (millis() - sessionStartTime) / 1000;
+        if (result.qualitySamples > 0) {
+            result.averageQuality = qualitySum / result.qualitySamples;
+        }
+    }
+    return result;
 }
 
 String SDLogger::generateFileName(LogType type) {
@@ -210,16 +250,48 @@ String SDLogger::generateFileName(LogType type) {
         case LOG_TYPE_ROAD: typeStr = "road"; break;
         case LOG_TYPE_EVENT: typeStr = "event"; break;
         case LOG_TYPE_SYSTEM: typeStr = "system"; break;
+        case LOG_TYPE_GPS: typeStr = "gps"; break;
+        case LOG_TYPE_CORRELATED: typeStr = "correlated"; break;
     }
     
     String fileName = "/" + config.filePrefix + "_" + typeStr;
     
     if (config.useTimestamp) {
-        fileName += "_" + String(millis());
+        fileName += "_" + sessionId;
     }
     
     fileName += ".csv";
     return fileName;
+}
+
+String SDLogger::generateSessionId() {
+    String baseId;
+    time_t now = time(nullptr);
+    struct tm utcTime = {};
+
+    if (now > 0 && gmtime_r(&now, &utcTime) &&
+        utcTime.tm_year + 1900 >= 2020) {
+        char timestamp[24];
+        strftime(timestamp, sizeof(timestamp), "%Y%m%d_%H%M%S", &utcTime);
+        baseId = timestamp;
+    } else {
+        baseId = "boot_" + String(millis());
+    }
+
+    String candidate = baseId;
+    uint16_t suffix = 1;
+    while (SD.exists("/" + config.filePrefix + "_sensor_" + candidate + ".csv") ||
+           SD.exists("/" + config.filePrefix + "_road_" + candidate + ".csv") ||
+           SD.exists("/" + config.filePrefix + "_gps_" + candidate + ".csv") ||
+           SD.exists("/" + config.filePrefix + "_event_" + candidate + ".csv") ||
+           SD.exists("/" + config.filePrefix + "_summary_" + candidate + ".csv") ||
+           SD.exists("/" + config.filePrefix + "_can_" + candidate + ".csv") ||
+           SD.exists("/" + config.filePrefix + "_correlated_" + candidate + ".csv")) {
+        char suffixText[8];
+        snprintf(suffixText, sizeof(suffixText), "_%02u", suffix++);
+        candidate = baseId + suffixText;
+    }
+    return candidate;
 }
 
 bool SDLogger::createLogFile(LogType type) {
@@ -228,49 +300,167 @@ bool SDLogger::createLogFile(LogType type) {
     
     if (!currentLogFile) {
         Serial.printf("❌ Kann Datei nicht erstellen: %s\n", currentFileName.c_str());
+        stats.errorCount++;
         return false;
     }
-    
+
+    if (!writeHeader(currentLogFile, type)) {
+        handleCardFailure("CSV-Kopfzeile konnte nicht geschrieben werden");
+        return false;
+    }
+
     stats.fileCount++;
     return true;
 }
 
-void SDLogger::writeHeader(File& file, LogType type) {
+bool SDLogger::openLogFile(File& file, String& fileName, LogType type) {
+    fileName = generateFileName(type);
+    file = SD.open(fileName, FILE_WRITE);
+    if (!file) {
+        Serial.printf("❌ Kann Datei nicht erstellen: %s\n", fileName.c_str());
+        stats.errorCount++;
+        return false;
+    }
+
+    if (!writeHeader(file, type)) {
+        handleCardFailure("CSV-Kopfzeile konnte nicht geschrieben werden");
+        return false;
+    }
+
+    stats.fileCount++;
+    return true;
+}
+
+void SDLogger::closeLogFiles() {
+    if (currentLogFile) currentLogFile.close();
+    if (roadLogFile) roadLogFile.close();
+    if (gpsLogFile) gpsLogFile.close();
+    if (canLogFile) canLogFile.close();
+    if (eventLogFile) eventLogFile.close();
+    if (correlatedLogFile) correlatedLogFile.close();
+}
+
+void SDLogger::handleCardFailure(const char* reason, uint32_t droppedRecords) {
+    if (!initialized && !cardAvailable) {
+        return;
+    }
+
+    if (logging) {
+        rideSummary.durationSeconds = (millis() - sessionStartTime) / 1000;
+        rideSummary.endUTC = formatUTC();
+        rideSummary.active = false;
+        rideSummary.completed = false;
+        rideSummary.interrupted = true;
+    }
+
+    stats.errorCount++;
+    stats.droppedLogs += droppedRecords;
+    closeLogFiles();
+    logging = false;
+    SD.end();
+    initialized = false;
+    cardAvailable = false;
+
+    Serial.printf("⚠️ SD-Fehler: %s; Aufzeichnung beendet\n", reason);
+}
+
+bool SDLogger::writeHeader(File& file, LogType type) {
+    const char* header = nullptr;
     switch(type) {
         case LOG_TYPE_SENSOR:
-            file.println("Zeit,Heading,Pitch,Roll,AccelX,AccelY,AccelZ,GyroX,GyroY,GyroZ,Temp,CalSys,CalGyro,CalAccel,CalMag");
+            header = "UTC,UptimeMs,RelativeHeading,Pitch,Roll,AccelX,AccelY,AccelZ,GyroX,GyroY,GyroZ,Temp,CalSystemInfo,CalGyro,CalAccel,CalMagUnused";
             break;
             
         case LOG_TYPE_EVENT:
-            file.println("Zeit,Ereignis,Beschreibung,Latitude,Longitude,Schwere");
+            header = "UTC,UptimeMs,Ereignis,Beschreibung,Latitude,Longitude,Schwere";
             break;
             
         case LOG_TYPE_ROAD:
-            file.println("Zeit,Qualität,Glätte,Kurven/km,VibrationRMS,MaxStoß");
+            header = "UTC,UptimeMs,Qualität,Glätte,KurvenProKm,VibrationRMS";
             break;
             
         case LOG_TYPE_CAN:
-            file.println("Zeit,CAN_ID,Extended,RTR,DLC,Data0,Data1,Data2,Data3,Data4,Data5,Data6,Data7");
+            header = "UTC,UptimeMs,CAN_ID,Extended,RTR,DLC,Data0,Data1,Data2,Data3,Data4,Data5,Data6,Data7";
             break;
             
         case LOG_TYPE_SYSTEM:
-            file.println("Zeit,Status,Nachricht");
+            header = "UTC,UptimeMs,Status,Nachricht";
+            break;
+
+        case LOG_TYPE_GPS:
+            header = "UTC,UptimeMs,Latitude,Longitude,AltitudeM,SpeedKmh,HeadingDeg,Satellites,ValidFix,HDOP";
+            break;
+
+        case LOG_TYPE_CORRELATED:
+            header = "UTC,UptimeMs,Type,RelativeHeading,Pitch,Roll,AccelMag,Temp,CAN_ID,DLC,D0,D1,D2,D3,D4,D5,D6,D7";
             break;
     }
+
+    return header != nullptr && file && file.println(header) > 0;
 }
 
-bool SDLogger::checkSDCard() {
-    if (!cardAvailable) {
+bool SDLogger::checkHealth() {
+    if (!initialized || !cardAvailable) {
         return false;
     }
     
-    // Karte noch vorhanden?
-    if (SD.cardType() == CARD_NONE) {
-        cardAvailable = false;
-        Serial.println("⚠️ SD-Karte entfernt!");
+    uint8_t cardType = SD.cardType();
+    uint64_t totalBytes = SD.totalBytes();
+    File root = SD.open("/");
+    bool rootAvailable = static_cast<bool>(root);
+    if (root) {
+        root.close();
+    }
+
+    if (cardType == CARD_NONE || totalBytes == 0 || !rootAvailable) {
+        handleCardFailure("SD-Karte nicht mehr erreichbar");
         return false;
     }
     
+    return true;
+}
+
+bool SDLogger::writeRideSummaryFile() {
+    if (!cardAvailable || sessionId.length() == 0) {
+        return false;
+    }
+
+    String summaryFileName =
+        "/" + config.filePrefix + "_summary_" + sessionId + ".csv";
+    File summaryFile = SD.open(summaryFileName, FILE_WRITE);
+    if (!summaryFile) {
+        Serial.printf("❌ Fahrzusammenfassung konnte nicht erstellt werden: %s\n",
+                      summaryFileName.c_str());
+        stats.errorCount++;
+        return false;
+    }
+
+    size_t headerWritten = summaryFile.println(
+        "Session,StartUTC,EndUTC,DauerSekunden,StreckeKm,"
+        "Schlagloecher,Kurven,Qualitaetswerte,Durchschnittsqualitaet");
+    size_t summaryWritten = summaryFile.printf(
+        "%s,%s,%s,%lu,%.3f,%lu,%lu,%lu,%.1f\n",
+        rideSummary.sessionId.c_str(),
+        rideSummary.startUTC.c_str(),
+        rideSummary.endUTC.c_str(),
+        static_cast<unsigned long>(rideSummary.durationSeconds),
+        rideSummary.distanceKm,
+        static_cast<unsigned long>(rideSummary.potholeCount),
+        static_cast<unsigned long>(rideSummary.curveCount),
+        static_cast<unsigned long>(rideSummary.qualitySamples),
+        rideSummary.averageQuality);
+    summaryFile.flush();
+    summaryFile.close();
+
+    if (headerWritten == 0 || summaryWritten == 0) {
+        Serial.println("❌ Fahrzusammenfassung konnte nicht geschrieben werden");
+        stats.errorCount++;
+        stats.droppedLogs++;
+        return false;
+    }
+
+    stats.fileCount++;
+    Serial.printf("✅ Fahrzusammenfassung: %s\n", summaryFileName.c_str());
     return true;
 }
 
@@ -278,7 +468,15 @@ void SDLogger::flushBuffer() {
     if (bufferIndex > 0 && currentLogFile) {
         // Sicherheits-Check vor Buffer-Zugriff
         if (bufferIndex <= BUFFER_SIZE) {
-            currentLogFile.write((const uint8_t*)writeBuffer, bufferIndex);
+            size_t bytesToWrite = bufferIndex;
+            size_t bytesWritten =
+                currentLogFile.write((const uint8_t*)writeBuffer, bytesToWrite);
+            if (bytesWritten != bytesToWrite) {
+                bufferIndex = 0;
+                handleCardFailure(
+                    "Sensorpuffer konnte nicht vollständig geschrieben werden", 1);
+                return;
+            }
         } else {
             // Kritischer Fehler: Buffer-Overflow erkannt
             Serial.printf("❌ KRITISCH: Buffer-Overflow erkannt! Index: %d, Max: %d\n", 
@@ -286,7 +484,14 @@ void SDLogger::flushBuffer() {
             stats.errorCount++;
             
             // Notfall-Flush nur bis zur sicheren Grenze
-            currentLogFile.write((const uint8_t*)writeBuffer, BUFFER_SIZE - BUFFER_SAFETY_MARGIN);
+            size_t emergencySize = BUFFER_SIZE - BUFFER_SAFETY_MARGIN;
+            if (currentLogFile.write(
+                    (const uint8_t*)writeBuffer, emergencySize) != emergencySize) {
+                bufferIndex = 0;
+                handleCardFailure(
+                    "Notfallpuffer konnte nicht geschrieben werden", 1);
+                return;
+            }
         }
         bufferIndex = 0;
     }
@@ -338,7 +543,20 @@ size_t SDLogger::getAvailableBufferSpace() const {
 
 String SDLogger::formatTimestamp() {
     unsigned long elapsed = millis() - sessionStartTime;
-    return String(elapsed);
+    return formatUTC() + "," + String(elapsed);
+}
+
+String SDLogger::formatUTC() {
+    time_t now = time(nullptr);
+    struct tm utcTime = {};
+    if (now <= 0 || !gmtime_r(&now, &utcTime) ||
+        utcTime.tm_year + 1900 < 2020) {
+        return "";
+    }
+
+    char timestamp[24];
+    strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%SZ", &utcTime);
+    return String(timestamp);
 }
 
 bool SDLogger::logSensorData(const SensorData& data) {
@@ -352,8 +570,8 @@ bool SDLogger::logSensorData(const SensorData& data) {
     // Sichere Formatierung mit begrenzter Puffergröße
     char logBuffer[256]; // Maximale Zeilenlänge begrenzt
     int written = snprintf(logBuffer, sizeof(logBuffer), 
-        "%lu,%.1f,%.1f,%.1f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.1f,%d,%d,%d,%d\n",
-        now - sessionStartTime,
+        "%s,%.1f,%.1f,%.1f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.1f,%d,%d,%d,%d\n",
+        formatTimestamp().c_str(),
         data.heading, data.pitch, data.roll,
         data.accelX, data.accelY, data.accelZ,
         data.gyroX, data.gyroY, data.gyroZ,
@@ -383,6 +601,7 @@ bool SDLogger::logSensorData(const SensorData& data) {
     }
     
     stats.droppedLogs++;
+    stats.errorCount++;
     return false;
 }
 
@@ -395,27 +614,32 @@ bool SDLogger::logVibrationMetrics(const VibrationMetrics& metrics) {
                     String(metrics.frequency, 1) + "," +
                     String(metrics.shockCount) + "\n";
     
-    if (eventLogFile) {
-        eventLogFile.print(logLine);
+    if (eventLogFile &&
+        eventLogFile.print(logLine) == logLine.length()) {
         stats.totalWrites++;
         stats.totalBytes += logLine.length();
         return true;
     }
-    
+
+    handleCardFailure("Vibrationsdaten konnten nicht geschrieben werden", 1);
     return false;
 }
 
 bool SDLogger::logCalibration(const CalibrationData& cal) {
     if (!logging) return false;
     
-    String status = cal.isFullyCalibrated() ? "VOLLSTÄNDIG" : "UNVOLLSTÄNDIG";
-    return logEvent("KALIBRIERUNG", status + " Sys:" + String(cal.system) +
-                    " Gyr:" + String(cal.gyro) + " Acc:" + String(cal.accel) +
-                    " Mag:" + String(cal.mag));
+    String status = cal.isFullyCalibrated() ? "IMUPLUS_OK" : "IMUPLUS_UNVOLLSTÄNDIG";
+    return logEvent("KALIBRIERUNG", status + " Gyr:" + String(cal.gyro) +
+                    " Acc:" + String(cal.accel));
 }
 
 bool SDLogger::logCANMessage(const CANMessage& msg) {
     if (!logging || !config.enableCANLog) return false;
+
+    if (!canLogFile &&
+        !openLogFile(canLogFile, canFileName, LOG_TYPE_CAN)) {
+        return false;
+    }
     
     // Sichere CAN-Message-Formatierung mit begrenztem Buffer
     char logBuffer[128]; // Ausreichend für CAN-Message (max 64 Zeichen + Header)
@@ -443,8 +667,8 @@ bool SDLogger::logCANMessage(const CANMessage& msg) {
     
     // Formatiere komplette CAN-Message
     int written = snprintf(logBuffer, sizeof(logBuffer), 
-        "%lu,%lX,%d,%d,%d%s\n",
-        msg.timestamp, msg.canId, msg.extended ? 1 : 0, 
+        "%s,%lX,%d,%d,%d%s\n",
+        formatTimestamp().c_str(), msg.canId, msg.extended ? 1 : 0,
         msg.rtr ? 1 : 0, msg.dlc, dataBytes);
     
     // Überprüfe Truncation
@@ -453,21 +677,14 @@ bool SDLogger::logCANMessage(const CANMessage& msg) {
         stats.errorCount++;
     }
     
-    // Verwende sichere Buffer-Funktion
-    bool success = safeAppendToBuffer(logBuffer, strlen(logBuffer));
-    
-    if (success) {
+    size_t logLength = strlen(logBuffer);
+    if (canLogFile && canLogFile.print(logBuffer) == logLength) {
         stats.totalWrites++;
-        stats.totalBytes += strlen(logBuffer);
-        
-        // Auto-Flush bei vielen CAN-Messages
-        if (getAvailableBufferSpace() < BUFFER_SIZE * 0.3) {
-            flushBuffer();
-        }
+        stats.totalBytes += logLength;
         return true;
     }
-    
-    stats.droppedLogs++;
+
+    handleCardFailure("CAN-Daten konnten nicht geschrieben werden", 1);
     return false;
 }
 
@@ -481,9 +698,11 @@ bool SDLogger::logGPSData(const GPSData& gps) {
     
     // Sichere GPS-Daten-Formatierung
     char logBuffer[256];
+    String utc = gps.datetime_valid ? formatGPSDateTimeUTC(gps) : formatUTC();
     int written = snprintf(logBuffer, sizeof(logBuffer),
-        "%lu,%.6f,%.6f,%.2f,%.1f,%.1f,%d,%d,%.2f\n",
-        now, gps.latitude, gps.longitude, gps.altitude,
+        "%s,%lu,%.6f,%.6f,%.2f,%.1f,%.1f,%d,%d,%.2f\n",
+        utc.c_str(), now - sessionStartTime,
+        gps.latitude, gps.longitude, gps.altitude,
         gps.speed_kmh, gps.heading_deg, gps.satellites, 
         gps.valid_fix ? 1 : 0, gps.hdop);
     
@@ -493,17 +712,49 @@ bool SDLogger::logGPSData(const GPSData& gps) {
         stats.errorCount++;
     }
     
-    // Verwende sichere Buffer-Funktion
-    bool success = safeAppendToBuffer(logBuffer, strlen(logBuffer));
-    
-    if (success) {
+    size_t logLength = strlen(logBuffer);
+    if (gpsLogFile && gpsLogFile.print(logBuffer) == logLength) {
         stats.totalWrites++;
-        stats.totalBytes += strlen(logBuffer);
+        stats.totalBytes += logLength;
         lastGPSLog = now;
+
+        // Strecke nur aus plausiblen, bewegten GPS-Punkten bilden. Das
+        // verhindert, dass Positionsrauschen im Stand als Weg gezählt wird.
+        if (gps.valid_fix && gps.location_valid &&
+            (gps.hdop <= 10.0f || gps.hdop == 0.0f)) {
+            if (!hasLastRideGPS) {
+                lastRideLatitude = gps.latitude;
+                lastRideLongitude = gps.longitude;
+                lastRideGPSTime = now;
+                hasLastRideGPS = true;
+            } else if (gps.speed_valid && gps.speed_kmh < 1.5f) {
+                lastRideLatitude = gps.latitude;
+                lastRideLongitude = gps.longitude;
+                lastRideGPSTime = now;
+            } else {
+                float segmentMeters = calculateDistance(
+                    lastRideLatitude, lastRideLongitude,
+                    gps.latitude, gps.longitude);
+                float elapsedSeconds =
+                    max((now - lastRideGPSTime) / 1000.0f, 0.2f);
+                float speedMetersPerSecond =
+                    max(gps.speed_kmh, 5.0f) / 3.6f;
+                float maxPlausibleSegment =
+                    max(30.0f, speedMetersPerSecond * elapsedSeconds * 3.0f + 10.0f);
+
+                if (segmentMeters >= 1.0f &&
+                    segmentMeters <= maxPlausibleSegment) {
+                    rideSummary.distanceKm += segmentMeters / 1000.0f;
+                    lastRideLatitude = gps.latitude;
+                    lastRideLongitude = gps.longitude;
+                    lastRideGPSTime = now;
+                }
+            }
+        }
         return true;
     }
     
-    stats.droppedLogs++;
+    handleCardFailure("GPS-Daten konnten nicht geschrieben werden", 1);
     return false;
 }
 
@@ -522,14 +773,19 @@ bool SDLogger::logRoadQuality(float quality, float smoothness,
                     String(curveFrequency, 1) + "," +
                     String(vibrationRMS, 3) + "\n";
     
-    if (currentLogFile) {
-        currentLogFile.print(logLine);
+    if (roadLogFile &&
+        roadLogFile.print(logLine) == logLine.length()) {
         stats.totalWrites++;
         stats.totalBytes += logLine.length();
         lastRoadLog = now;
+        qualitySum += quality;
+        rideSummary.qualitySamples++;
+        rideSummary.averageQuality =
+            qualitySum / rideSummary.qualitySamples;
         return true;
     }
-    
+
+    handleCardFailure("Straßenqualitätsdaten konnten nicht geschrieben werden", 1);
     return false;
 }
 
@@ -554,14 +810,15 @@ bool SDLogger::logEvent(const String& eventType, const String& description,
                     String(lat, 6) + "," +
                     String(lon, 6) + ",0\n";
     
-    if (eventLogFile) {
-        eventLogFile.print(logLine);
+    if (eventLogFile &&
+        eventLogFile.print(logLine) == logLine.length()) {
         eventLogFile.flush(); // Ereignisse sofort speichern
         stats.totalWrites++;
         stats.totalBytes += logLine.length();
         return true;
     }
-    
+
+    handleCardFailure("Ereignisdaten konnten nicht geschrieben werden", 1);
     return false;
 }
 
@@ -571,7 +828,13 @@ bool SDLogger::logPothole(float severity, float lat, float lon) {
     else if (severity < 5.0) sevStr = "MITTEL";
     else sevStr = "GROSS";
     
-    return logEvent("SCHLAGLOCH", sevStr + " (" + String(severity, 1) + " m/s²)", lat, lon);
+    bool logged = logEvent(
+        "SCHLAGLOCH", sevStr + " (" + String(severity, 1) + " m/s²)",
+        lat, lon);
+    if (logged) {
+        rideSummary.potholeCount++;
+    }
+    return logged;
 }
 
 bool SDLogger::logCurve(float angle, float radius, float lat, float lon) {
@@ -580,7 +843,11 @@ bool SDLogger::logCurve(float angle, float radius, float lat, float lon) {
         desc += ", Radius: " + String(radius, 0) + "m";
     }
     
-    return logEvent("KURVE", desc, lat, lon);
+    bool logged = logEvent("KURVE", desc, lat, lon);
+    if (logged) {
+        rideSummary.curveCount++;
+    }
+    return logged;
 }
 
 bool SDLogger::logSystemStatus(const String& status) {
@@ -606,10 +873,11 @@ void SDLogger::flush() {
     if (currentLogFile) {
         currentLogFile.flush();
     }
-    
-    if (eventLogFile) {
-        eventLogFile.flush();
-    }
+    if (roadLogFile) roadLogFile.flush();
+    if (gpsLogFile) gpsLogFile.flush();
+    if (canLogFile) canLogFile.flush();
+    if (eventLogFile) eventLogFile.flush();
+    if (correlatedLogFile) correlatedLogFile.flush();
     
     lastFlush = millis();
 }
@@ -629,7 +897,12 @@ uint32_t SDLogger::getFileSize() const {
 uint32_t SDLogger::getFreeSpace() {
     if (!cardAvailable) return 0;
     
-    uint64_t freeBytes = SD.totalBytes() - SD.usedBytes();
+    uint64_t totalBytes = SD.totalBytes();
+    uint64_t usedBytes = SD.usedBytes();
+    if (totalBytes == 0 || usedBytes > totalBytes) {
+        return 0;
+    }
+    uint64_t freeBytes = totalBytes - usedBytes;
     return freeBytes / 1024; // KB zurückgeben
 }
 

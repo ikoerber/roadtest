@@ -1,5 +1,7 @@
 #include "gps_manager.h"
 #include <math.h>
+#include <time.h>
+#include <sys/time.h>
 
 // Statische Member-Variablen
 GPSManager* GPSManager::instance = nullptr;
@@ -9,14 +11,15 @@ GPSManager gpsManager;
 
 GPSManager::GPSManager() : 
     serial(nullptr), initialized(false), rxPin(16), txPin(15), 
-    baudRate(9600), lastDataUpdate(0), dataReady(false), 
+    baudRate(9600), lastDataUpdate(0), lastCharacterUpdate(0),
+    lastNMEAStartUpdate(0), dataReady(false),
     interruptEnabled(false), rxIndex(0), rxProcessIndex(0) {
     
     // Status initialisieren
     status = {false, false, 0, 0, 0, 0};
     
     // Leere GPS-Daten
-    lastValidData = {0.0, 0.0, 0.0, 0.0, 0.0, 0, false, 0, 0.0, false, false, false};
+    lastValidData = {};
     
     // Instance für Interrupt-Handler setzen
     instance = this;
@@ -35,6 +38,16 @@ bool GPSManager::begin(int rx, int tx, uint32_t baud) {
     rxPin = rx;
     txPin = tx;
     baudRate = baud;
+    status.initialized = false;
+    status.communicating = false;
+    status.last_update = 0;
+    lastDataUpdate = 0;
+    lastCharacterUpdate = 0;
+    lastNMEAStartUpdate = 0;
+    lastValidData = {};
+    dataReady = false;
+    rxIndex = 0;
+    rxProcessIndex = 0;
     
     Serial.println("=== GPS-Manager Initialisierung ===");
     Serial.printf("UART2: RX=%d, TX=%d, Baud=%lu\n", rxPin, txPin, baudRate);
@@ -43,19 +56,10 @@ bool GPSManager::begin(int rx, int tx, uint32_t baud) {
     Serial2.begin(baudRate, SERIAL_8N1, rxPin, txPin);
     serial = &Serial2;
     
-    delay(100);
-    
-    // Kommunikations-Test
-    if (!testCommunication()) {
-        Serial.println("⚠️ GPS-Kommunikation noch nicht aktiv (normal bei Cold Start)");
-        // Trotzdem als initialisiert markieren - GPS braucht Zeit für Fix
-    }
-    
     status.initialized = true;
     initialized = true;
     
-    Serial.println("✅ GPS-Manager erfolgreich initialisiert");
-    Serial.println("GPS benötigt 15-30 Sekunden für ersten Fix");
+    Serial.println("✅ GPS-UART initialisiert; NMEA-Prüfung läuft im Hintergrund");
     
     return true;
 }
@@ -72,6 +76,15 @@ void GPSManager::end() {
     }
     initialized = false;
     status.initialized = false;
+    status.communicating = false;
+    status.last_update = 0;
+    lastDataUpdate = 0;
+    lastCharacterUpdate = 0;
+    lastNMEAStartUpdate = 0;
+    lastValidData = {};
+    dataReady = false;
+    rxIndex = 0;
+    rxProcessIndex = 0;
     
     Serial.println("GPS-Manager beendet");
 }
@@ -88,6 +101,11 @@ void GPSManager::update() {
         // Polling-Modus: Direkt vom UART lesen
         while (serial->available() > 0) {
             char c = serial->read();
+            unsigned long now = millis();
+            lastCharacterUpdate = now;
+            if (c == '$') {
+                lastNMEAStartUpdate = now;
+            }
             
             if (gps.encode(c)) {
                 // Neuer kompletter NMEA-Satz verarbeitet
@@ -138,6 +156,11 @@ void GPSManager::processInterruptData() {
     while (rxProcessIndex != currentRxIndex) {
         char c = rxBuffer[rxProcessIndex];
         rxProcessIndex = (rxProcessIndex + 1) % RX_BUFFER_SIZE;
+        unsigned long now = millis();
+        lastCharacterUpdate = now;
+        if (c == '$') {
+            lastNMEAStartUpdate = now;
+        }
         
         if (gps.encode(c)) {
             // Neuer kompletter NMEA-Satz verarbeitet
@@ -225,6 +248,17 @@ GPSData GPSManager::getCurrentData() {
     if (gps.hdop.isValid()) {
         data.hdop = gps.hdop.hdop();
     }
+
+    if (hasValidDateTime()) {
+        data.year = gps.date.year();
+        data.month = gps.date.month();
+        data.day = gps.date.day();
+        data.hour = gps.time.hour();
+        data.minute = gps.time.minute();
+        data.second = gps.time.second();
+        data.centisecond = gps.time.centisecond();
+        data.datetime_valid = true;
+    }
     
     data.valid_fix = hasValidFix();
     data.timestamp = millis();
@@ -247,6 +281,64 @@ bool GPSManager::hasValidLocation() const {
 
 bool GPSManager::hasValidSpeed() const {
     return initialized && gps.speed.isValid();
+}
+
+bool GPSManager::hasValidDateTime() const {
+    if (!initialized || !gps.date.isValid() || !gps.time.isValid()) {
+        return false;
+    }
+
+    const uint16_t year = const_cast<TinyGPSPlus&>(gps).date.year();
+    return year >= 2020 && year <= 2099 &&
+           const_cast<TinyGPSPlus&>(gps).date.age() < 5000 &&
+           const_cast<TinyGPSPlus&>(gps).time.age() < 5000;
+}
+
+bool GPSManager::isCommunicating(unsigned long maxAge) const {
+    if (!initialized || !status.communicating || status.last_update == 0) {
+        return false;
+    }
+    return millis() - status.last_update <= maxAge;
+}
+
+bool GPSManager::isReceivingNMEA(unsigned long maxAge) const {
+    if (!initialized || lastCharacterUpdate == 0 ||
+        lastNMEAStartUpdate == 0) {
+        return false;
+    }
+
+    unsigned long now = millis();
+    return now - lastCharacterUpdate <= maxAge &&
+           now - lastNMEAStartUpdate <= maxAge;
+}
+
+bool GPSManager::syncSystemClock() {
+    if (!hasValidDateTime()) {
+        return false;
+    }
+
+    // mktime soll die GPS-Angaben unverändert als UTC interpretieren.
+    setenv("TZ", "UTC0", 1);
+    tzset();
+
+    struct tm utcTime = {};
+    utcTime.tm_year = gps.date.year() - 1900;
+    utcTime.tm_mon = gps.date.month() - 1;
+    utcTime.tm_mday = gps.date.day();
+    utcTime.tm_hour = gps.time.hour();
+    utcTime.tm_min = gps.time.minute();
+    utcTime.tm_sec = gps.time.second();
+    utcTime.tm_isdst = 0;
+
+    time_t epoch = mktime(&utcTime);
+    if (epoch <= 0) {
+        return false;
+    }
+
+    struct timeval tv = {};
+    tv.tv_sec = epoch;
+    tv.tv_usec = gps.time.centisecond() * 10000L;
+    return settimeofday(&tv, nullptr) == 0;
 }
 
 uint8_t GPSManager::getSatelliteCount() const {
@@ -332,17 +424,26 @@ bool GPSManager::testCommunication() {
     
     uint32_t startTime = millis();
     uint32_t charCount = 0;
+    bool nmeaStartSeen = false;
     
     // 3 Sekunden auf Daten warten
     while (millis() - startTime < 3000) {
         if (serial->available()) {
             char c = serial->read();
             charCount++;
-            
+
             if (c == '$') {
-                // NMEA-Satz-Start gefunden
+                nmeaStartSeen = true;
+            }
+
+            // Testdaten nicht verwerfen, sondern bereits an TinyGPS++ übergeben.
+            if (gps.encode(c)) {
+                status.sentences_received++;
+                lastDataUpdate = millis();
+                status.communicating = true;
+                status.last_update = lastDataUpdate;
                 Serial.println("OK");
-                Serial.printf("NMEA-Daten empfangen (%lu Zeichen in %lu ms)\n", 
+                Serial.printf("NMEA-Satz empfangen (%lu Zeichen in %lu ms)\n",
                              charCount, millis() - startTime);
                 return true;
             }
@@ -351,7 +452,8 @@ bool GPSManager::testCommunication() {
     }
     
     if (charCount > 0) {
-        Serial.printf("Zeichen empfangen (%lu), aber kein NMEA-Format\n", charCount);
+        Serial.printf("Zeichen empfangen (%lu), NMEA-Start: %s\n",
+                      charCount, nmeaStartSeen ? "ja" : "nein");
     } else {
         Serial.println("Keine Daten");
         Serial.println("Prüfe: TX/RX-Pins, Baudrate, GPS-Stromversorgung");
@@ -443,6 +545,19 @@ String formatGPSData(const GPSData& data) {
            formatGPSCoordinate(data.longitude, false) + 
            " | " + String(data.speed_kmh, 1) + " km/h" +
            " | " + String(data.satellites) + " Sat";
+}
+
+String formatGPSDateTimeUTC(const GPSData& data) {
+    if (!data.datetime_valid) {
+        return "";
+    }
+
+    char buffer[32];
+    snprintf(buffer, sizeof(buffer),
+             "%04u-%02u-%02uT%02u:%02u:%02u.%02uZ",
+             data.year, data.month, data.day,
+             data.hour, data.minute, data.second, data.centisecond);
+    return String(buffer);
 }
 
 float calculateDistance(float lat1, float lon1, float lat2, float lon2) {

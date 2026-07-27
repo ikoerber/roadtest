@@ -12,7 +12,7 @@
 
 | Komponente | Modell/Typ | Preis | Funktion | Bezugsquelle |
 |------------|------------|-------|----------|--------------|
-| **IMU-Sensor** | BNO055 Breakout | ~25€ | 9-DoF Sensor-Fusion | Adafruit, Bosch |
+| **IMU-Sensor** | BNO055 Breakout | ~25€ | IMUPLUS: Gyro + Beschleunigung | Adafruit, Bosch |
 | **Display** | SSD1306 OLED 0.96" | ~5€ | 128x64 Monochrom | AZ-Delivery, Waveshare |
 | **GPS-Modul** | BN-880 GPS | ~15€ | GPS/GLONASS/Beidou | Beitian, AliExpress |
 | **CAN-Interface** | MCP2515 + TJA1050 | ~8€ | CAN-Bus-Transceiver | CAN-Bus Triple |

@@ -13,9 +13,9 @@
 #include "bno055_manager.h"
 #include "sd_logger.h"
 #include "road_quality.h"
-#include "hardware_test.h"
 #include "gps_manager.h"
 #include "integration_tests.h"
+#include "web_manager.h"
 
 // Pin-Definitionen sind nun in hardware_config.cpp zentralisiert
 
@@ -31,12 +31,29 @@ bool canBusAvailable = false;
 bool sdCardAvailable = false;
 bool sdCardWasAvailable = false;
 bool gpsAvailable = false;
+bool gpsClockSynced = false;
+bool webAvailable = false;
+bool canInitializationAttempted = false;
+constexpr bool ENABLE_OPTIONAL_CAN = false;
 unsigned long lastSDCheck = 0;
 String currentLogFileName = "";
 String canLogFileName = "";
 File logFile;
 bool canLoggingEnabled = false;
 int totalCANMessages = 0;
+
+// Nicht blockierende Hardware-Überwachung
+constexpr unsigned long HARDWARE_CHECK_INTERVAL = 5000;
+constexpr unsigned long GPS_RESTART_INTERVAL = 30000;
+constexpr unsigned long BOOT_STATUS_INTERVAL = 1000;
+constexpr unsigned long BOOT_READY_HOLD_TIME = 2500;
+unsigned long lastHardwareCheck = 0;
+unsigned long lastGPSRestart = 0;
+unsigned long lastBootStatusDisplay = 0;
+unsigned long requiredHardwareReadySince = 0;
+uint8_t bnoMissingChecks = 0;
+uint8_t oledMissingChecks = 0;
+bool bootStatusActive = true;
 
 // RoadMetrics ist jetzt in road_quality.h definiert
 RoadMetrics currentMetrics = {0};
@@ -135,13 +152,13 @@ bool testSDWithSafePins() {
     };
     
     Serial.println("\n=== Hardware-Checkliste ===");
-    Serial.println("SD-Karten Module benötigen:");
-    Serial.println("• 5V Stromversorgung (VCC -> 5V Pin)");
+    Serial.println("SD-Karten Modul benötigt:");
+    Serial.println("• 3.3V Stromversorgung (wie auf dem PZSMOCN-Modul beschriftet)");
     Serial.println("• FAT32 formatierte SD-Karte");
     Serial.println("• Stabile Kabelverbindungen");
     Serial.println("• SD-Karte fest eingesteckt");
     Serial.println("\nAktuelle Verkabelung prüfen:");
-    Serial.println("• VCC    -> 5V (für SD-Modul mit Spannungsregler)");
+    Serial.println("• 3.3V   -> 3.3V");
     Serial.println("• GND    -> GND");
     Serial.printf("• CS     -> GPIO %d\n", SD_CS_PIN);
     Serial.printf("• MOSI   -> GPIO %d\n", SD_MOSI_PIN);
@@ -369,11 +386,9 @@ void testBNO055() {
     if (bnoManager.isReady()) {
         bnoManager.runSelfTest();
         CalibrationData cal = bnoManager.getCalibration();
-        Serial.println("\nKalibrierung (0-3):");
-        Serial.printf("  System: %d\n", cal.system);
+        Serial.println("\nIMUPLUS-Kalibrierung (0-3):");
         Serial.printf("  Gyro: %d\n", cal.gyro);
         Serial.printf("  Accel: %d\n", cal.accel);
-        Serial.printf("  Mag: %d\n", cal.mag);
         
         SensorData data = bnoManager.getCurrentData();
         Serial.printf("Temperatur: %.1f °C\n", data.temperature);
@@ -571,266 +586,249 @@ void testBufferSafety() {
     Serial.println("✅ Buffer-Sicherheits-Test abgeschlossen!");
 }
 
+bool initializeGPSAndClock() {
+    Serial.println("\n--- GPS-Manager (BN-880) ---");
+    Serial.printf("Hardware UART2: RX=GPIO%d, TX=GPIO%d\n", GPS_RX_PIN, GPS_TX_PIN);
+
+    if (!gpsManager.begin(GPS_RX_PIN, GPS_TX_PIN, GPS_BAUD_RATE)) {
+        Serial.println("❌ GPS-Manager Initialisierung fehlgeschlagen");
+        Serial.printf("Prüfe: GPS-TX->GPIO%d, GPS-RX->GPIO%d und gemeinsame Masse\n",
+                      GPS_RX_PIN, GPS_TX_PIN);
+        return false;
+    }
+
+    gpsManager.enableInterruptMode(true);
+    lastGPSRestart = millis();
+    Serial.println("✅ GPS läuft; Fix und UTC-Zeit werden im Hintergrund gesucht");
+    return true;
+}
+
+bool i2cDeviceResponds(uint8_t address) {
+    Wire.beginTransmission(address);
+    return Wire.endTransmission() == 0;
+}
+
+void configureSDLogger() {
+    LogConfig logConfig = sdLogger.getConfig();
+    logConfig.sensorLogInterval = 100;
+    logConfig.roadLogInterval = 1000;
+    logConfig.gpsLogInterval = 200;
+    sdLogger.setConfig(logConfig);
+}
+
+bool tryInitializeSDLogger() {
+    if (sdLogger.isReady()) {
+        return true;
+    }
+
+    SD.end();
+    spiSD.end();
+    spiSD.begin(SD_SCK_PIN, SD_MISO_PIN, SD_MOSI_PIN, SD_CS_PIN);
+    if (!sdLogger.begin(spiSD)) {
+        sdCardAvailable = false;
+        return false;
+    }
+
+    configureSDLogger();
+    sdCardAvailable = true;
+    Serial.println("✅ SD-Logger bereit");
+    return true;
+}
+
+bool initializeOptionalCAN() {
+    SPI.end();
+    SPI.begin(CAN_SCK_PIN, CAN_MISO_PIN, CAN_MOSI_PIN);
+    SPI.setFrequency(1000000);
+    SPI.setDataMode(SPI_MODE0);
+    SPI.setBitOrder(MSBFIRST);
+    canReader.setPins(CAN_CS_PIN, CAN_INT_PIN);
+    canReader.setClockFrequency(8E6);
+
+    bool available = canReader.begin(500E3);
+    if (available) {
+        Serial.println("✅ Optionales CAN-Modul bereit");
+    } else {
+        Serial.println("ℹ️ CAN nicht verbunden (optional)");
+    }
+    return available;
+}
+
+bool requiredHardwareReady() {
+    return oledManager.isReady() && bnoManager.isSelfTestPassed() &&
+           bnoManager.isFusionModeActive() &&
+           sdLogger.isReady() && gpsManager.isReceivingNMEA() &&
+           webAvailable;
+}
+
+void updateBootStatusDisplay(unsigned long now, bool force = false) {
+    bool allReady = requiredHardwareReady();
+    if (!allReady) {
+        bootStatusActive = true;
+        requiredHardwareReadySince = 0;
+    } else if (requiredHardwareReadySince == 0) {
+        requiredHardwareReadySince = now;
+    }
+
+    if (oledManager.isReady() &&
+        (force || (bootStatusActive &&
+                   now - lastBootStatusDisplay >= BOOT_STATUS_INTERVAL))) {
+        oledManager.showBootStatus(
+            bnoManager.isSelfTestPassed() && bnoManager.isFusionModeActive(),
+            sdLogger.isReady(),
+            gpsManager.isReady(), gpsManager.isReceivingNMEA(),
+            canBusAvailable, webAvailable, allReady);
+        lastBootStatusDisplay = now;
+    }
+
+    if (allReady && bootStatusActive &&
+        now - requiredHardwareReadySince >= BOOT_READY_HOLD_TIME) {
+        bootStatusActive = false;
+    }
+}
+
+void handleHardwareRecovery(unsigned long now) {
+    if (now - lastHardwareCheck < HARDWARE_CHECK_INTERVAL) {
+        return;
+    }
+    lastHardwareCheck = now;
+
+    // BNO055 und OLED werden per I2C-Ping überwacht. Erst drei
+    // aufeinanderfolgende Ausfälle gelten als echte Trennung.
+    bool bnoResponding = i2cDeviceResponds(0x29);
+    if (bnoManager.isReady()) {
+        bnoMissingChecks = bnoResponding ? 0 : bnoMissingChecks + 1;
+        if (bnoMissingChecks >= 3) {
+            Serial.println("⚠️ BNO055 nicht mehr erreichbar");
+            bnoManager.end();
+            bnoMissingChecks = 0;
+        } else if (bnoResponding && !bnoManager.isSelfTestPassed()) {
+            bnoManager.runSelfTest();
+        } else if (bnoResponding && !bnoManager.verifyFusionMode()) {
+            Serial.println("⚠️ BNO055-Fusion dreimal fehlerhaft; vollständiger Neustart");
+            bnoManager.restartFusion();
+        }
+    } else if (bnoResponding && bnoManager.begin()) {
+        if (bnoManager.runSelfTest()) {
+            Serial.println("✅ BNO055 im Hintergrund wieder verbunden");
+        } else {
+            Serial.println("⚠️ BNO055 verbunden, Selbsttest noch fehlerhaft");
+        }
+    }
+
+    bool oledResponding =
+        i2cDeviceResponds(OLED_ADDRESS_A) ||
+        i2cDeviceResponds(OLED_ADDRESS_B);
+    if (oledManager.isReady()) {
+        oledMissingChecks = oledResponding ? 0 : oledMissingChecks + 1;
+        if (oledMissingChecks >= 3) {
+            Serial.println("⚠️ OLED nicht mehr erreichbar");
+            oledManager.end(false);
+            oledMissingChecks = 0;
+        }
+    } else if (oledResponding && oledManager.begin(OLED_ADDRESS_A)) {
+        oledManager.setRotation(true);
+        bootStatusActive = true;
+        Serial.println("✅ OLED im Hintergrund wieder verbunden");
+    }
+
+    if (sdLogger.isReady()) {
+        sdCardAvailable = sdLogger.checkHealth();
+    }
+    if (!sdLogger.isReady()) {
+        tryInitializeSDLogger();
+    }
+
+    if (!gpsManager.isReady()) {
+        gpsAvailable = initializeGPSAndClock();
+    } else {
+        gpsAvailable = true;
+        if (!gpsManager.isReceivingNMEA(15000) &&
+            now - lastGPSRestart >= GPS_RESTART_INTERVAL) {
+            Serial.println("⚠️ Keine GPS-NMEA-Daten; UART wird neu gestartet");
+            gpsManager.end();
+            gpsAvailable = initializeGPSAndClock();
+        }
+    }
+
+    webAvailable = webManager.isReady();
+    if (!webAvailable) {
+        webAvailable = webManager.begin();
+    }
+
+    // CAN ist optional und wird erst nach dem vollständigen Systemstart
+    // genau einmal geprüft. So kann es den WLAN-Start niemals verzögern.
+    if (ENABLE_OPTIONAL_CAN && !canInitializationAttempted) {
+        canInitializationAttempted = true;
+        canBusAvailable = initializeOptionalCAN();
+    }
+}
+
 void setup() {
     Serial.begin(115200);
     delay(1000);
-    
+
     // ESP32 Log Level auf Error setzen
     esp_log_level_set("*", ESP_LOG_ERROR);
     esp_log_level_set("i2c.master", ESP_LOG_NONE);
     esp_log_level_set("Wire", ESP_LOG_NONE);
-    
+
     Serial.println("\n=== Straßenqualitäts-Messsystem ===");
     Serial.println("Für kurvenreiche Genießer-Strecken");
-    Serial.println("Version 1.0 mit Hardware-Test\n");
-    
-    // I2C sauber initialisieren
-    Serial.println("Initialisiere I2C-Bus...");
-    
+    Serial.println("Version 1.5.10 mit entprellter BNO055-IMUPLUS-Prüfung\n");
+
+    // Das Service-WLAN steht vor allen externen Hardwareprüfungen bereit.
+    // Selbst ein langsames oder defektes Zusatzmodul verhindert so nicht,
+    // dass Diagnose und OTA erreichbar werden.
+    webAvailable = webManager.begin();
+
+    // I2C-Bus einmal sauber aufsetzen.
     Wire.end();
-    delay(100);
-    
     pinMode(I2C_SDA, INPUT_PULLUP);
     pinMode(I2C_SCL, INPUT_PULLUP);
-    delay(200);
-    
     bool i2cSuccess = Wire.begin(I2C_SDA, I2C_SCL);
-    Wire.setClock(100000);
-    delay(200);
-    
-    Serial.print("I2C-Bus Status: ");
-    if (i2cSuccess) {
-        Serial.println("OK (SDA=GPIO8, SCL=GPIO9)");
+    Wire.setClock(I2C_CLOCK_SPEED);
+    Serial.printf("I2C: %s (SDA=%d, SCL=%d)\n",
+                  i2cSuccess ? "OK" : "FEHLER", I2C_SDA, I2C_SCL);
+
+    // Ab hier wird immer dieselbe OLED-Statusseite aktualisiert.
+    if (oledManager.begin(OLED_ADDRESS_A)) {
+        oledManager.setRotation(true);
+        Serial.println("✅ OLED geprüft");
     } else {
-        Serial.println("FEHLER - Mögliche Pin-Konflikte");
+        Serial.println("⚠️ OLED fehlt; Wiederholungsprüfung läuft im Hintergrund");
     }
-    
-    // I2C-Bus Test
-    Serial.println("Teste I2C-Bus Kommunikation...");
-    Wire.beginTransmission(0x00);
-    uint8_t error = Wire.endTransmission();
-    Serial.print("I2C-Bus Test: ");
-    if (error == 2) {
-        Serial.println("OK (Bus funktionsfähig)");
+    updateBootStatusDisplay(millis(), true);
+
+    if (bnoManager.begin()) {
+        bool selfTestOK = bnoManager.runSelfTest();
+        Serial.printf("BNO055 Selbsttest: %s\n", selfTestOK ? "OK" : "FEHLER");
     } else {
-        Serial.print("Unerwarteter Status: "); Serial.println(error);
+        Serial.println("⚠️ BNO055 fehlt; Firmware startet trotzdem");
     }
-    
-    // I2C Scanner übersprungen - Adressen sind bekannt:
-    // BNO055: 0x28 oder 0x29
-    // OLED: 0x3C oder 0x3D
-    Serial.println("I2C-Scan übersprungen - verwende bekannte Adressen");
-    
-    // OLED Display initialisieren
-    Serial.println("\nInitialisiere OLED Display...");
-    
-    // OLED-Scan übersprungen - verwende direkt bekannte Adresse 0x3C
-    Serial.println("Verwende OLED-Adresse 0x3C (fest verlötet)");
-    
-    if (oledManager.begin()) {
-        Serial.println("OLED erfolgreich initialisiert!");
-        
-        // Display um 180 Grad drehen wenn es auf dem Kopf steht
-        oledManager.setRotation(true);  // true = 180 Grad, false = normal
-        
-        oledManager.showTestResults("Straßenqualität", true, "Starte System...");
-        delay(2000);
-        
-        // Vollständiger OLED-Test ausführen
-        testOLED();
-        
-        // Buffer-Sicherheits-Test ausführen
-        testBufferSafety();
-    } else {
-        Serial.println("OLED Initialisierung fehlgeschlagen!");
-        Serial.println("Prüfe: VCC->3.3V, GND->GND, SDA->GPIO8, SCL->GPIO9");
-    }
-    
-    // BNO055Manager initialisieren
-    Serial.println("\nInitialisiere BNO055Manager...");
-    if (!bnoManager.begin()) {
-        Serial.println("BNO055 nicht gefunden! Prüfe Verkabelung.");
-        Serial.println("SDA=GPIO8, SCL=GPIO9, VCC=5V, GND=GND");
-        Serial.println("ADDR-Pin scheint auf 3.3V zu liegen (Adresse 0x29)");
-        
-        if (oledManager.isReady()) {
-            oledManager.showTestResults("BNO055 Fehler", false, "Verkabelung prüfen!");
-        }
-        
-        while (1) {
-            delay(5000);
-            Serial.println("Warte auf BNO055...");
-            if (bnoManager.begin()) {
-                Serial.println("BNO055 jetzt gefunden!");
-                break;
-            }
+    updateBootStatusDisplay(millis(), true);
+
+    if (bnoManager.isSelfTestPassed()) {
+        CalibrationData startupCalibration = bnoManager.getCalibration();
+        if (!startupCalibration.isFullyCalibrated()) {
+            Serial.println("⚠️ BNO055-Kalibrierung noch nicht vollständig");
         }
     }
-    
-    Serial.println("✅ BNO055Manager erfolgreich initialisiert");
-    
-    // BNO055 detaillierter Test
-    testBNO055();
-    
-    // SD-Karte testen
-    sdCardAvailable = testSDWithSafePins();
-    
-    // SDLogger initialisieren
-    if (sdCardAvailable) {
-        // SPI für SD-Karte neu initialisieren mit den richtigen Pins
-        spiSD.begin(SD_SCK_PIN, SD_MISO_PIN, SD_MOSI_PIN, SD_CS_PIN);
-        
-        if (sdLogger.begin(spiSD)) {
-            Serial.println("✅ SDLogger erfolgreich initialisiert");
-        } else {
-            Serial.println("❌ SDLogger Initialisierung fehlgeschlagen");
-            sdCardAvailable = false;
-        }
+
+    gpsAvailable = initializeGPSAndClock();
+    updateBootStatusDisplay(millis(), true);
+
+    if (!tryInitializeSDLogger()) {
+        Serial.println("⚠️ SD-Karte fehlt; Einstecken wird automatisch erkannt");
     }
-    
-    if (sdCardAvailable) {
-        
-        // Logging-Konfiguration
-        LogConfig logConfig = sdLogger.getConfig();
-        logConfig.sensorLogInterval = 100;  // 10Hz
-        logConfig.roadLogInterval = 1000;   // 1Hz
-        sdLogger.setConfig(logConfig);
-        
-        // Logging starten
-        if (sdLogger.startLogging()) {
-            Serial.println("✅ Datenaufzeichnung gestartet");
-        }
-    }
-    
-    // CAN-Reader mit arduino-CAN Library initialisieren
-    Serial.println("\n--- CAN-Reader mit arduino-CAN Library ---");
-    
-    // WICHTIG: CAN-Reader verwendet die globale SPI-Instanz
-    // Wir müssen sicherstellen, dass die globale SPI richtig konfiguriert ist
-    SPI.end(); // Beende eventuelle andere SPI-Nutzung
-    delay(50);
-    
-    // Initialisiere globale SPI mit CAN-Pins
-    Serial.printf("Initialisiere globale SPI mit CAN-Pins: SCK=%d, MISO=%d, MOSI=%d\n", 
-                  CAN_SCK_PIN, CAN_MISO_PIN, CAN_MOSI_PIN);
-    SPI.begin(CAN_SCK_PIN, CAN_MISO_PIN, CAN_MOSI_PIN);
-    delay(50);
-    
-    // Setze SPI-Modus für MCP2515
-    SPI.setFrequency(1000000);  // 1MHz für MCP2515
-    SPI.setDataMode(SPI_MODE0);
-    SPI.setBitOrder(MSBFIRST);
-    
-    // CAN-Reader konfigurieren
-    canReader.setPins(CAN_CS_PIN, CAN_INT_PIN);
-    canReader.setClockFrequency(8E6); // 8MHz Standard
-    
-    if (canReader.begin(500E3)) {
-            canBusAvailable = true;
-            
-            // CAN-Logging auf SD-Karte aktivieren
-            canLogFileName = "/can_log_" + String(millis()) + ".csv";
-            if (canReader.enableLogging(canLogFileName)) {
-                canLoggingEnabled = true;
-                Serial.printf("✅ CAN-Logging aktiviert: %s\n", canLogFileName.c_str());
-            }
-            
-            // Filter für interessante CAN-IDs (optional)
-            // canReader.clearFilters(); // Alle Nachrichten empfangen
-            
-            Serial.println("✅ CAN-Reader mit arduino-CAN bereit!");
-    } else {
-        Serial.println("❌ CAN-Reader Initialisierung fehlgeschlagen");
-        canBusAvailable = false;
-        
-        // Debug: Teste direkte SPI-Kommunikation
-        Serial.println("\nDebug: Teste MCP2515 SPI-Kommunikation...");
-        pinMode(CAN_CS_PIN, OUTPUT);
-        digitalWrite(CAN_CS_PIN, HIGH);
-        delay(10);
-        
-        SPI.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE0));
-        digitalWrite(CAN_CS_PIN, LOW);
-        delayMicroseconds(10);
-        
-        // Sende RESET command (0xC0)
-        uint8_t cmd = SPI.transfer(0xC0);
-        digitalWrite(CAN_CS_PIN, HIGH);
-        SPI.endTransaction();
-        
-        Serial.printf("Reset-Antwort: 0x%02X\n", cmd);
-        
-        delay(100);
-        
-        // Lese CANSTAT Register (0x0E)
-        SPI.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE0));
-        digitalWrite(CAN_CS_PIN, LOW);
-        SPI.transfer(0x03); // READ instruction
-        SPI.transfer(0x0E); // CANSTAT address
-        uint8_t canstat = SPI.transfer(0x00);
-        digitalWrite(CAN_CS_PIN, HIGH);
-        SPI.endTransaction();
-        
-        Serial.printf("CANSTAT Register: 0x%02X (erwartet: 0x80 für Config Mode)\n", canstat);
-        
-        if (canstat == 0xFF || canstat == 0x00) {
-            Serial.println("⚠️  Keine Antwort vom MCP2515!");
-            Serial.println("Prüfe: CS=GPIO1, SCK=GPIO3, MOSI=GPIO13, MISO=GPIO11");
-            Serial.println("\nMögliche Hardware-Lösungen:");
-            Serial.println("• 10kΩ Pull-up von CS (GPIO1) nach 3.3V");
-            Serial.println("• 10kΩ Pull-up von MISO (GPIO11) nach 3.3V (optional)");
-            Serial.println("• Stromversorgung: MCP2515 VCC an 5V");
-            Serial.println("• CAN-Terminierung: 120Ω zwischen CAN-H und CAN-L");
-        }
-    }
-    
-    // GPS-Manager initialisieren
-    Serial.println("\n--- GPS-Manager (BN-880) ---");
-    Serial.printf("Hardware UART2: RX=GPIO%d, TX=GPIO%d\n", GPS_RX_PIN, GPS_TX_PIN);
-    if (gpsManager.begin(GPS_RX_PIN, GPS_TX_PIN, GPS_BAUD_RATE)) {
-        gpsAvailable = true;
-        Serial.println("✅ GPS-Manager erfolgreich initialisiert");
-        
-        // Interrupt-Modus aktivieren für bessere Performance
-        gpsManager.enableInterruptMode(true);
-        Serial.println("✅ GPS Interrupt-Modus aktiviert - keine Daten werden verpasst!");
-        
-        Serial.println("GPS benötigt 15-30 Sekunden für ersten Fix");
-        
-        // Test-Kommunikation
-        if (gpsManager.testCommunication()) {
-            Serial.println("✅ GPS-Kommunikation etabliert");
-        } else {
-            Serial.println("⚠️ GPS-Kommunikation noch nicht aktiv (normal bei Cold Start)");
-        }
-    } else {
-        Serial.println("❌ GPS-Manager Initialisierung fehlgeschlagen");
-        Serial.printf("Prüfe: TX=GPIO%d, RX=GPIO%d, VCC=3.3V, GND=GND\n", GPS_TX_PIN, GPS_RX_PIN);
-        gpsAvailable = false;
-    }
-    
-    Serial.println("\n=== SYSTEM BEREIT ===");
-    Serial.print("I2C: ✓ | BNO055: ✓ | OLED: ✓ | SD: ");
-    Serial.print(sdCardAvailable ? "✓" : "❌");
-    Serial.print(" | CAN: ");
-    Serial.print(canBusAvailable ? "✓" : "❌");
-    Serial.print(" | GPS: ");
-    Serial.println(gpsAvailable ? "✓" : "❌");
-    
-    // Hardware-Status auf OLED anzeigen
-    bool i2cOK = true;  // I2C funktioniert (BNO055 gefunden)
-    bool bno055OK = true;  // BNO055 initialisiert
-    bool oledOK = oledManager.isReady();  // OLED funktioniert wenn wir hier sind
-    
-    if (oledOK) {
-        oledManager.showHardwareStatus(i2cOK, bno055OK, oledOK, sdCardAvailable, canBusAvailable, gpsAvailable);
-        delay(3000);  // Status 3 Sekunden anzeigen
-    }
-    
+    updateBootStatusDisplay(millis(), true);
+
+    Serial.println("ℹ️ CAN ist deaktiviert; es kann WLAN und Webseite nicht blockieren");
+    updateBootStatusDisplay(millis(), true);
+
+    lastHardwareCheck = millis();
     lastUpdate = millis();
-    Serial.println("\nStarte Straßenqualitäts-Messung...");
-    Serial.println("📊 Zeitbasierte Korrelation: Sensor ↔ CAN aktiviert");
-    Serial.println("📁 Separate Logs: sensor_data.csv, can_log.csv, correlated.csv\n");
+    Serial.println("\nBootprüfung läuft nicht blockierend weiter.");
+    Serial.println("Webseite bleibt erreichbar; CAN ist für Messfahrten nicht erforderlich.");
 }
 
 void loop() {
@@ -842,43 +840,69 @@ void loop() {
     static SensorData lastSensorData = {0};
     static CANMessage lastCANMessage = {0};
     static GPSData lastGPSData = {0};
+    static CalibrationData lastDisplayedCalibration = {255, 255, 255, 255};
+    static bool lastDisplayedCalibrationSaved = false;
+    static unsigned long lastCalibrationDisplay = 0;
+
+    // Web-Anfragen und OTA zuerst bedienen. Während eines Firmware-Uploads
+    // bleibt die SD-Karte geschlossen und die übrige Messschleife pausiert.
+    webManager.handleClient();
+    if (webManager.isOTAInProgress()) {
+        delay(1);
+        return;
+    }
     
     unsigned long currentTime = millis();
+    handleHardwareRecovery(currentTime);
+    gpsAvailable = gpsManager.isReady();
     
     // BNO055 Sensor-Daten lesen (alle 100ms)
-    if (bnoManager.isReady() && (currentTime - lastSensorRead >= 100)) {
+    if (bnoManager.isSelfTestPassed() &&
+        bnoManager.isFusionModeActive() &&
+        (currentTime - lastSensorRead >= 100)) {
         SensorData sensorData = bnoManager.getCurrentData();
         lastSensorData = sensorData;  // Für Zeitkorrelation speichern
-        
+        bnoManager.processSample(sensorData);
+
+        // Alle Auswertungen verwenden exakt denselben 10-Hz-Sensorwert.
+        VibrationMetrics vibMetrics = bnoManager.analyzeVibration();
+        float speedKmh = lastGPSData.valid_fix ? lastGPSData.speed_kmh : -1.0f;
+        float roadQuality = bnoManager.calculateRoadQuality(speedKmh);
+        bool potholeDetected = bnoManager.detectPothole(sensorData);
+        bool curveCompleted = bnoManager.detectCurve(sensorData);
+
         // Daten auf SD-Karte loggen
         if (sdLogger.isLogging()) {
             sdLogger.logSensorData(sensorData);
-            
-            // Vibrations-Analyse
-            VibrationMetrics vibMetrics = bnoManager.analyzeVibration();
-            float roadQuality = bnoManager.calculateRoadQuality();
-            
+
             // Straßenqualität loggen
             sdLogger.logRoadQuality(roadQuality, bnoManager.getSmoothness(), 
                                    0, vibMetrics.rmsAccel);
-            
+
             // Schlagloch-Erkennung
-            if (bnoManager.detectPothole()) {
-                sdLogger.logPothole(vibMetrics.maxShock);
-                Serial.println("⚠️  Schlagloch erkannt!");
+            if (potholeDetected) {
+                sdLogger.logPothole(
+                    vibMetrics.maxShock,
+                    lastGPSData.valid_fix ? lastGPSData.latitude : 0.0f,
+                    lastGPSData.valid_fix ? lastGPSData.longitude : 0.0f);
             }
-            
+
             // Kurven-Erkennung
-            if (bnoManager.detectCurve()) {
+            if (curveCompleted) {
                 float curveAngle = bnoManager.getCurveAngle();
-                sdLogger.logCurve(curveAngle, 0);
+                sdLogger.logCurve(
+                    curveAngle, 0,
+                    lastGPSData.valid_fix ? lastGPSData.latitude : 0.0f,
+                    lastGPSData.valid_fix ? lastGPSData.longitude : 0.0f);
             }
-            
-            // Zeitkorrelation: Wenn aktuelle CAN-Nachricht vorhanden
-            if (lastCANMessage.timestamp > 0 && 
-                abs((long)(sensorData.timestamp - lastCANMessage.timestamp)) < 1000) {
-                sdLogger.logCorrelatedData(sensorData, lastCANMessage);
-            }
+        }
+
+        if (potholeDetected) {
+            Serial.println("⚠️  Schlagloch erkannt!");
+        }
+        if (curveCompleted) {
+            Serial.printf("↪️  Kurve abgeschlossen: %.1f°\n",
+                          bnoManager.getCurveAngle());
         }
         
         lastSensorRead = currentTime;
@@ -888,6 +912,13 @@ void loop() {
     // Im Interrupt-Modus verarbeitet update() die gepufferten Daten
     if (gpsAvailable && (currentTime - lastGPSUpdate >= 200)) {
         gpsManager.update();  // Verarbeitet Interrupt-Buffer
+
+        if (!gpsClockSynced && gpsManager.hasValidDateTime()) {
+            gpsClockSynced = gpsManager.syncSystemClock();
+            if (gpsClockSynced) {
+                Serial.println("✅ Systemzeit nachträglich aus GPS synchronisiert");
+            }
+        }
         
         if (gpsManager.available()) {
             GPSData gpsData = gpsManager.getCurrentData();
@@ -895,16 +926,23 @@ void loop() {
             
             // GPS-Daten loggen falls SD verfügbar
             if (sdLogger.isLogging()) {
-                // Geo-lokalisierte Sensor-Daten loggen
-                if (gpsData.valid_fix && lastSensorData.timestamp > 0) {
-                    // Korrelierte GPS + Sensor-Daten
-                    sdLogger.logCorrelatedData(lastSensorData, lastCANMessage);
-                }
+                sdLogger.logGPSData(gpsData);
             }
         }
         
         lastGPSUpdate = currentTime;
     }
+
+    if (!gpsManager.isCommunicating()) {
+        // Keine alte Position oder Geschwindigkeit weiterverwenden, wenn
+        // die GPS-Datenquelle ausgefallen ist.
+        lastGPSData = {};
+    }
+
+    // Die gemeinsame Prüfseite bleibt aktiv, bis alle erforderlichen
+    // Komponenten reagieren. Nach einem späteren Ausfall erscheint sie
+    // automatisch erneut.
+    updateBootStatusDisplay(currentTime);
     
     // CAN-Bus Nachrichten empfangen (alle 10ms)
     if (canBusAvailable && (currentTime - lastCANCheck >= 10)) {
@@ -943,12 +981,19 @@ void loop() {
                      currentTime/1000, canMessageCount);
         
         // BNO055 Status
-        CalibrationData cal = bnoManager.getCalibration();
-        Serial.printf("BNO055 Kal: %d/%d/%d/%d", 
-                     cal.system, cal.gyro, cal.accel, cal.mag);
+        CalibrationData cal = {0, 0, 0, 0};
+        if (bnoManager.isSelfTestPassed() &&
+            bnoManager.isFusionModeActive()) {
+            cal = bnoManager.getCalibration();
+            BNO055RuntimeStatus bnoStatus = bnoManager.getRuntimeStatus();
+            Serial.printf("BNO055 IMUPLUS/Sys:%d Kal:G%d/A%d",
+                         bnoStatus.systemStatus, cal.gyro, cal.accel);
+        } else {
+            Serial.print("BNO055: Fusion nicht bereit");
+        }
         
         // GPS Status
-        if (gpsAvailable) {
+        if (gpsAvailable && gpsManager.isReceivingNMEA()) {
             if (gpsManager.hasValidFix()) {
                 GPSData gps = gpsManager.getCurrentData();
                 Serial.printf(", GPS: %.6f°N %.6f°E (%d sat)", 
@@ -957,6 +1002,8 @@ void loop() {
                 uint8_t sats = gpsManager.getSatelliteCount();
                 Serial.printf(", GPS: Kein Fix (%d sat)", sats);
             }
+        } else {
+            Serial.print(", GPS: keine NMEA-Daten");
         }
         
         // SD-Logger Status
@@ -968,19 +1015,39 @@ void loop() {
             if (!cal.isFullyCalibrated()) {
                 Serial.println(bnoManager.getCalibrationInstructions());
             }
+        } else if (sdLogger.isReady()) {
+            Serial.println(", SD: bereit, Aufzeichnung gestoppt");
         } else {
-            Serial.println();
+            Serial.println(", SD: nicht bereit");
         }
         
         if (canLoggingEnabled) {
             canReader.flushLog(); // CAN-Log aktualisieren
         }
         
-        // Live-Daten auf OLED anzeigen
-        if (bnoManager.isReady() && oledManager.isReady()) {
-            SensorData sensorData = bnoManager.getCurrentData();
-            oledManager.showSensorData(sensorData.heading, sensorData.accelMagnitude, 
-                            sensorData.temperature, totalCANMessages);
+        // Bei Änderungen oder länger unvollständiger Kalibrierung zeigt das
+        // OLED den Assistenten, ansonsten die Live-Daten.
+        if (!bootStatusActive && bnoManager.isSelfTestPassed() &&
+            oledManager.isReady()) {
+            bool calibrationChanged =
+                cal.gyro != lastDisplayedCalibration.gyro ||
+                cal.accel != lastDisplayedCalibration.accel ||
+                bnoManager.isCalibrationSaved() != lastDisplayedCalibrationSaved;
+            bool calibrationReminder =
+                !cal.isFullyCalibrated() &&
+                currentTime - lastCalibrationDisplay >= 30000;
+
+            if (calibrationChanged || calibrationReminder) {
+                oledManager.showCalibrationStatus(
+                    cal.gyro, cal.accel, bnoManager.isCalibrationSaved());
+                lastDisplayedCalibration = cal;
+                lastDisplayedCalibrationSaved = bnoManager.isCalibrationSaved();
+                lastCalibrationDisplay = currentTime;
+            } else if (lastSensorData.timestamp > 0) {
+                oledManager.showSensorData(
+                    lastSensorData.heading, lastSensorData.accelMagnitude,
+                    lastSensorData.temperature, totalCANMessages);
+            }
         }
         
         lastStatusReport = currentTime;
@@ -1002,11 +1069,17 @@ void loop() {
             Serial.println("memory - Memory-Leak-Test (2 Min)");
             Serial.println("calibration - BNO055 Kalibrierung speichern");
             Serial.println("clear_cal - BNO055 Kalibrierung löschen");
+            Serial.println("start - Messfahrt starten");
+            Serial.println("stop - Messfahrt sicher beenden");
             Serial.println("gps_mode - GPS Interrupt/Polling umschalten");
             Serial.println("diag - System-Diagnose");
         }
         else if (command == "hardware") {
-            hardwareTest.runAllTests();
+            i2cScanner();
+            testBNO055();
+            testOLED();
+            testSDWithSafePins();
+            testBufferSafety();
         }
         else if (command == "integration") {
             Serial.println("\n🚀 Starte umfassende Integration-Tests...");
@@ -1044,6 +1117,16 @@ void loop() {
                 Serial.println("✅ Kalibrierung gelöscht!");
             }
         }
+        else if (command == "start") {
+            if (sdLogger.startLogging()) {
+                Serial.println("✅ Messfahrt gestartet");
+            } else {
+                Serial.println("❌ Messfahrt konnte nicht gestartet werden");
+            }
+        }
+        else if (command == "stop") {
+            sdLogger.stopLogging();
+        }
         else if (command == "gps_mode") {
             bool currentMode = gpsManager.isInterruptModeEnabled();
             gpsManager.enableInterruptMode(!currentMode);
@@ -1057,7 +1140,8 @@ void loop() {
             Serial.printf("Chip Model: %s\n", ESP.getChipModel());
             Serial.printf("CPU Freq: %d MHz\n", ESP.getCpuFreqMHz());
             Serial.println("\nModule-Status:");
-            Serial.printf("BNO055: %s\n", bnoManager.isReady() ? "OK" : "Fehler");
+            Serial.printf("BNO055: %s\n",
+                          bnoManager.isSelfTestPassed() ? "OK" : "Fehler");
             Serial.printf("GPS: %s\n", gpsManager.isReady() ? "OK" : "Fehler");
             Serial.printf("CAN: %s\n", canReader.isReady() ? "OK" : "Fehler");
             Serial.printf("SD: %s\n", sdLogger.isReady() ? "OK" : "Fehler");

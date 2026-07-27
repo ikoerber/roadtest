@@ -22,6 +22,8 @@ Das System erfasst Bewegungsdaten, GPS-Position und CAN-Bus-Signale, um die Qual
 - **Multi-Sensor-Fusion** (BNO055 + GPS + CAN)
 - **Robustes SD-Karten-Logging** mit Buffer-Overflow-Schutz
 - **Live-Display** auf 128x64 OLED mit Auto-Rotation
+- **Eigenes ROADTEST-WLAN** mit Statusseite, Kalibrierassistent und Browser-OTA
+- **Kontrollierte Messfahrten** mit Start, sicherem Ende und Zusammenfassung
 - **Umfassende Hardware-Tests** und Diagnostik
 - **NEU: GPS Interrupt-Modus** für verlustfreien Datenempfang
 - **NEU: NVS-Kalibrierungsspeicher** für BNO055 (persistiert über Neustarts)
@@ -45,7 +47,7 @@ Das System erfasst Bewegungsdaten, GPS-Position und CAN-Bus-Signale, um die Qual
 ## 🔧 Hardware-Anforderungen
 
 ### ESP32-S3 Entwicklungsboard
-- **Mikrocontroller:** ESP32-S3 (240MHz, 512KB RAM, 8MB Flash)
+- **Mikrocontroller:** ESP32-S3 (240MHz, LOLIN S3 Mini mit 4MB Flash)
 - **USB:** USB-C für Programming und Debug
 - **Power:** 3.3V/5V kompatibel
 
@@ -53,7 +55,7 @@ Das System erfasst Bewegungsdaten, GPS-Position und CAN-Bus-Signale, um die Qual
 
 | Komponente | Modell | Schnittstelle | Pins | Funktion |
 |------------|--------|---------------|------|----------|
-| **IMU-Sensor** | BNO055 | I2C | GPIO 8/9 | 9-DoF Bewegungssensor |
+| **IMU-Sensor** | BNO055 | I2C | GPIO 8/9 | IMUPLUS mit Gyro + Beschleunigung |
 | **Display** | SSD1306 | I2C | GPIO 8/9 | 128x64 OLED |
 | **GPS-Modul** | BN-880 | UART2 | GPIO 15/16 | Position & Geschwindigkeit |
 | **CAN-Interface** | MCP2515 | SPI | GPIO 1,2,3,11,13 | Fahrzeugdaten |
@@ -102,7 +104,7 @@ GPIO 4    -->   CS
 GPIO 5    -->   MOSI
 GPIO 6    <--   MISO
 GPIO 7    -->   SCK
-5V        -->   VCC (wichtig: 5V!)
+3.3V      -->   3.3V (gemäß Beschriftung des verwendeten PZSMOCN-Moduls)
 GND       -->   GND
 ```
 
@@ -152,31 +154,36 @@ gpsManager.enableInterruptMode(true);  // Verlustfreier Datenempfang
 gpsManager.enableInterruptMode(false); // Zurück zu Polling
 ```
 
-#### BNO055 Kalibrierung speichern
-```cpp
-// Kalibrierung wird automatisch im NVS gespeichert
-if (cal.isFullyCalibrated()) {
-    bnoManager.saveCalibration();  // Übersteht Neustarts!
-}
+#### WLAN, Messfahrten, Kalibrierung und OTA
 
-// Kalibrierung löschen (für Neukalibrierung)
-bnoManager.clearCalibration();
-```
+1. Mit dem WLAN `ROADTEST` verbinden, Passwort `roadtest123`.
+2. Im Browser `http://192.168.4.1/` öffnen.
+3. Einmalig unter **Kalibrierung** Gyro und Beschleunigung auf jeweils 3
+   bringen und speichern. Eine Achterbewegung ist nicht erforderlich.
+4. Vor der Abfahrt **Aufzeichnung starten** auswählen.
+5. Am Fahrtende **Aufzeichnung beenden** auswählen. Erst dann sind alle
+   Dateien garantiert geschlossen und die Zusammenfassung wird geschrieben.
+6. Unter **Firmware aktualisieren** kann eine neue Web-OTA-`.bin` eingespielt werden.
 
-## 🧪 System-Tests
+Für Start, Ende, Speichern und Aktualisieren wird Benutzer `admin` mit
+Passwort `roadtest123` verwendet. Die Kalibrierung wird anschließend beim
+Start automatisch aus dem NVS geladen.
 
-Das System führt beim Start automatisch umfassende Hardware-Tests durch:
+## 🧪 Startprüfung und System-Tests
 
-### Hardware-Test-Suite
-```
-✅ I2C-Bus Scanner mit detaillierter Diagnostik
-✅ BNO055 Sensor-Test mit Kalibrierungs-Check
-✅ OLED Display-Test mit 8 Funktions-Tests
-✅ SD-Karten-Test mit mehreren Pin-Sets
-✅ CAN-Bus-Test mit MCP2515-Registern
-✅ GPS-Test mit Kommunikations-Verifikation
-✅ Buffer-Sicherheits-Test mit Overflow-Simulation
-```
+Beim Einschalten zeigt das OLED eine einzige, fortlaufend aktualisierte
+Prüfseite. Geprüft werden OLED, BNO055, SD-Karte, GPS-Kommunikation und WLAN.
+Ein GPS-Fix ist dafür nicht nötig; empfangene NMEA-Daten reichen. CAN ist
+optional und blockiert die Bereitschaft nicht.
+
+Fehlt eine erforderliche Komponente, bleibt die Firmware trotzdem bedienbar
+und versucht alle fünf Sekunden automatisch eine Wiederverbindung. Die
+Prüfseite verschwindet erst, wenn alles Erforderliche bereit ist. Bei einem
+späteren Ausfall erscheint sie erneut.
+
+Die ausführlichen Hardware-, Integrations- und Belastungstests werden nicht
+bei jedem Start ausgeführt. Sie können bei Bedarf über den seriellen Monitor
+gestartet werden:
 
 ### NEU: Integration-Test-Suite (90% Coverage)
 ```
@@ -227,37 +234,40 @@ Test-Coverage: 92.5%
 ### CSV-Datenlogging
 Das System erstellt automatisch strukturierte CSV-Dateien:
 
+Jede Messfahrt besitzt eine gemeinsame Sitzungskennung im Dateinamen und
+erhält getrennte Sensor-, Straßen-, GPS-, Ereignis- und bei Bedarf CAN-Dateien.
+Beim Beenden entsteht zusätzlich `road_summary_<Sitzung>.csv` mit Dauer,
+Strecke, Ereigniszählern und Durchschnittsqualität.
+
 **sensor_data.csv**
 ```csv
-timestamp,heading,pitch,roll,accelX,accelY,accelZ,gyroX,gyroY,gyroZ,temp,cal_sys,cal_gyro,cal_acc,cal_mag
-1234567,123.5,-2.1,0.8,0.123,-0.056,9.801,0.001,0.002,-0.001,24.5,3,3,3,3
+UTC,UptimeMs,RelativeHeading,Pitch,Roll,AccelX,AccelY,AccelZ,GyroX,GyroY,GyroZ,Temp,CalSystemInfo,CalGyro,CalAccel,CalMagUnused
+2026-07-27T12:34:56Z,1234567,123.5,-2.1,0.8,0.123,-0.056,9.801,0.001,0.002,-0.001,24.5,0,3,3,0
 ```
+
+`RelativeHeading` besitzt im IMUPLUS-Modus keinen magnetischen Nordbezug.
+`CalSystemInfo` und `CalMagUnused` bleiben nur für die Kompatibilität des
+CSV-Formats erhalten und entscheiden nicht über die Messbereitschaft.
 
 **can_log.csv**  
 ```csv
-timestamp,canId,extended,rtr,dlc,data0,data1,data2,data3,data4,data5,data6,data7
-1234567,1A0,0,0,8,12,34,56,78,9A,BC,DE,F0
+UTC,UptimeMs,CAN_ID,Extended,RTR,DLC,Data0,Data1,Data2,Data3,Data4,Data5,Data6,Data7
+2026-07-27T12:34:56Z,1234567,1A0,0,0,8,12,34,56,78,9A,BC,DE,F0
 ```
 
-**correlated.csv** (Sensor + CAN + GPS)
+**correlated.csv** (Sensor + CAN)
 ```csv
-timestamp,type,heading,pitch,roll,accel_mag,temp,canId,dlc,data,lat,lon,speed_kmh,satellites
+UTC,UptimeMs,Type,RelativeHeading,Pitch,Roll,AccelMag,Temp,CAN_ID,DLC,D0,D1,D2,D3,D4,D5,D6,D7
 ```
 
 ### Road Quality Scoring
-```cpp
-Straßenqualitäts-Bewertung (0-100 Punkte):
-• 80-100: TRAUMSTRECKE (ideal für Genießerfahrten)
-• 60-79:  SEHR GUT (empfehlenswert)  
-• 40-59:  OKAY (durchschnittlich)
-• 0-39:   LANGWEILIG (wenig kurvenreich)
 
-Faktoren:
-- Kurvigkeit (40%): Kurvenradius, Serpentinen, Richtungsänderungen
-- Oberflächenqualität (35%): Vibration, Schlaglöcher, Glätte
-- Verkehrsruhe (15%): Geschwindigkeitsvariation, Stopps
-- Landschaftsbonus (10%): Höhenmeter, Bergstraßen
-```
+Die aktuelle Bewertung (0–100 Punkte) beschreibt die **Oberflächenqualität**.
+Sie verwendet ein rollendes Ein-Sekunden-Fenster aus RMS-Vibration,
+Maximalstoß und Anzahl einzelner Stöße. Bei vorhandenem GPS wird vorsichtig
+auf 30 km/h Referenzgeschwindigkeit normiert; im Stillstand bleibt der letzte
+Fahrwert erhalten. Kurven und Schlaglöcher werden getrennt als einzelne
+Ereignisse protokolliert.
 
 ## 🛡️ Buffer-Sicherheit
 
@@ -429,11 +439,13 @@ testSDWithSafePins();
 
 ### Ressourcen-Verbrauch
 ```
-Flash:  ~220KB / 8MB     (2.7%)
-SRAM:   ~12KB / 512KB    (2.3%)  
-CPU:    ~15% @ 240MHz
-Strom:  ~167mA Normal, ~287mA Peak
+Flash:  ~1,16MB / 1,31MB App-Partition (88,7%)
+SRAM:   ~57KB / 320KB                  (17,5%)
+CPU:    ESP32-S3 mit 240MHz
 ```
+
+Die Web-OTA-Datei passt damit in die konfigurierte OTA-Partition. Für spätere
+größere Funktionen sollte die verbleibende Flash-Reserve berücksichtigt werden.
 
 ## 🛣️ Praktische Anwendung
 
@@ -492,7 +504,86 @@ Priorität für zusätzliche Tests:
 
 ## 📈 Version History
 
-### v1.2.0 (Aktuell) - Performance & Sicherheit
+### v1.5.10 (Aktuell) - Stabile BNO055-Statusanzeige
+- ✅ Einzelne kurzzeitige I²C-Statusfehler verändern die Anzeige nicht mehr
+- ✅ Ein erfolgreicher Status setzt die Fehlerzählung sofort zurück
+- ✅ Erst drei aufeinanderfolgende Fusionsfehler zeigen einen Fehler und
+  lösen den automatischen BNO055-Neustart aus
+
+### v1.5.9 - Konsistente IMUPLUS-Überwachung
+- ✅ Messdaten nur bei Modus 8, Systemstatus 5 und Fehlercode 0
+- ✅ Drei vollständige Fusionsfehler vor einem automatischen Sensorneustart
+- ✅ Webdiagnose verwendet den überwachten Status ohne zusätzliche Modusabfragen
+- ✅ Integrationstests vergleichen nur relative Richtungsänderungen
+- ✅ OLED, CSV-Felder und Dokumentation eindeutig auf IMUPLUS abgestimmt
+
+### v1.5.8 - BNO055 IMUPLUS
+- ✅ Gyro und Beschleunigung ohne Magnetometer-Sensorfusion
+- ✅ Keine Achterbewegung und keine Magnetometerkalibrierung erforderlich
+- ✅ Kalibrierung ist abgeschlossen, sobald Gyro und Beschleunigung 3 erreichen
+- ⚠️ Absolute Kompassrichtung entfällt; relative Drehungen bleiben verfügbar
+
+### v1.5.7 - Stabiler BNO055-Sensortakt
+- ✅ Interne BNO055-Taktquelle statt instabiler externer Taktumschaltung
+- ✅ I²C mit robusten 50 kHz für die Lochrasterverdrahtung
+- ✅ Taktquelle auf der Kalibrierseite sichtbar
+
+### v1.5.6 - Stabile BNO055-Modusprüfung
+- ✅ Kein permanentes I²C-Polling des Betriebsmodus mehr
+- ✅ Drei aufeinanderfolgende Modusfehler vor einem Sensorneustart
+- ✅ Vollständiger BNO055-Neustart über die Kalibrierseite
+
+### v1.5.5 - Stabile BNO055-Fusionsdiagnose
+- ✅ BNO055-Diagnose und erzwungener NDOF-Modus aus v1.5.4
+- ✅ Automatischer CAN-Start deaktiviert, damit WLAN und Webseite nicht hängen
+
+### v1.5.4 - BNO055-Fusionsdiagnose
+- ✅ NDOF-Betriebsmodus wird beim Start geprüft und nötigenfalls erzwungen
+- ✅ Modus, Sensorfusion, Systemstatus und Fehlercode auf der Kalibrierseite
+- ✅ Sicherer BNO055-Neustart über die Webseite
+- ⚠️ Automatischer CAN-Start konnte die Webseite blockieren
+
+### v1.5.3 - Stabiler Servicezugang
+- ✅ CAN im aktuellen Aufbau vollständig deaktiviert
+- ✅ Feste WLAN-IP und fester Funkkanal
+- ✅ WLAN-Schlafmodus deaktiviert
+- ✅ Automatischer Wiederanlauf des ROADTEST-Access-Points
+
+### v1.5.2 - WLAN zuerst
+- ✅ ROADTEST-WLAN startet vor den externen Hardwareprüfungen
+- ✅ Optionale CAN-Prüfung läuft erst nach dem Systemstart
+- ✅ Diagnose und OTA bleiben unabhängig von GPS und CAN erreichbar
+
+### v1.5.1 - GPS-Startprüfung
+- ✅ NMEA-Datenstrom genügt für die Hardwareprüfung
+- ✅ Satelliten-Fix blockiert den Startbildschirm nicht
+- ✅ GPS-Zeichen, gültige Sätze und Prüfsummenfehler auf der Webseite
+
+### v1.5.0 - Robuster Wiederanlauf
+- ✅ Einheitliche, automatisch aktualisierte OLED-Startprüfung
+- ✅ Kein blockierender Start bei fehlender Hardware
+- ✅ Wiederverbindung für BNO055, OLED, SD, GPS und WLAN
+- ✅ CAN ausdrücklich optional
+- ✅ SD-Schreibfehler und verworfene Datensätze auf der Webseite
+- ✅ Abgebrochene Messfahrten werden klar gekennzeichnet
+
+### v1.4.0 - Kontrollierte Messfahrten
+- ✅ Messfahrt über die Webseite starten und sicher beenden
+- ✅ Eigene Dateigruppe mit gemeinsamer Sitzungskennung pro Fahrt
+- ✅ Live-Zusammenfassung aus Dauer, GPS-Strecke und Ereigniszählern
+- ✅ Permanente Zusammenfassungs-CSV beim Fahrtende
+- ✅ Kein unbeabsichtigtes Logging direkt nach dem Einschalten
+
+### v1.3.0 - Messfenster & Kalibrierassistent
+- ✅ BNO055 nur einmal pro 100-ms-Messzyklus auslesen
+- ✅ Rollendes Ein-Sekunden-Fenster für Vibration und Stöße
+- ✅ Schlaglöcher und Kurven nur einmal pro Ereignis protokollieren
+- ✅ Geschwindigkeitsabhängige Normierung der Straßenqualität
+- ✅ Kalibrierstatus auf OLED und Webseite
+- ✅ Kalibrierung geschützt über die Webseite speichern
+- ✅ Eigenes WLAN und Browser-OTA
+
+### v1.2.0 - Performance & Sicherheit
 - ✅ **GPS Interrupt-Modus** implementiert für verlustfreien Datenempfang
 - ✅ **NVS-Speicher** für BNO055 Kalibrierung (persistiert über Neustarts)
 - ✅ **Null-Pointer-Schutz** für alle dynamischen Allokationen

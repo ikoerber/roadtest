@@ -68,17 +68,17 @@ bool OLEDManager::begin(uint8_t address) {
     // Standard-Rotation setzen (normal)
     display->setRotation(0);
     
-    // Initialer Display-Test
-    showBootMessage("OLED Manager", 100);
-    delay(1000);
-    
+    clearAndSetup();
+    refresh();
     return true;
 }
 
-void OLEDManager::end() {
+void OLEDManager::end(bool clearDisplay) {
     if (display) {
-        display->clearDisplay();
-        display->display();
+        if (clearDisplay) {
+            display->clearDisplay();
+            display->display();
+        }
         delete display;
         display = nullptr;
     }
@@ -195,6 +195,30 @@ void OLEDManager::showHardwareStatus(bool i2c, bool bno055, bool oled, bool sd, 
     refresh();
 }
 
+void OLEDManager::showBootStatus(bool bno055, bool sd, bool gpsInitialized,
+                                 bool gpsDataStream, bool can, bool wifi,
+                                 bool allRequiredReady) {
+    clearAndSetup();
+
+    display->println("ROADTEST 1.5.10 CHECK");
+    display->println("OLED:   OK");
+    display->println(String("BNO055: ") + (bno055 ? "OK" : "FEHLER"));
+    display->println(String("SD:     ") + (sd ? "OK" : "FEHLER"));
+
+    if (gpsDataStream) {
+        display->println("GPS:    DATEN");
+    } else if (gpsInitialized) {
+        display->println("GPS:    SUCHE");
+    } else {
+        display->println("GPS:    FEHLER");
+    }
+
+    display->println(String("CAN:    ") + (can ? "OK" : "-- OPTIONAL"));
+    display->println(String("WLAN:   ") + (wifi ? "OK" : "FEHLER"));
+    display->println(allRequiredReady ? "SYSTEM BEREIT" : "PRUEFUNG LAEUFT...");
+    refresh();
+}
+
 void OLEDManager::showTestResults(const String& testName, bool success, const String& details) {
     clearAndSetup();
     
@@ -225,12 +249,33 @@ void OLEDManager::showTestResults(const String& testName, bool success, const St
     refresh();
 }
 
+void OLEDManager::showCalibrationStatus(uint8_t gyro, uint8_t accel,
+                                        bool saved) {
+    clearAndSetup();
+    drawHeader("KALIBRIERUNG");
+
+    display->println("Modus:  IMUPLUS");
+    display->printf("Gyro:   %u / 3\n", gyro);
+    display->printf("Accel:  %u / 3\n", accel);
+    display->println("Mag:    --");
+    display->print("Gespeichert: ");
+    display->println(saved ? "JA" : "NEIN");
+
+    if (gyro == 3 && accel == 3) {
+        display->println("Bereit zum Speichern");
+    } else {
+        display->println("Still / 6 Seiten");
+    }
+
+    refresh();
+}
+
 void OLEDManager::showSensorData(float heading, float accel, float temp, int canCount) {
     clearAndSetup();
     drawHeader("LIVE DATEN");
     
     // Heading/Richtung
-    display->print("Richtung: ");
+    display->print("Rel.Richt.: ");
     display->print(formatFloat(heading, 1));
     display->println(" Grad");
     

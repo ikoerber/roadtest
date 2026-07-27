@@ -46,7 +46,7 @@ extern const int GPS_BAUD_RATE;    // 9600    - GPS Baudrate
 // -----------------------------------------------------------------------------
 
 // Timing-Konstanten
-#define I2C_CLOCK_SPEED     100000  // 100kHz I2C-Bus
+#define I2C_CLOCK_SPEED      50000  // 50kHz für stabilen BNO055-I2C-Betrieb
 #define SD_SPI_SPEED        400000  // 400kHz für SD-Initialisierung
 #define CAN_BAUDRATE        500000  // 500kbps CAN-Bus
 #define CAN_CLOCK_8MHZ      8000000 // 8MHz MCP2515 Oszillator

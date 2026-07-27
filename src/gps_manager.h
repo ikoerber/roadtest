@@ -21,6 +21,16 @@ struct GPSData {
     bool location_valid;     // Position gültig
     bool speed_valid;        // Geschwindigkeit gültig
     bool course_valid;       // Fahrtrichtung gültig
+
+    // Datum und Uhrzeit direkt aus dem GPS (immer UTC)
+    uint16_t year;
+    uint8_t month;
+    uint8_t day;
+    uint8_t hour;
+    uint8_t minute;
+    uint8_t second;
+    uint8_t centisecond;
+    bool datetime_valid;
 };
 
 // GPS-Status für Hardware-Tests
@@ -47,6 +57,8 @@ private:
     GPSStatus status;
     GPSData lastValidData;
     unsigned long lastDataUpdate;
+    unsigned long lastCharacterUpdate;
+    unsigned long lastNMEAStartUpdate;
     
     // Interrupt-Support
     static GPSManager* instance;  // Für statische Interrupt-Handler
@@ -89,6 +101,10 @@ public:
     bool hasValidFix() const;
     bool hasValidLocation() const;
     bool hasValidSpeed() const;
+    bool hasValidDateTime() const;
+    bool isCommunicating(unsigned long maxAge = 10000) const;
+    bool isReceivingNMEA(unsigned long maxAge = 10000) const;
+    bool syncSystemClock();
     uint8_t getSatelliteCount() const;
     float getHDOP() const;
     
@@ -109,6 +125,7 @@ extern GPSManager gpsManager;
 // Utility-Funktionen
 String formatGPSCoordinate(float coord, bool isLatitude);
 String formatGPSData(const GPSData& data);
+String formatGPSDateTimeUTC(const GPSData& data);
 float calculateDistance(float lat1, float lon1, float lat2, float lon2);
 float calculateBearing(float lat1, float lon1, float lat2, float lon2);
 

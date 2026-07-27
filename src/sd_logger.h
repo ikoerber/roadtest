@@ -18,7 +18,8 @@ enum LogType {
     LOG_TYPE_ROAD,      // Straßenqualitäts-Metriken
     LOG_TYPE_EVENT,     // Ereignisse (Schlaglöcher, Kurven)
     LOG_TYPE_SYSTEM,    // System-Status
-    LOG_TYPE_GPS        // GPS-Daten
+    LOG_TYPE_GPS,       // GPS-Daten
+    LOG_TYPE_CORRELATED // Zeitlich korrelierte Sensor-/CAN-Daten
 };
 
 // Log-Konfiguration
@@ -70,6 +71,27 @@ struct LogStats {
 // Alias für Integration-Tests
 typedef LogStats SDLoggerStats;
 
+// Zusammenfassung einer laufenden oder zuletzt beendeten Messfahrt
+struct RideSummary {
+    bool active;
+    bool completed;
+    bool interrupted;
+    String sessionId;
+    String startUTC;
+    String endUTC;
+    uint32_t durationSeconds;
+    float distanceKm;
+    uint32_t potholeCount;
+    uint32_t curveCount;
+    uint32_t qualitySamples;
+    float averageQuality;
+
+    RideSummary()
+        : active(false), completed(false), interrupted(false), durationSeconds(0),
+          distanceKm(0), potholeCount(0), curveCount(0),
+          qualitySamples(0), averageQuality(0) {}
+};
+
 class SDLogger {
 private:
     // Pin-Konfiguration
@@ -84,8 +106,17 @@ private:
     // Datei-Management
     File currentLogFile;
     String currentFileName;
+    File roadLogFile;
+    String roadFileName;
+    File gpsLogFile;
+    String gpsFileName;
+    File canLogFile;
+    String canFileName;
     File eventLogFile;
     String eventFileName;
+    File correlatedLogFile;
+    String correlatedFileName;
+    String sessionId;
     
     // Konfiguration
     LogConfig config;
@@ -97,6 +128,14 @@ private:
     unsigned long lastGPSLog;
     unsigned long lastFlush;
     unsigned long sessionStartTime;
+
+    // Messfahrts-Zusammenfassung
+    RideSummary rideSummary;
+    double qualitySum;
+    bool hasLastRideGPS;
+    float lastRideLatitude;
+    float lastRideLongitude;
+    unsigned long lastRideGPSTime;
     
     // Puffer für Performance mit Overflow-Schutz
     static const int BUFFER_SIZE = 512;
@@ -109,11 +148,16 @@ private:
     
     // Hilfsfunktionen
     String generateFileName(LogType type);
+    String generateSessionId();
     bool createLogFile(LogType type);
-    void writeHeader(File& file, LogType type);
-    bool checkSDCard();
+    bool openLogFile(File& file, String& fileName, LogType type);
+    void closeLogFiles();
+    void handleCardFailure(const char* reason, uint32_t droppedRecords = 0);
+    bool writeHeader(File& file, LogType type);
+    bool writeRideSummaryFile();
     void flushBuffer();
     String formatTimestamp();
+    String formatUTC();
     
 public:
     SDLogger(int cs = 4);
@@ -123,6 +167,7 @@ public:
     bool begin(SPIClass& spi = SPI);
     void end();
     bool isReady() const { return initialized && cardAvailable; }
+    bool checkHealth();
     
     // Konfiguration
     void setConfig(const LogConfig& cfg) { config = cfg; }
@@ -133,6 +178,8 @@ public:
     bool startLogging();
     void stopLogging();
     bool isLogging() const { return logging; }
+    RideSummary getRideSummary() const;
+    String getSessionId() const { return sessionId; }
     
     // Sensor-Daten loggen
     bool logSensorData(const SensorData& data);

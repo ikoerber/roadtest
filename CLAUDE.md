@@ -1,6 +1,6 @@
 # ESP32-S3 Straßenqualitäts-Messsystem - Entwicklungsdokumentation
 
-## ✅ Implementierungsstatus - VOLLSTÄNDIG (v1.2.0)
+## ✅ Implementierungsstatus - VOLLSTÄNDIG (v1.5.10)
 
 Das System ist vollständig implementiert und produktionsreif (Code Quality: 9.5/10).
 
@@ -14,7 +14,7 @@ Das System ist vollständig implementiert und produktionsreif (Code Quality: 9.5
 ### 🎯 Abgeschlossene Module
 
 #### Hardware-Manager (Vollständig implementiert)
-- ✅ **BNO055Manager** - 9-DoF Sensor mit NVS-Kalibrierungsspeicher
+- ✅ **BNO055Manager** - IMUPLUS mit Gyro, Beschleunigung und NVS-Speicher
 - ✅ **OLEDManager** - 128x64 Display mit 8 Test-Modi und Auto-Rotation  
 - ✅ **GPSManager** - BN-880 mit UART2 Interrupt-Support und Ring-Buffer
 - ✅ **CANReader** - MCP2515-Integration mit optimierten String-Operationen
@@ -209,10 +209,11 @@ gpsManager.enableInterruptMode(true);  // Keine Daten gehen verloren!
 ```cpp
 // BNO055 Kalibrierung persistent speichern
 bool BNO055Manager::saveCalibration() {
+    if (!cal.isFullyCalibrated()) return false; // Gyro und Accel müssen 3 sein
     preferences.begin("bno055_cal", false);
     preferences.putBytes("offsets", &calibrationOffsets, sizeof(calibrationOffsets));
-    preferences.putUChar("cal_sys", cal.system);
-    // ... weitere Kalibrierungsdaten
+    preferences.putUChar("cal_gyro", cal.gyro);
+    preferences.putUChar("cal_accel", cal.accel);
     preferences.end();
     return true;
 }

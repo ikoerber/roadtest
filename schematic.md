@@ -5,7 +5,7 @@ Dieses Dokument zeigt den vollständigen Schaltplan für das ESP32-S3 basierte S
 
 ## Komponenten
 - **ESP32-S3** DevKit-C1
-- **BNO055** 9-DoF Sensor (I2C)
+- **BNO055** IMUPLUS-Sensor, Gyro + Beschleunigung (I2C)
 - **OLED Display** 128x64 (I2C)
 - **GPS Modul** BN-880 (UART)
 - **MCP2515** CAN-Bus Controller (SPI)
@@ -19,7 +19,7 @@ graph TB
     ESP32[ESP32-S3<br/>DevKit-C1] 
     
     %% I2C-Bus Komponenten
-    BNO055[BNO055<br/>9-DoF Sensor<br/>Addr: 0x28/0x29]
+    BNO055[BNO055<br/>IMUPLUS 6-DoF<br/>Addr: 0x28/0x29]
     OLED[OLED Display<br/>128x64<br/>Addr: 0x3C/0x3D]
     
     %% UART Komponenten
@@ -118,10 +118,11 @@ graph TB
 
 ### Komponenten-Details
 
-#### BNO055 (9-DoF Sensor)
+#### BNO055 (IMUPLUS mit Gyro und Beschleunigung)
 - **Versorgung:** 3.3V
 - **I2C-Adresse:** 0x28 (Standard) oder 0x29 (alternativ)
 - **Pull-up Widerstände:** 4.7kΩ auf SDA und SCL (meist auf Modul vorhanden)
+- **Betriebsmodus:** IMUPLUS (8), ohne Magnetometer und ohne Nordbezug
 
 #### OLED Display (128x64)
 - **Versorgung:** 3.3V

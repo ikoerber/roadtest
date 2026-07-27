@@ -2,7 +2,6 @@
 #define INTEGRATION_TESTS_H
 
 #include <Arduino.h>
-#include "hardware_test.h"
 #include "bno055_manager.h"
 #include "gps_manager.h"
 #include "can_reader.h"

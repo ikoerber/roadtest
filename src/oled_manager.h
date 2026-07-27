@@ -58,7 +58,7 @@ public:
     
     // Initialisierung
     bool begin(uint8_t address = 0x3C);
-    void end();
+    void end(bool clearDisplay = true);
     bool isReady() const { return initialized; }
     
     // Konfiguration
@@ -74,7 +74,11 @@ public:
     
     // Status-Anzeigen
     void showHardwareStatus(bool i2c, bool bno055, bool oled, bool sd, bool can, bool gps = false);
+    void showBootStatus(bool bno055, bool sd, bool gpsInitialized,
+                        bool gpsDataStream, bool can, bool wifi,
+                        bool allRequiredReady);
     void showTestResults(const String& testName, bool success, const String& details = "");
+    void showCalibrationStatus(uint8_t gyro, uint8_t accel, bool saved);
     
     // Live-Daten Anzeigen
     void showSensorData(float heading, float accel, float temp, int canCount);

@@ -13,7 +13,12 @@ IntegrationTests::IntegrationTests() {
 
 void IntegrationTests::addTestResult(const String& name, bool passed, uint32_t duration, const String& details) {
     if (resultCount < MAX_TEST_RESULTS) {
-        results[resultCount] = {name, passed, duration, details, 0, 0};
+        results[resultCount].testName = name;
+        results[resultCount].passed = passed;
+        results[resultCount].duration = duration;
+        results[resultCount].details = details;
+        results[resultCount].memoryLeaked = 0;
+        results[resultCount].errorsDetected = 0;
         resultCount++;
         
         stats.totalTests++;
@@ -139,6 +144,7 @@ bool IntegrationTests::testAllModulesConcurrent() {
         // BNO055 @ 10Hz
         if (millis() % 100 == 0) {
             SensorData data = bnoManager.getCurrentData();
+            bnoManager.processSample(data);
             sensorReads++;
             
             // Vibrations-Analyse
@@ -249,7 +255,7 @@ bool IntegrationTests::testSensorDataCorrelation() {
         sensorData.timestamp = now;
         
         // GPS-Daten (falls verfügbar)
-        GPSData gpsData;
+        GPSData gpsData = {};
         bool hasGPS = false;
         if (gpsManager.available()) {
             gpsData = gpsManager.getCurrentData();
@@ -612,7 +618,7 @@ bool IntegrationTests::testI2CBusRecovery() {
     Wire.end();
     delay(100);
     Wire.begin(I2C_SDA, I2C_SCL);
-    Wire.setClock(100000);
+    Wire.setClock(I2C_CLOCK_SPEED);
     
     // 5. Prüfe ob Geräte wieder erreichbar
     bool recoverySuccess = true;
@@ -808,8 +814,9 @@ bool IntegrationTests::testSensorDisconnectReconnect() {
         delay(500);  // Zeit für Initialisierung
         CalibrationData calAfter = bnoManager.getCalibration();
         
-        // Mit NVS sollte Kalibrierung erhalten bleiben
-        if (calAfter.system > 0 || calAfter.gyro > 0) {
+        // Im IMUPLUS-Modus sind nur Gyro und Beschleunigung relevant.
+        if (bnoManager.isCalibrationSaved() ||
+            calAfter.gyro > 0 || calAfter.accel > 0) {
             Serial.println("✅ Kalibrierung aus NVS wiederhergestellt");
             details += "Kalibrierung erhalten, ";
         } else {
@@ -928,7 +935,7 @@ bool IntegrationTests::testGPSSignalLoss() {
     
     // Speichere GPS-Status
     bool hadFix = gpsManager.hasValidFix();
-    GPSData lastGoodData;
+    GPSData lastGoodData = {};
     if (hadFix) {
         lastGoodData = gpsManager.getCurrentData();
     }
@@ -1027,9 +1034,11 @@ bool IntegrationTests::testPowerBrownout() {
     // 1. Speichere kritische Daten
     Serial.println("Speichere kritische Daten vor Brownout...");
     
-    // Kalibrierung speichern
-    if (bnoManager.isReady()) {
-        bnoManager.saveCalibration();
+    // Kalibrierung speichern, sofern der IMUPLUS-Sensor vollständig
+    // kalibriert ist. Der Status wird nach dem Neustart erneut geprüft.
+    bool calibrationWasSaved = bnoManager.isCalibrationSaved();
+    if (bnoManager.isReady() && !calibrationWasSaved) {
+        calibrationWasSaved = bnoManager.saveCalibration();
     }
     
     // SD-Buffer flushen
@@ -1067,10 +1076,15 @@ bool IntegrationTests::testPowerBrownout() {
     if (modulesWereReady[0] && bnoManager.begin()) {
         recoveredModules++;
         
-        // Prüfe ob Kalibrierung erhalten blieb
-        CalibrationData cal = bnoManager.getCalibration();
-        if (cal.system > 0) {
+        // Prüfe, ob eine zuvor vorhandene IMUPLUS-Kalibrierung wieder aus
+        // dem NVS geladen wurde.
+        if (!calibrationWasSaved) {
+            details += "BNO055-Kal vorher nicht gespeichert, ";
+        } else if (bnoManager.isCalibrationSaved()) {
             details += "BNO055-Kal erhalten, ";
+        } else {
+            testPassed = false;
+            details += "BNO055-Kal verloren, ";
         }
     }
     
@@ -1153,6 +1167,7 @@ bool IntegrationTests::testMaximumVibration() {
         
         while (millis() < testEnd) {
             SensorData data = bnoManager.getCurrentData();
+            bnoManager.processSample(data);
             
             // Berechne Gesamt-Beschleunigung
             float totalAccel = sqrt(data.accelX * data.accelX + 
@@ -1326,6 +1341,7 @@ bool IntegrationTests::testSimultaneousEvents() {
         // 1. Sensor-Event (Vibration)
         if (now % 100 == 0) {  // Alle 100ms
             SensorData data = bnoManager.getCurrentData();
+            bnoManager.processSample(data);
             VibrationMetrics vib = bnoManager.analyzeVibration();
             
             if (vib.shockCount > 0) {
@@ -1991,7 +2007,7 @@ bool IntegrationTests::testDataConsistency() {
         
         // Hole alle Daten "gleichzeitig"
         SensorData sensor = bnoManager.getCurrentData();
-        GPSData gps;
+        GPSData gps = {};
         bool hasGPS = false;
         
         if (gpsManager.available()) {
@@ -2005,7 +2021,7 @@ bool IntegrationTests::testDataConsistency() {
         samples[i].sensorAccel = sqrt(sensor.accelX * sensor.accelX + 
                                      sensor.accelY * sensor.accelY);
         
-        if (hasGPS) {
+        if (hasGPS && gps.valid_fix && gps.speed_kmh >= 5.0f) {
             samples[i].gpsHeading = gps.heading_deg;
             samples[i].gpsSpeed = gps.speed_kmh;
             samples[i].valid = true;
@@ -2018,32 +2034,32 @@ bool IntegrationTests::testDataConsistency() {
     }
     
     // Analysiere Konsistenz
-    int headingMismatches = 0;
-    float maxHeadingDiff = 0;
-    float totalHeadingDiff = 0;
-    int comparedSamples = 0;
+    float maxTurnDiff = 0;
+    float totalTurnDiff = 0;
+    int comparedTurns = 0;
+
+    auto normalizedDelta = [](float current, float previous) {
+        float delta = current - previous;
+        while (delta > 180.0f) delta -= 360.0f;
+        while (delta < -180.0f) delta += 360.0f;
+        return delta;
+    };
     
-    for (int i = 0; i < SAMPLE_COUNT; i++) {
-        if (!samples[i].valid) continue;
-        
-        // Vergleiche Headings (sollten ähnlich sein wenn sich bewegt)
-        float headingDiff = abs(samples[i].sensorHeading - samples[i].gpsHeading);
-        
-        // Berücksichtige Wrap-Around
-        if (headingDiff > 180) {
-            headingDiff = 360 - headingDiff;
-        }
-        
-        totalHeadingDiff += headingDiff;
-        comparedSamples++;
-        
-        if (headingDiff > maxHeadingDiff) {
-            maxHeadingDiff = headingDiff;
-        }
-        
-        // Große Abweichung = Problem
-        if (headingDiff > 30.0) {
-            headingMismatches++;
+    for (int i = 1; i < SAMPLE_COUNT; i++) {
+        if (!samples[i - 1].valid || !samples[i].valid) continue;
+
+        // IMUPLUS besitzt keinen Nordbezug. Deshalb werden ausschließlich
+        // relative Richtungsänderungen mit dem GPS-Kurs verglichen.
+        float sensorTurn = normalizedDelta(
+            samples[i].sensorHeading, samples[i - 1].sensorHeading);
+        float gpsTurn = normalizedDelta(
+            samples[i].gpsHeading, samples[i - 1].gpsHeading);
+        float turnDiff = fabs(fabs(sensorTurn) - fabs(gpsTurn));
+
+        totalTurnDiff += turnDiff;
+        comparedTurns++;
+        if (turnDiff > maxTurnDiff) {
+            maxTurnDiff = turnDiff;
         }
     }
     
@@ -2058,17 +2074,18 @@ bool IntegrationTests::testDataConsistency() {
         }
     }
     
-    float avgHeadingDiff = comparedSamples > 0 ? totalHeadingDiff / comparedSamples : 0;
+    float avgTurnDiff =
+        comparedTurns > 0 ? totalTurnDiff / comparedTurns : 0;
     
     details = String(validSamples) + "/" + String(SAMPLE_COUNT) + " mit GPS, ";
-    details += "Heading-Diff: " + String(avgHeadingDiff, 1) + "° (max:" + 
-               String(maxHeadingDiff, 1) + "°), ";
+    details += "relative Dreh-Diff: " + String(avgTurnDiff, 1) + "° (max:" +
+               String(maxTurnDiff, 1) + "°, n=" + String(comparedTurns) + "), ";
     details += String(timestampErrors) + " Zeit-Fehler";
     
     // Bewertung
-    if (avgHeadingDiff > 15.0 && validSamples > 10) {
+    if (avgTurnDiff > 15.0 && comparedTurns > 10) {
         testPassed = false;
-        details += " - Heading-Inkonsistenz!";
+        details += " - Relative Drehung inkonsistent!";
     }
     
     if (timestampErrors > SAMPLE_COUNT * 0.1) {  // Mehr als 10% Timing-Fehler
@@ -2248,6 +2265,7 @@ bool IntegrationTests::testCrossModuleSync() {
     
     while (millis() - motionStart < 5000 && eventCount < 50) {
         SensorData sensor = bnoManager.getCurrentData();
+        bnoManager.processSample(sensor);
         
         // Bewegung erkannt?
         float currentAccel = sqrt(sensor.accelX * sensor.accelX + 
@@ -2463,12 +2481,10 @@ bool IntegrationTests::testSensorCalibrationDrift() {
             calSamples[sampleIndex] = bnoManager.getCalibration();
             dataSamples[sampleIndex] = bnoManager.getCurrentData();
             
-            Serial.printf("Cal[%d]: S:%d G:%d A:%d M:%d\n", 
+            Serial.printf("Cal[%d]: G:%d A:%d\n",
                          sampleIndex,
-                         calSamples[sampleIndex].system,
                          calSamples[sampleIndex].gyro,
-                         calSamples[sampleIndex].accel,
-                         calSamples[sampleIndex].mag);
+                         calSamples[sampleIndex].accel);
             
             sampleIndex++;
             lastSample = millis();
@@ -2486,10 +2502,8 @@ bool IntegrationTests::testSensorCalibrationDrift() {
     
     for (int i = 0; i < sampleIndex; i++) {
         // Kalibrierung verschlechtert?
-        if (calSamples[i].system < initialCal.system ||
-            calSamples[i].gyro < initialCal.gyro ||
-            calSamples[i].accel < initialCal.accel ||
-            calSamples[i].mag < initialCal.mag) {
+        if (calSamples[i].gyro < initialCal.gyro ||
+            calSamples[i].accel < initialCal.accel) {
             calDrops++;
         }
         
@@ -2511,8 +2525,8 @@ bool IntegrationTests::testSensorCalibrationDrift() {
     details = "Cal-Drops: " + String(calDrops) + ", ";
     details += "Heading-Drift: " + String(avgHeadingDrift, 1) + "° (max:" + 
                String(maxHeadingDrift, 1) + "°), ";
-    details += "Final: S" + String(finalCal.system) + " G" + String(finalCal.gyro) + 
-               " A" + String(finalCal.accel) + " M" + String(finalCal.mag);
+    details += "Final: G" + String(finalCal.gyro) +
+               " A" + String(finalCal.accel);
     
     // Bewertung
     if (calDrops > 2) {  // Mehr als 2 Drops in 1 Minute

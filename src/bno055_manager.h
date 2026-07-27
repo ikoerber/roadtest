@@ -6,6 +6,10 @@
 #include <utility/imumaths.h>
 #include <Preferences.h>
 
+// ROADTEST benötigt für die Straßenmessung nur Gyro und Beschleunigung.
+// IMUPLUS vermeidet den störanfälligen Magnetometer-/Kompassanteil von NDOF.
+constexpr adafruit_bno055_opmode_t ROADTEST_BNO_MODE = OPERATION_MODE_IMUPLUS;
+
 // Kalibrierungs-Datenstruktur
 struct CalibrationData {
     uint8_t system;
@@ -14,22 +18,35 @@ struct CalibrationData {
     uint8_t mag;
     
     bool isFullyCalibrated() const {
-        return (system == 3 && gyro == 3 && accel == 3 && mag == 3);
+        return gyro == 3 && accel == 3;
     }
     
     uint8_t getMinimum() const {
-        uint8_t min = system;
-        if (gyro < min) min = gyro;
-        if (accel < min) min = accel;
-        if (mag < min) min = mag;
-        return min;
+        return gyro < accel ? gyro : accel;
+    }
+};
+
+// Laufzeitdiagnose des BNO055. IMUPLUS (0x08) und Systemstatus 5 bedeuten,
+// dass die Sensorfusion tatsächlich läuft.
+struct BNO055RuntimeStatus {
+    uint8_t operationMode;
+    uint8_t systemStatus;
+    uint8_t selfTestResult;
+    uint8_t systemError;
+
+    bool isExpectedModeActive() const {
+        return operationMode == ROADTEST_BNO_MODE;
+    }
+
+    bool isFusionRunning() const {
+        return isExpectedModeActive() && systemStatus == 5 && systemError == 0;
     }
 };
 
 // Erweiterte Sensor-Daten
 struct SensorData {
     // Orientierung
-    float heading;      // 0-360°
+    float heading;      // Relative Richtung 0-360° (kein magnetischer Nordbezug)
     float pitch;        // -180 bis +180°
     float roll;         // -90 bis +90°
     
@@ -43,11 +60,6 @@ struct SensorData {
     float gyroX;        // rad/s
     float gyroY;        // rad/s
     float gyroZ;        // rad/s
-    
-    // Magnetometer
-    float magX;         // µT
-    float magY;         // µT
-    float magZ;         // µT
     
     // Gravitation
     float gravX;        // m/s²
@@ -72,7 +84,13 @@ class BNO055Manager {
 private:
     Adafruit_BNO055* sensor;
     bool initialized;
+    bool selfTestPassed;
+    bool fusionModeActive;
+    uint8_t fusionModeFailureCount;
+    BNO055RuntimeStatus runtimeStatus;
     uint8_t i2cAddress;
+
+    BNO055RuntimeStatus readRuntimeStatus();
     
     // Kalibrierungs-Management
     bool calibrationSaved;
@@ -80,18 +98,33 @@ private:
     Preferences preferences;  // NVS für persistente Speicherung
     
     // Daten-Puffer für Analyse
-    static const int BUFFER_SIZE = 100;
+    static const int BUFFER_SIZE = 10;  // 1 Sekunde bei 10 Hz
     float accelBuffer[BUFFER_SIZE];
     int bufferIndex;
+    int bufferCount;
     
     // Vibrations-Analyse
     float vibrationThreshold;
     VibrationMetrics currentVibration;
+    float lastRoadQuality;
+    bool hasRoadQuality;
     
     // Orientierungs-Tracking
     float lastHeading;
+    unsigned long lastHeadingTime;
+    bool headingInitialized;
     bool inCurve;
     float curveStartHeading;
+    float accumulatedCurveAngle;
+    float lastCompletedCurveAngle;
+    unsigned long curveStartTime;
+    unsigned long curveQuietSince;
+    unsigned long lastCurveEvent;
+
+    // Schlagloch-Erkennung
+    bool potholeArmed;
+    unsigned long potholeStartTime;
+    unsigned long lastPotholeEvent;
     
 public:
     BNO055Manager(uint8_t address = 0x29);
@@ -101,17 +134,26 @@ public:
     bool begin();
     void end();
     bool isReady() const { return initialized; }
+    bool isSelfTestPassed() const { return initialized && selfTestPassed; }
     
     // Sensor-Konfiguration
     void setMode(adafruit_bno055_opmode_t mode);
     void setExtCrystal(bool useExternal);
     bool runSelfTest();
+    bool ensureFusionMode();
+    bool restartFusion();
+    bool verifyFusionMode();
+    bool isFusionModeActive() const {
+        return initialized && fusionModeActive;
+    }
+    BNO055RuntimeStatus getRuntimeStatus() const { return runtimeStatus; }
     
     // Kalibrierung
     CalibrationData getCalibration();
     bool saveCalibration();
     bool loadCalibration();
     bool clearCalibration();  // Löscht gespeicherte Kalibrierung aus NVS
+    bool isCalibrationSaved() const { return calibrationSaved; }
     void getCalibrationOffsets(adafruit_bno055_offsets_t* offsets);
     void setCalibrationOffsets(const adafruit_bno055_offsets_t* offsets);
     String getCalibrationInstructions();
@@ -123,18 +165,19 @@ public:
     
     // Erweiterte Analyse
     VibrationMetrics analyzeVibration();
+    void processSample(const SensorData& data);
     void updateVibrationBuffer(float accelZ);
     void setVibrationThreshold(float threshold) { vibrationThreshold = threshold; }
     
     // Kurven-Erkennung
-    bool detectCurve(float headingThreshold = 5.0);
+    bool detectCurve(const SensorData& data, float turnRateThreshold = 8.0);
     float getCurveAngle();
     void resetCurveDetection();
     
     // Straßenqualitäts-Metriken
-    float calculateRoadQuality();
+    float calculateRoadQuality(float speedKmh = -1.0f);
     float getSmoothness();
-    bool detectPothole(float threshold = 2.0);
+    bool detectPothole(const SensorData& data, float threshold = 2.0);
     
     // Status und Diagnose
     void printSystemStatus();
