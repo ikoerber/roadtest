@@ -3,6 +3,7 @@
 
 #include <Arduino.h>
 #include <Adafruit_BNO055.h>
+#include <Wire.h>
 #include <utility/imumaths.h>
 #include <Preferences.h>
 
@@ -91,6 +92,8 @@ private:
     uint8_t i2cAddress;
 
     BNO055RuntimeStatus readRuntimeStatus();
+    bool detectAddress();
+    static uint8_t alternateAddress(uint8_t address);
     
     // Kalibrierungs-Management
     bool calibrationSaved;
@@ -127,14 +130,28 @@ private:
     unsigned long lastPotholeEvent;
     
 public:
-    BNO055Manager(uint8_t address = 0x29);
+    // Startadresse. Antwortet der Sensor dort nicht, wird die jeweils andere
+    // dokumentierte BNO055-Adresse geprüft; Breakouts unterscheiden sich hier
+    // je nach Beschaltung des ADR-Pins.
+    BNO055Manager(uint8_t address = BNO055_ADDRESS_B);
     ~BNO055Manager();
-    
+
     // Initialisierung
     bool begin();
     void end();
     bool isReady() const { return initialized; }
     bool isSelfTestPassed() const { return initialized && selfTestPassed; }
+
+    // Tatsächlich verwendete I²C-Adresse (nach erfolgreicher Erkennung)
+    uint8_t getAddress() const { return i2cAddress; }
+
+    // Antwortet der Sensor auf einer der beiden möglichen Adressen?
+    // Wird von der Hardware-Überwachung genutzt, damit dort keine Adresse
+    // fest verdrahtet werden muss.
+    bool responds() const;
+
+    // Reiner I²C-Ping ohne Seiteneffekte
+    static bool probeAddress(uint8_t address);
     
     // Sensor-Konfiguration
     void setMode(adafruit_bno055_opmode_t mode);

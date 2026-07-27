@@ -2,6 +2,11 @@
 #include "hardware_config.h"
 #include <esp_heap_caps.h>
 
+// Die SD-Karte hängt an der eigenen HSPI-Instanz aus main.cpp, nicht am
+// globalen SPI-Objekt. Ein sdLogger.begin() ohne Argument würde sie auf den
+// CAN-Bus umhängen und die Aufzeichnung bis zum Neustart unbrauchbar machen.
+extern SPIClass spiSD;
+
 // Globale Test-Instanz
 IntegrationTests integrationTests;
 
@@ -706,7 +711,7 @@ bool IntegrationTests::testSDCardHotplug() {
         // Versuche aktiv zu erkennen
         sdLogger.end();
         delay(100);
-        cardRemoved = !sdLogger.begin();
+        cardRemoved = !sdLogger.begin(spiSD);
     }
     
     if (cardRemoved) {
@@ -734,7 +739,7 @@ bool IntegrationTests::testSDCardHotplug() {
         sdLogger.end();
         delay(500);
         
-        if (sdLogger.begin()) {
+        if (sdLogger.begin(spiSD)) {
             reInitSuccess = true;
             break;
         }
@@ -1101,7 +1106,7 @@ bool IntegrationTests::testPowerBrownout() {
         recoveredModules++;
     }
     
-    if (modulesWereReady[4] && sdLogger.begin()) {
+    if (modulesWereReady[4] && sdLogger.begin(spiSD)) {
         recoveredModules++;
         
         // Prüfe ob Daten erhalten blieben

@@ -91,12 +91,14 @@ bool SDLogger::begin(SPIClass& spi) {
     }
     
     Serial.println("=== SD Logger Initialisierung ===");
-    Serial.printf("CS Pin: %d\n", csPin);
-    
+    Serial.printf("CS Pin: %d, SPI-Takt: %d Hz\n", csPin, SD_SPI_SPEED);
+
     spiInstance = &spi;
-    
-    // SD-Karte initialisieren
-    if (!SD.begin(csPin, spi)) {
+
+    // SD-Karte initialisieren. Der Takt wird bewusst explizit übergeben; ohne
+    // Argument nimmt die Bibliothek 4 MHz, was auf dem vorhandenen Aufbau zu
+    // wenig Signalreserve lässt.
+    if (!SD.begin(csPin, spi, SD_SPI_SPEED)) {
         Serial.println("❌ SD-Karte nicht gefunden!");
         return false;
     }

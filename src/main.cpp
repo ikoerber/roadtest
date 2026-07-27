@@ -6,6 +6,7 @@
 #include <SD.h>
 #include <SPI.h>
 #include "esp_log.h"
+#include "esp_task_wdt.h"
 #include "hardware_config.h"
 #include "buffer_utils.h"
 #include "oled_manager.h"
@@ -608,6 +609,59 @@ bool i2cDeviceResponds(uint8_t address) {
     return Wire.endTransmission() == 0;
 }
 
+// Alle SPI-Slaves abwählen, bevor irgendein Bus initialisiert wird.
+// Ein floatender CS kann ein Modul zufällig selektieren; beim CAN-Modul legt
+// das im ungünstigen Fall dessen MISO-Ausgang auf GPIO 11 - bei einem mit 5 V
+// versorgten Modul mit entsprechendem Pegel. Deshalb geschieht das
+// unabhängig davon, ob CAN überhaupt aktiviert ist.
+void deselectAllSPIDevices() {
+    pinMode(SD_CS_PIN, OUTPUT);
+    digitalWrite(SD_CS_PIN, HIGH);
+    pinMode(CAN_CS_PIN, OUTPUT);
+    digitalWrite(CAN_CS_PIN, HIGH);
+}
+
+// Hängt ein Slave den Bus fest (typisch nach einem Reset mitten in einer
+// Übertragung), taktet diese Sequenz ihn frei und erzeugt eine Stop-Bedingung.
+void recoverI2CBus() {
+    Wire.end();
+
+    pinMode(I2C_SCL, OUTPUT);
+    pinMode(I2C_SDA, INPUT_PULLUP);
+    for (int i = 0; i < 9; i++) {
+        digitalWrite(I2C_SCL, HIGH);
+        delayMicroseconds(5);
+        digitalWrite(I2C_SCL, LOW);
+        delayMicroseconds(5);
+    }
+
+    pinMode(I2C_SDA, OUTPUT);
+    digitalWrite(I2C_SDA, LOW);
+    delayMicroseconds(5);
+    digitalWrite(I2C_SCL, HIGH);
+    delayMicroseconds(5);
+    digitalWrite(I2C_SDA, HIGH);
+    delayMicroseconds(5);
+
+    pinMode(I2C_SDA, INPUT_PULLUP);
+    pinMode(I2C_SCL, INPUT_PULLUP);
+
+    Wire.begin(I2C_SDA, I2C_SCL);
+    Wire.setClock(I2C_CLOCK_SPEED);
+}
+
+// Die Testsuiten laufen minutenlang blockierend und warten teilweise auf
+// Eingaben an der seriellen Konsole. Währenddessen darf der Watchdog nicht
+// zuschlagen.
+void suspendWatchdog() {
+    esp_task_wdt_delete(nullptr);
+}
+
+void resumeWatchdog() {
+    esp_task_wdt_add(nullptr);
+    esp_task_wdt_reset();
+}
+
 void configureSDLogger() {
     LogConfig logConfig = sdLogger.getConfig();
     logConfig.sensorLogInterval = 100;
@@ -694,13 +748,23 @@ void handleHardwareRecovery(unsigned long now) {
 
     // BNO055 und OLED werden per I2C-Ping überwacht. Erst drei
     // aufeinanderfolgende Ausfälle gelten als echte Trennung.
-    bool bnoResponding = i2cDeviceResponds(0x29);
+    bool bnoResponding = bnoManager.responds();
     if (bnoManager.isReady()) {
         bnoMissingChecks = bnoResponding ? 0 : bnoMissingChecks + 1;
         if (bnoMissingChecks >= 3) {
-            Serial.println("⚠️ BNO055 nicht mehr erreichbar");
-            bnoManager.end();
+            // Vor dem Abschalten des Sensors erst den Bus freitakten. Ein
+            // festhängender Slave ist die häufigere Ursache als ein wirklich
+            // abgezogenes Modul, und jeder Sensor-Neustart verwirft die
+            // laufende Kalibrierung vollständig.
+            Serial.println("⚠️ BNO055 antwortet nicht; I²C-Bus wird zurückgesetzt");
+            recoverI2CBus();
             bnoMissingChecks = 0;
+            if (bnoManager.responds()) {
+                Serial.println("✅ BNO055 nach I²C-Reset wieder erreichbar");
+            } else {
+                Serial.println("⚠️ BNO055 weiterhin nicht erreichbar");
+                bnoManager.end();
+            }
         } else if (bnoResponding && !bnoManager.isSelfTestPassed()) {
             bnoManager.runSelfTest();
         } else if (bnoResponding && !bnoManager.verifyFusionMode()) {
@@ -764,6 +828,10 @@ void handleHardwareRecovery(unsigned long now) {
 }
 
 void setup() {
+    // Als Allererstes, noch vor jeder Businitialisierung: kein SPI-Slave darf
+    // mit floatendem Chip Select im System hängen.
+    deselectAllSPIDevices();
+
     Serial.begin(115200);
     delay(1000);
 
@@ -776,6 +844,19 @@ void setup() {
     Serial.println("Für kurvenreiche Genießer-Strecken");
     Serial.println("Version 1.5.10 mit entprellter BNO055-IMUPLUS-Prüfung\n");
 
+    // Task-Watchdog aktivieren. Bleibt loop() hängen - etwa durch einen
+    // abgebrochenen OTA-Upload oder einen blockierenden Peripheriezugriff -
+    // startet das Gerät neu, statt auf der Strecke stumm zu bleiben.
+    esp_task_wdt_config_t wdtConfig = {};
+    wdtConfig.timeout_ms = WDT_TIMEOUT_MS;
+    wdtConfig.idle_core_mask = 0;
+    wdtConfig.trigger_panic = true;
+    if (esp_task_wdt_init(&wdtConfig) == ESP_ERR_INVALID_STATE) {
+        esp_task_wdt_reconfigure(&wdtConfig);
+    }
+    esp_task_wdt_add(nullptr);
+    Serial.printf("Watchdog aktiv (%d ms)\n", WDT_TIMEOUT_MS);
+
     // Das Service-WLAN steht vor allen externen Hardwareprüfungen bereit.
     // Selbst ein langsames oder defektes Zusatzmodul verhindert so nicht,
     // dass Diagnose und OTA erreichbar werden.
@@ -787,8 +868,8 @@ void setup() {
     pinMode(I2C_SCL, INPUT_PULLUP);
     bool i2cSuccess = Wire.begin(I2C_SDA, I2C_SCL);
     Wire.setClock(I2C_CLOCK_SPEED);
-    Serial.printf("I2C: %s (SDA=%d, SCL=%d)\n",
-                  i2cSuccess ? "OK" : "FEHLER", I2C_SDA, I2C_SCL);
+    Serial.printf("I2C: %s (SDA=%d, SCL=%d, %d Hz)\n",
+                  i2cSuccess ? "OK" : "FEHLER", I2C_SDA, I2C_SCL, I2C_CLOCK_SPEED);
 
     // Ab hier wird immer dieselbe OLED-Statusseite aktualisiert.
     if (oledManager.begin(OLED_ADDRESS_A)) {
@@ -843,6 +924,9 @@ void loop() {
     static CalibrationData lastDisplayedCalibration = {255, 255, 255, 255};
     static bool lastDisplayedCalibrationSaved = false;
     static unsigned long lastCalibrationDisplay = 0;
+    static unsigned long lastCalibrationSaveAttempt = 0;
+
+    esp_task_wdt_reset();
 
     // Web-Anfragen und OTA zuerst bedienen. Während eines Firmware-Uploads
     // bleibt die SD-Karte geschlossen und die übrige Messschleife pausiert.
@@ -991,7 +1075,21 @@ void loop() {
         } else {
             Serial.print("BNO055: Fusion nicht bereit");
         }
-        
+
+        // Eine vollständige Kalibrierung sofort dauerhaft sichern. Ohne das
+        // geht sie beim nächsten Sensor-Neustart verloren, und genau solche
+        // Neustarts löst die Hardware-Überwachung bei unruhigem I²C-Bus
+        // regelmäßig aus. Der Abstand begrenzt NVS-Schreibzyklen, falls das
+        // Speichern wiederholt fehlschlägt.
+        if (cal.isFullyCalibrated() && !bnoManager.isCalibrationSaved() &&
+            currentTime - lastCalibrationSaveAttempt >= 30000) {
+            lastCalibrationSaveAttempt = currentTime;
+            if (bnoManager.saveCalibration()) {
+                Serial.println("✅ Kalibrierung automatisch dauerhaft gesichert");
+            }
+        }
+
+
         // GPS Status
         if (gpsAvailable && gpsManager.isReceivingNMEA()) {
             if (gpsManager.hasValidFix()) {
@@ -1075,35 +1173,48 @@ void loop() {
             Serial.println("diag - System-Diagnose");
         }
         else if (command == "hardware") {
+            suspendWatchdog();
             i2cScanner();
             testBNO055();
             testOLED();
             testSDWithSafePins();
             testBufferSafety();
+            resumeWatchdog();
         }
         else if (command == "integration") {
             Serial.println("\n🚀 Starte umfassende Integration-Tests...");
             Serial.println("Dies dauert etwa 5-10 Minuten.");
+            Serial.println("Achtung: einzelne Tests warten auf Eingaben an dieser Konsole.");
+            suspendWatchdog();
             integrationTests.runAllTests();
+            resumeWatchdog();
         }
         else if (command == "stress") {
+            suspendWatchdog();
             runStressTestSuite();
+            resumeWatchdog();
         }
         else if (command == "recovery") {
+            suspendWatchdog();
             runFailureRecoveryTests();
+            resumeWatchdog();
         }
         else if (command == "quick") {
             Serial.println("\n⚡ Starte schnelle Integration-Tests...");
+            suspendWatchdog();
             integrationTests.testAllModulesConcurrent();
             integrationTests.testSensorDataCorrelation();
             integrationTests.testBufferOverflowRecovery();
             integrationTests.printResults();
+            resumeWatchdog();
         }
         else if (command == "buffer") {
             testBufferSafety();
         }
         else if (command == "memory") {
+            suspendWatchdog();
             integrationTests.testMemoryLeakDetection();
+            resumeWatchdog();
         }
         else if (command == "calibration") {
             if (bnoManager.saveCalibration()) {
@@ -1140,8 +1251,9 @@ void loop() {
             Serial.printf("Chip Model: %s\n", ESP.getChipModel());
             Serial.printf("CPU Freq: %d MHz\n", ESP.getCpuFreqMHz());
             Serial.println("\nModule-Status:");
-            Serial.printf("BNO055: %s\n",
-                          bnoManager.isSelfTestPassed() ? "OK" : "Fehler");
+            Serial.printf("BNO055: %s (I2C 0x%02X)\n",
+                          bnoManager.isSelfTestPassed() ? "OK" : "Fehler",
+                          bnoManager.getAddress());
             Serial.printf("GPS: %s\n", gpsManager.isReady() ? "OK" : "Fehler");
             Serial.printf("CAN: %s\n", canReader.isReady() ? "OK" : "Fehler");
             Serial.printf("SD: %s\n", sdLogger.isReady() ? "OK" : "Fehler");

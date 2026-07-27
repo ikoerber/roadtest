@@ -46,11 +46,34 @@ extern const int GPS_BAUD_RATE;    // 9600    - GPS Baudrate
 // -----------------------------------------------------------------------------
 
 // Timing-Konstanten
-#define I2C_CLOCK_SPEED      50000  // 50kHz für stabilen BNO055-I2C-Betrieb
-#define SD_SPI_SPEED        400000  // 400kHz für SD-Initialisierung
+//
+// I²C: Der SSD1306-Treiber stellt den Bustakt bei jedem Transfer selbst ein
+// (TRANSACTION_START/END in Adafruit_SSD1306.cpp) und lässt ihn danach auf
+// seinem eigenen Default stehen. Ein Wire.setClock() in setup() wäre deshalb
+// bereits nach dem ersten Bildaufbau wirkungslos. Beide Werte werden daher
+// explizit an den Displaykonstruktor übergeben (oled_manager.cpp), erst damit
+// steuern die Konstanten hier den Bus tatsächlich.
+#define I2C_CLOCK_SPEED     100000  // Basistakt für BNO055 zwischen den Transfers
+#define I2C_DISPLAY_SPEED   400000  // Takt während der SSD1306-Übertragungen
+
+// SD: Die Bibliothek verwendet ohne Argument 4 MHz. Auf Lochraster ohne
+// Serienterminierung ist das die Schwelle, ab der sporadische Aussetzer
+// beginnen. Bei 10 Hz Logging kostet 1 MHz keine nutzbare Bandbreite.
+#define SD_SPI_SPEED       1000000  // Betriebstakt der SD-Karte
+
 #define CAN_BAUDRATE        500000  // 500kbps CAN-Bus
 #define CAN_CLOCK_8MHZ      8000000 // 8MHz MCP2515 Oszillator
 #define CAN_CLOCK_16MHZ     16000000// 16MHz MCP2515 Oszillator
+
+// Task-Watchdog: Ein hängender loop() führt zum Neustart statt zu einem
+// stummen Gerät auf der Strecke. Grosszügig bemessen, damit langsame
+// SD-Schreibvorgänge und OTA-Uploads nicht fälschlich auslösen.
+#define WDT_TIMEOUT_MS       30000
+
+// WLAN-Sendeleistung. Die volle Leistung erzeugt Stromspitzen um 350 mA, die
+// über die gemeinsame 3,3-V-Schiene direkt in SD-Karte und BNO055 koppeln.
+// Für ein Endgerät in wenigen Metern Entfernung ist 11 dBm reichlich.
+#define WIFI_TX_POWER       WIFI_POWER_11dBm
 
 // Display-Spezifikationen
 #define SCREEN_WIDTH        128     // OLED Display Breite

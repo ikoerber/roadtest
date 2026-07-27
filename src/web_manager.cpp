@@ -6,6 +6,7 @@
 #include "bno055_manager.h"
 #include "can_reader.h"
 #include "gps_manager.h"
+#include "hardware_config.h"
 #include "oled_manager.h"
 #include "sd_logger.h"
 
@@ -53,6 +54,20 @@ bool WebManager::begin() {
         !WiFi.softAP(WIFI_SSID, WIFI_PASSWORD, 6, false, 2)) {
         Serial.println("❌ ROADTEST-WLAN konnte nicht gestartet werden");
         return false;
+    }
+
+    // Sendeleistung begrenzen. Die Stromspitzen des Leistungsverstärkers
+    // koppeln über die gemeinsame 3,3-V-Schiene in SD-Karte und BNO055; für
+    // ein Endgerät in Reichweite weniger Meter ist die volle Leistung unnötig.
+    WiFi.setTxPower(WIFI_TX_POWER);
+
+    // Weicht die vergebene Adresse ab, ist das der einzige sichtbare Hinweis
+    // darauf, dass softAPConfig() nicht wie erwartet gegriffen hat.
+    const IPAddress actualAddress = WiFi.softAPIP();
+    if (actualAddress != apAddress) {
+        Serial.printf("⚠️ Access Point läuft auf %s statt %s\n",
+                      actualAddress.toString().c_str(),
+                      apAddress.toString().c_str());
     }
 
     if (initialized) {
@@ -214,8 +229,13 @@ bool WebManager::isReady() const {
     wifi_mode_t mode = WiFi.getMode();
     bool accessPointMode =
         mode == WIFI_MODE_AP || mode == WIFI_MODE_APSTA;
+    // Bewusst keine Prüfung auf eine bestimmte IP-Adresse: Hätte softAPConfig()
+    // einmal eine andere Adresse vergeben, bliebe die Bedingung dauerhaft
+    // falsch. Die Hardware-Überwachung würde dann alle fünf Sekunden begin()
+    // aufrufen und den Access Point neu aufsetzen - kein Client könnte sich
+    // stabil verbinden. Eine abweichende Adresse wird in begin() protokolliert.
     return initialized && accessPointMode &&
-           WiFi.softAPIP() == IPAddress(192, 168, 4, 1);
+           WiFi.softAPIP() != IPAddress(0, 0, 0, 0);
 }
 
 String WebManager::getIPAddress() const {

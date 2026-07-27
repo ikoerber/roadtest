@@ -6,6 +6,7 @@
 #include <SPI.h>
 #include "bno055_manager.h"
 #include "can_reader.h"
+#include "hardware_config.h"
 #include "road_quality.h"
 
 // Forward declaration für GPS-Daten
@@ -160,7 +161,8 @@ private:
     String formatUTC();
     
 public:
-    SDLogger(int cs = 4);
+    // CS folgt der zentralen Pin-Konfiguration statt einem eigenen Literal.
+    SDLogger(int cs = SD_CS_PIN);
     ~SDLogger();
     
     // Initialisierung

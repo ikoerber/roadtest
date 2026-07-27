@@ -1,6 +1,8 @@
 #include "oled_manager.h"
 #include <Wire.h>
 
+#include "hardware_config.h"
+
 // Globale OLED-Manager Instanz
 OLEDManager oledManager;
 
@@ -33,8 +35,14 @@ bool OLEDManager::begin(uint8_t address) {
     
     i2cAddress = address;
     
-    // Display-Instanz erstellen
-    display = new Adafruit_SSD1306(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+    // Display-Instanz erstellen.
+    // Die beiden Taktangaben sind zwingend: Ohne sie verwendet der Treiber
+    // seine Defaults (400 kHz während des Transfers, 100 kHz danach) und
+    // überschreibt damit bei jedem Bildaufbau die Bus-Einstellung aus setup().
+    // Der BNO055 teilt sich diesen Bus, deshalb wird der Ruhetakt hier
+    // ausdrücklich auf I2C_CLOCK_SPEED zurückgesetzt.
+    display = new Adafruit_SSD1306(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET,
+                                   I2C_DISPLAY_SPEED, I2C_CLOCK_SPEED);
     
     if (!display) {
         Serial.println("❌ Speicher-Allokation für Display fehlgeschlagen");

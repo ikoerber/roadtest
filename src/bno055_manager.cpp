@@ -24,19 +24,59 @@ BNO055Manager::~BNO055Manager() {
     end();
 }
 
+uint8_t BNO055Manager::alternateAddress(uint8_t address) {
+    return address == BNO055_ADDRESS_B ? BNO055_ADDRESS_A : BNO055_ADDRESS_B;
+}
+
+bool BNO055Manager::probeAddress(uint8_t address) {
+    Wire.beginTransmission(address);
+    return Wire.endTransmission() == 0;
+}
+
+bool BNO055Manager::responds() const {
+    return probeAddress(i2cAddress) || probeAddress(alternateAddress(i2cAddress));
+}
+
+bool BNO055Manager::detectAddress() {
+    if (probeAddress(i2cAddress)) {
+        return true;
+    }
+
+    const uint8_t fallback = alternateAddress(i2cAddress);
+    if (probeAddress(fallback)) {
+        Serial.printf("BNO055 antwortet auf 0x%02X statt 0x%02X; Adresse übernommen\n",
+                      fallback, i2cAddress);
+        i2cAddress = fallback;
+        return true;
+    }
+
+    return false;
+}
+
 bool BNO055Manager::begin() {
     if (initialized) {
         return true;
     }
-    
+
+    // Erst prüfen, ob der Sensor überhaupt antwortet, und dabei die tatsächlich
+    // belegte Adresse bestimmen. Das ist nicht nur Komfort:
+    // Adafruit_BNO055::begin() wartet nach dem Software-Reset in einer Schleife
+    // ohne Timeout auf die Chip-ID. Fehlt der Sensor oder ist der Bus gestört,
+    // kehrt dieser Aufruf nie zurück und nimmt das gesamte Gerät mit.
+    if (!detectAddress()) {
+        Serial.printf("BNO055 antwortet weder auf 0x%02X noch auf 0x%02X\n",
+                      i2cAddress, alternateAddress(i2cAddress));
+        return false;
+    }
+
     // Sensor-Instanz erstellen mit Null-Check
     sensor = new Adafruit_BNO055(55, i2cAddress);
-    
+
     if (!sensor) {
         Serial.println("FEHLER: Speicherallokation für BNO055 fehlgeschlagen!");
         return false;
     }
-    
+
     if (!sensor->begin(ROADTEST_BNO_MODE)) {
         Serial.printf("BNO055 nicht gefunden auf Adresse 0x%02X\n", i2cAddress);
         delete sensor;
