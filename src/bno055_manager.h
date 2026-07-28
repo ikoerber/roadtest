@@ -7,9 +7,26 @@
 #include <utility/imumaths.h>
 #include <Preferences.h>
 
-// ROADTEST benötigt für die Straßenmessung nur Gyro und Beschleunigung.
-// IMUPLUS vermeidet den störanfälligen Magnetometer-/Kompassanteil von NDOF.
-constexpr adafruit_bno055_opmode_t ROADTEST_BNO_MODE = OPERATION_MODE_IMUPLUS;
+// Betriebsmodus des BNO055.
+//
+// Ursprünglich IMUPLUS, weil für die Straßenmessung nur Gyro und
+// Beschleunigung gebraucht werden und der Magnetometeranteil von NDOF als
+// störanfällig galt.
+//
+// Gegen IMUPLUS spricht der Messbefund vom 28. Juli 2026: Der Sensor meldet
+// wiederholt SYS_ERR 9 ("Fusion algorithm configuration error") und startet
+// sich rund alle 18 s neu. Die Logic-8-Aufnahme hat den I²C-Bus als Ursache
+// ausgeschlossen — das OLED quittiert im selben Zeitraum jede Transaktion.
+// Da NDOF nach Beobachtung früher über längere Zeit stabil lief, wird der
+// Modus testweise zurückgestellt.
+//
+// Zurückstellen auf IMUPLUS: OPERATION_MODE_IMUPLUS eintragen.
+constexpr adafruit_bno055_opmode_t ROADTEST_BNO_MODE = OPERATION_MODE_NDOF;
+
+// In NDOF gehört das Magnetometer zur Fusion. Der Kalibrierungsstatus gilt
+// deshalb erst als vollständig, wenn auch mag den Wert 3 erreicht — das
+// verlangt die bekannte Achterbewegung. In IMUPLUS bleibt mag unbeachtet.
+constexpr bool ROADTEST_BNO_USES_MAG = (ROADTEST_BNO_MODE == OPERATION_MODE_NDOF);
 
 // Kalibrierungs-Datenstruktur
 struct CalibrationData {
@@ -19,7 +36,11 @@ struct CalibrationData {
     uint8_t mag;
     
     bool isFullyCalibrated() const {
-        return gyro == 3 && accel == 3;
+        // In NDOF zählt das Magnetometer zur Fusion und muss mitkalibriert
+        // sein, sonst verweigert getSensorOffsets() die Herausgabe der Werte
+        // und das automatische Sichern im NVS greift nicht.
+        return gyro == 3 && accel == 3 &&
+               (!ROADTEST_BNO_USES_MAG || mag == 3);
     }
     
     uint8_t getMinimum() const {
