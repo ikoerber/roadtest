@@ -167,6 +167,22 @@ git diff --check
 - Der ausführliche Fahrzeugtest steht in
   `testdata/20260728_2300/TESTBERICHT_2026-07-28.md`.
 
+## Verbindlicher Datenqualitätsfokus
+
+GPS und CAN/OBD sind die beiden primären Datenquellen der nächsten
+Entwicklungsphase. Jeder Fahrzeugtest muss beide Quellen gleichzeitig
+aufzeichnen, ihre Eigenqualität bewerten und Geschwindigkeit zeitlich
+miteinander vergleichen.
+
+Der verbindliche Umsetzungs-, Test- und Abnahmeplan steht in
+`GPS_CAN_OBD_DATENQUALITAETSPLAN.md`. Neue Messfunktionen müssen dessen
+Sitzungszähler, Gültigkeitsfelder, Zeitbasis und PASS/WARN/FAIL-Kriterien
+berücksichtigen.
+
+BNO055, SD, OLED und WLAN laufen bei diesen Tests als Stabilitätskontrolle mit.
+Weitere Fahrzeug-PIDs und nicht blockierende Nebenoptimierungen werden erst
+priorisiert, wenn die GPS-/Standard-OBD-Basis reproduzierbar belastbar ist.
+
 ## Bekannte Einschränkungen
 
 ### OBD-Discovery
