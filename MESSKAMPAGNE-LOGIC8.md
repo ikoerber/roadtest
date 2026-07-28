@@ -184,3 +184,38 @@ Offen bleiben zwei Möglichkeiten:
    einfängt.
 2. **Defekter Baustein.** Bleibt die Versorgung stabil, ist der Sensor zu
    tauschen.
+
+---
+
+## Rückschritt nach dem RST-Löteingriff, 28. Juli 2026 nachmittags
+
+Nach dem Einlöten des 10-kΩ-Pull-ups von `RST` nach 3,3 V **fällt auch das OLED
+zeitweise aus**:
+
+```
+⚠️ OLED nicht mehr erreichbar
+✅ OLED erfolgreich initialisiert auf Adresse 0x3C
+```
+
+In der Logic-Aufnahme davor hatte das OLED über 183 Transaktionen **null**
+NACKs. Damit sind jetzt **beide** I²C-Teilnehmer betroffen, nicht mehr nur der
+BNO055. Zwei unabhängige Bausteine gleichzeitig deuten auf Bus oder Versorgung
+— und die einzige physische Änderung seither war der Lötvorgang.
+
+**Nächste Schritte, in dieser Reihenfolge:**
+
+1. 3,3-V-Schiene gegen GND **unter Spannung** messen. Soll ≈ 3,3 V; deutlich
+   darunter heißt, die Schiene wird belastet.
+2. 3,3 V gegen GND **spannungsfrei** als Widerstand messen. Einige kΩ sind
+   normal, unter etwa 100 Ω liegt ein Teilschluss vor.
+3. Prüfen, ob der neue Widerstand wirklich 10 kΩ ist und zwischen `RST` und
+   3,3 V sitzt — nicht versehentlich zwischen 3,3 V und GND.
+4. **Den Pull-up wieder auslöten.** Er hat nichts verbessert; vorher lief das
+   OLED sauber. Der Ausgangszustand ist die saubere Vergleichsbasis.
+
+Erst danach die geplante Analogmessung — und dann **auf der 3,3-V-Schiene**
+statt auf `3Vo`, weil inzwischen alle Module betroffen sind.
+
+Der NDOF-Modus hat die BNO055-Ausfälle nicht behoben: Modus 0x0C wird korrekt
+gesetzt, Selbsttest 0x0F, aber `keine Antwort auf 0x29` und SYS_ERR 9 treten
+weiter auf.
