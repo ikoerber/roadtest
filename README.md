@@ -56,7 +56,7 @@ Das System erfasst Bewegungsdaten, GPS-Position und CAN-Bus-Signale, um die Qual
 
 | Komponente | Modell | Schnittstelle | Pins | Funktion |
 |------------|--------|---------------|------|----------|
-| **IMU-Sensor** | BNO055 | I2C | GPIO 8/9 | IMUPLUS mit Gyro + Beschleunigung |
+| **IMU-Sensor** | BNO055 | I2C | GPIO 8/9 | NDOF-Sensorfusion |
 | **Display** | SSD1306 | I2C | GPIO 8/9 | 128x64 OLED |
 | **GPS-Modul** | BN-880 | UART2 | GPIO 15/16 | Position & Geschwindigkeit |
 | **CAN-Interface** | MCP2515 | SPI | GPIO 1,2,3,11,13 | optional, derzeit deaktiviert |
@@ -80,7 +80,8 @@ GND       -->   GND      -->    GND
 ```
 
 Am BNO055 bleiben `3Vo`, `RST`, `PS0`, `PS1` und `INT` unbeschaltet. `ADR`
-bleibt für die Standardadresse `0x28` ebenfalls unbeschaltet.
+ist im vorhandenen Aufbau mit 3,3 V verbunden; dadurch lautet die Adresse
+`0x29`.
 
 ### GPS-Modul (UART2)
 ```
@@ -171,8 +172,9 @@ gpsManager.enableInterruptMode(false); // Zurück zu Polling
 
 1. Mit dem WLAN `ROADTEST` verbinden, Passwort `roadtest123`.
 2. Im Browser `http://192.168.4.1/` öffnen.
-3. Einmalig unter **Kalibrierung** Gyro und Beschleunigung auf jeweils 3
-   bringen und speichern. Eine Achterbewegung ist nicht erforderlich.
+3. Einmalig unter **Kalibrierung** System, Gyro, Beschleunigung und
+   Magnetometer auf jeweils 3 bringen und speichern. Für das Magnetometer
+   eine liegende Acht in der Luft beschreiben.
 4. Vor der Abfahrt **Aufzeichnung starten** auswählen.
 5. Am Fahrtende **Aufzeichnung beenden** auswählen. Erst dann sind alle
    Dateien garantiert geschlossen und die Zusammenfassung wird geschrieben.
@@ -254,13 +256,13 @@ Strecke, Ereigniszählern und Durchschnittsqualität.
 
 **sensor_data.csv**
 ```csv
-UTC,UptimeMs,RelativeHeading,Pitch,Roll,AccelX,AccelY,AccelZ,GyroX,GyroY,GyroZ,Temp,CalSystemInfo,CalGyro,CalAccel,CalMagUnused
-2026-07-27T12:34:56Z,1234567,123.5,-2.1,0.8,0.123,-0.056,9.801,0.001,0.002,-0.001,24.5,0,3,3,0
+UTC,UptimeMs,Heading,Pitch,Roll,AccelX,AccelY,AccelZ,GyroX,GyroY,GyroZ,Temp,CalSystem,CalGyro,CalAccel,CalMag
+2026-07-27T12:34:56Z,1234567,123.5,-2.1,0.8,0.123,-0.056,9.801,0.001,0.002,-0.001,24.5,3,3,3,3
 ```
 
-`RelativeHeading` besitzt im IMUPLUS-Modus keinen magnetischen Nordbezug.
-`CalSystemInfo` und `CalMagUnused` bleiben nur für die Kompatibilität des
-CSV-Formats erhalten und entscheiden nicht über die Messbereitschaft.
+`Heading` verwendet im NDOF-Modus die Sensorfusion einschließlich
+Magnetometer. Alle vier Kalibrierwerte entscheiden über eine vollständig
+speicherbare Kalibrierung.
 
 **can_log.csv**  
 ```csv
@@ -270,7 +272,7 @@ UTC,UptimeMs,CAN_ID,Extended,RTR,DLC,Data0,Data1,Data2,Data3,Data4,Data5,Data6,D
 
 **correlated.csv** (Sensor + CAN)
 ```csv
-UTC,UptimeMs,Type,RelativeHeading,Pitch,Roll,AccelMag,Temp,CAN_ID,DLC,D0,D1,D2,D3,D4,D5,D6,D7
+UTC,UptimeMs,Type,Heading,Pitch,Roll,AccelMag,Temp,CAN_ID,DLC,D0,D1,D2,D3,D4,D5,D6,D7
 ```
 
 ### Road Quality Scoring
@@ -397,7 +399,7 @@ sdLogger.setConfig(config);
 Lösung:
 1. I2C-Verkabelung prüfen (SDA=8, SCL=9)
 2. Pull-up Widerstände 4.7kΩ auf SDA/SCL
-3. ADR-Pin unbeschaltet lassen: Standardadresse 0x28
+3. ADR-Verbindung prüfen: im vorhandenen Aufbau 3,3 V, daher Adresse 0x29
 4. Serial Monitor: I2C-Scanner-Ausgabe prüfen
 ```
 
@@ -515,9 +517,20 @@ Priorität für zusätzliche Tests:
 2. **Integration-Stress-Tests** (alle Module unter Last)
 3. **Grenzwert-Tests** (extreme Beschleunigung, CAN-Überflutung)
 
+Der priorisierte Backlog für gleichmäßigere Sensorabtastung und geringere
+Buslast steht in [OPTIMIERUNGEN.md](OPTIMIERUNGEN.md).
+
 ## 📈 Version History
 
-### v1.5.10 (Aktuell) - Stabile BNO055-Statusanzeige
+### Unveröffentlicht - Sichere BNO055-Kommunikation
+- ✅ BNO055-Erkennung über die Chip-ID statt leerer I²C-Schreibzugriffe
+- ✅ Fest verdrahtete Adresse `0x29`, eine Chip-ID-Prüfung pro Statuszyklus
+- ✅ Messdaten werden beim ersten unplausiblen Status sofort gesperrt
+- ✅ Initialisierung endet bei ausbleibender Chip-ID nach 1,5 Sekunden
+- ✅ NDOF-Kalibrierung berücksichtigt System, Gyro, Beschleunigung und Magnetometer
+- ✅ Weboberfläche bleibt während des gestuften SD-Aufzeichnungsstarts erreichbar
+
+### v1.5.10 - Stabile BNO055-Statusanzeige
 - ✅ Einzelne kurzzeitige I²C-Statusfehler verändern die Anzeige nicht mehr
 - ✅ Ein erfolgreicher Status setzt die Fehlerzählung sofort zurück
 - ✅ Erst drei aufeinanderfolgende Fusionsfehler zeigen einen Fehler und

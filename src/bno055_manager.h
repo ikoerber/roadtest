@@ -13,12 +13,9 @@
 // Beschleunigung gebraucht werden und der Magnetometeranteil von NDOF als
 // störanfällig galt.
 //
-// Gegen IMUPLUS spricht der Messbefund vom 28. Juli 2026: Der Sensor meldet
-// wiederholt SYS_ERR 9 ("Fusion algorithm configuration error") und startet
-// sich rund alle 18 s neu. Die Logic-8-Aufnahme hat den I²C-Bus als Ursache
-// ausgeschlossen — das OLED quittiert im selben Zeitraum jede Transaktion.
-// Da NDOF nach Beobachtung früher über längere Zeit stabil lief, wird der
-// Modus testweise zurückgestellt.
+// Nach wiederholten Fusionsfehlern im IMUPLUS-Betrieb wurde NDOF wieder
+// aktiviert. Die spätere Logic-8-Aufnahme zeigte zusätzlich einen unabhängig
+// davon zu behebenden I²C-Fehler durch leere BNO055-Prüftransaktionen.
 //
 // Zurückstellen auf IMUPLUS: OPERATION_MODE_IMUPLUS eintragen.
 constexpr adafruit_bno055_opmode_t ROADTEST_BNO_MODE = OPERATION_MODE_NDOF;
@@ -40,20 +37,25 @@ struct CalibrationData {
     uint8_t mag;
     
     bool isFullyCalibrated() const {
-        // In NDOF zählt das Magnetometer zur Fusion und muss mitkalibriert
-        // sein, sonst verweigert getSensorOffsets() die Herausgabe der Werte
-        // und das automatische Sichern im NVS greift nicht.
+        // getSensorOffsets() gibt im NDOF-Modus erst dann gültige Werte
+        // zurück, wenn System, Gyro, Beschleunigung und Magnetometer jeweils
+        // vollständig kalibriert sind.
         return gyro == 3 && accel == 3 &&
-               (!ROADTEST_BNO_USES_MAG || mag == 3);
+               (!ROADTEST_BNO_USES_MAG || (system == 3 && mag == 3));
     }
     
     uint8_t getMinimum() const {
-        return gyro < accel ? gyro : accel;
+        uint8_t minimum = gyro < accel ? gyro : accel;
+        if (ROADTEST_BNO_USES_MAG) {
+            minimum = minimum < mag ? minimum : mag;
+            minimum = minimum < system ? minimum : system;
+        }
+        return minimum;
     }
 };
 
-// Laufzeitdiagnose des BNO055. IMUPLUS (0x08) und Systemstatus 5 bedeuten,
-// dass die Sensorfusion tatsächlich läuft.
+// Laufzeitdiagnose des BNO055. Der konfigurierte Modus, Systemstatus 5 und
+// Fehlercode 0 bedeuten zusammen, dass die Sensorfusion tatsächlich läuft.
 struct BNO055RuntimeStatus {
     uint8_t operationMode;
     uint8_t systemStatus;
@@ -72,7 +74,7 @@ struct BNO055RuntimeStatus {
 // Erweiterte Sensor-Daten
 struct SensorData {
     // Orientierung
-    float heading;      // Relative Richtung 0-360° (kein magnetischer Nordbezug)
+    float heading;      // NDOF-Richtung 0-360° mit Magnetometerbezug
     float pitch;        // -180 bis +180°
     float roll;         // -90 bis +90°
     
@@ -112,13 +114,12 @@ private:
     bool initialized;
     bool selfTestPassed;
     bool fusionModeActive;
+    bool dataValid;
     uint8_t fusionModeFailureCount;
     BNO055RuntimeStatus runtimeStatus;
-    uint8_t i2cAddress;
+    const uint8_t i2cAddress;
 
     BNO055RuntimeStatus readRuntimeStatus();
-    bool detectAddress();
-    static uint8_t alternateAddress(uint8_t address);
     
     // Kalibrierungs-Management
     bool calibrationSaved;
@@ -155,27 +156,30 @@ private:
     unsigned long lastPotholeEvent;
     
 public:
-    // Startadresse. Antwortet der Sensor dort nicht, wird die jeweils andere
-    // dokumentierte BNO055-Adresse geprüft; Breakouts unterscheiden sich hier
-    // je nach Beschaltung des ADR-Pins.
-    BNO055Manager(uint8_t address = BNO055_ADDRESS_B);
+    // Der ADR-Pin ist im vorhandenen Aufbau fest mit 3,3 V verbunden.
+    BNO055Manager();
     ~BNO055Manager();
 
     // Initialisierung
-    bool begin();
+    // chipIdVerified darf nur unmittelbar nach erfolgreichem responds()
+    // gesetzt werden und vermeidet dann eine doppelte Chip-ID-Abfrage.
+    bool begin(bool chipIdVerified = false);
     void end();
     bool isReady() const { return initialized; }
     bool isSelfTestPassed() const { return initialized && selfTestPassed; }
+    bool isDataValid() const {
+        return initialized && fusionModeActive && dataValid;
+    }
+    void invalidateMeasurements() { dataValid = false; }
 
-    // Tatsächlich verwendete I²C-Adresse (nach erfolgreicher Erkennung)
+    // Fest verdrahtete I²C-Adresse.
     uint8_t getAddress() const { return i2cAddress; }
 
-    // Antwortet der Sensor auf einer der beiden möglichen Adressen?
-    // Wird von der Hardware-Überwachung genutzt, damit dort keine Adresse
-    // fest verdrahtet werden muss.
+    // Antwortet auf der fest verdrahteten Adresse ein BNO055?
     bool responds() const;
 
-    // Reiner I²C-Ping ohne Seiteneffekte
+    // Liest die BNO055-Chip-ID. Ein leerer I²C-Schreibzugriff wird bewusst
+    // vermieden, weil er beim BNO055 den folgenden Transfer beschädigen kann.
     static bool probeAddress(uint8_t address);
     
     // Sensor-Konfiguration
@@ -184,7 +188,7 @@ public:
     bool runSelfTest();
     bool ensureFusionMode();
     bool restartFusion();
-    bool verifyFusionMode();
+    bool verifyFusionMode(bool chipIdVerified = false);
     bool isFusionModeActive() const {
         return initialized && fusionModeActive;
     }

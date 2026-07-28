@@ -1,6 +1,7 @@
 #include "sd_logger.h"
 #include "road_quality.h"
 #include "gps_manager.h"
+#include <esp_system.h>
 #include <time.h>
 
 // Forward-Deklaration
@@ -11,7 +12,8 @@ SDLogger sdLogger;
 
 SDLogger::SDLogger(int cs) 
     : csPin(cs), spiInstance(nullptr), initialized(false), 
-      cardAvailable(false), logging(false), bufferIndex(0),
+      cardAvailable(false), logging(false),
+      loggingStartState(LoggingStartState::IDLE), bufferIndex(0),
       lastSensorLog(0), lastRoadLog(0), lastGPSLog(0), lastFlush(0),
       sessionStartTime(0), qualitySum(0), hasLastRideGPS(false),
       lastRideLatitude(0), lastRideLongitude(0), lastRideGPSTime(0) {
@@ -138,6 +140,10 @@ bool SDLogger::begin(SPIClass& spi) {
 }
 
 void SDLogger::end() {
+    if (isLoggingStartPending()) {
+        failLoggingStart("Start durch SD-Abschaltung abgebrochen");
+    }
+
     if (logging) {
         stopLogging();
     }
@@ -150,34 +156,95 @@ void SDLogger::end() {
 }
 
 bool SDLogger::startLogging() {
+    if (logging) {
+        return true;
+    }
+
+    if (!isLoggingStartPending() && !requestLoggingStart()) {
+        return false;
+    }
+
+    // Kompatibler blockierender Einstieg für serielle Kommandos und Tests.
+    // Die Weboberfläche verteilt dieselben Schritte über mehrere loop()-Runden.
+    while (isLoggingStartPending()) {
+        processLoggingStart();
+        delay(0);
+    }
+    return logging;
+}
+
+bool SDLogger::requestLoggingStart() {
     if (!initialized || !cardAvailable) {
         Serial.println("SD Logger nicht bereit!");
+        lastStartError = "SD-Karte ist nicht bereit";
         return false;
     }
     
     if (logging) {
         return true;
     }
-    
+
+    if (isLoggingStartPending()) {
+        return true;
+    }
+
+    lastStartError = "";
+    loggingStartState = LoggingStartState::PREPARE;
+    Serial.println("SD-Aufzeichnung wird vorbereitet");
+    return true;
+}
+
+void SDLogger::processLoggingStart() {
+    switch (loggingStartState) {
+        case LoggingStartState::IDLE:
+            return;
+
+        case LoggingStartState::PREPARE:
+            closeLogFiles();
+            sessionId = generateSessionId();
+            loggingStartState = LoggingStartState::OPEN_SENSOR;
+            return;
+
+        case LoggingStartState::OPEN_SENSOR:
+            if (!createLogFile(LOG_TYPE_SENSOR)) {
+                failLoggingStart("Sensor-Log konnte nicht angelegt werden");
+                return;
+            }
+            loggingStartState = LoggingStartState::OPEN_ROAD;
+            return;
+
+        case LoggingStartState::OPEN_ROAD:
+            if (config.enableRoadLog &&
+                !openLogFile(roadLogFile, roadFileName, LOG_TYPE_ROAD)) {
+                failLoggingStart("Straßen-Log konnte nicht angelegt werden");
+                return;
+            }
+            loggingStartState = LoggingStartState::OPEN_GPS;
+            return;
+
+        case LoggingStartState::OPEN_GPS:
+            if (config.enableGPSLog &&
+                !openLogFile(gpsLogFile, gpsFileName, LOG_TYPE_GPS)) {
+                failLoggingStart("GPS-Log konnte nicht angelegt werden");
+                return;
+            }
+            loggingStartState = LoggingStartState::OPEN_EVENT;
+            return;
+
+        case LoggingStartState::OPEN_EVENT:
+            if (config.enableEventLog &&
+                !openLogFile(eventLogFile, eventFileName, LOG_TYPE_EVENT)) {
+                failLoggingStart("Ereignis-Log konnte nicht angelegt werden");
+                return;
+            }
+            loggingStartState = LoggingStartState::FINALIZE;
+            return;
+
+        case LoggingStartState::FINALIZE:
+            break;
+    }
+
     sessionStartTime = millis();
-    sessionId = generateSessionId();
-    
-    // Getrennte Dateien verhindern gemischte CSV-Zeilen.
-    if (!createLogFile(LOG_TYPE_SENSOR)) {
-        return false;
-    }
-
-    if ((config.enableRoadLog &&
-         !openLogFile(roadLogFile, roadFileName, LOG_TYPE_ROAD)) ||
-        (config.enableGPSLog &&
-         !openLogFile(gpsLogFile, gpsFileName, LOG_TYPE_GPS)) ||
-        (config.enableEventLog &&
-         !openLogFile(eventLogFile, eventFileName, LOG_TYPE_EVENT))) {
-        closeLogFiles();
-        return false;
-    }
-
-    // Neue Fahrt beginnt immer mit einer leeren Zusammenfassung.
     rideSummary = RideSummary();
     rideSummary.active = true;
     rideSummary.sessionId = sessionId;
@@ -191,17 +258,29 @@ bool SDLogger::startLogging() {
     lastSensorLog = 0;
     lastRoadLog = 0;
     lastGPSLog = 0;
-
     logging = true;
+    loggingStartState = LoggingStartState::IDLE;
     Serial.printf("✅ Sensor-Log: %s\n", currentFileName.c_str());
     if (roadLogFile) Serial.printf("✅ Straßen-Log: %s\n", roadFileName.c_str());
     if (gpsLogFile) Serial.printf("✅ GPS-Log: %s\n", gpsFileName.c_str());
     if (eventLogFile) Serial.printf("✅ Ereignis-Log: %s\n", eventFileName.c_str());
-    
-    return true;
+}
+
+void SDLogger::failLoggingStart(const String& reason) {
+    closeLogFiles();
+    logging = false;
+    loggingStartState = LoggingStartState::IDLE;
+    lastStartError = reason;
+    Serial.printf("❌ SD-Aufzeichnungsstart fehlgeschlagen: %s\n",
+                  reason.c_str());
 }
 
 void SDLogger::stopLogging() {
+    if (isLoggingStartPending()) {
+        failLoggingStart("Start abgebrochen");
+        return;
+    }
+
     if (!logging) return;
 
     rideSummary.durationSeconds = (millis() - sessionStartTime) / 1000;
@@ -280,20 +359,13 @@ String SDLogger::generateSessionId() {
         baseId = "boot_" + String(millis());
     }
 
-    String candidate = baseId;
-    uint16_t suffix = 1;
-    while (SD.exists("/" + config.filePrefix + "_sensor_" + candidate + ".csv") ||
-           SD.exists("/" + config.filePrefix + "_road_" + candidate + ".csv") ||
-           SD.exists("/" + config.filePrefix + "_gps_" + candidate + ".csv") ||
-           SD.exists("/" + config.filePrefix + "_event_" + candidate + ".csv") ||
-           SD.exists("/" + config.filePrefix + "_summary_" + candidate + ".csv") ||
-           SD.exists("/" + config.filePrefix + "_can_" + candidate + ".csv") ||
-           SD.exists("/" + config.filePrefix + "_correlated_" + candidate + ".csv")) {
-        char suffixText[8];
-        snprintf(suffixText, sizeof(suffixText), "_%02u", suffix++);
-        candidate = baseId + suffixText;
-    }
-    return candidate;
+    // Der Zufallsanteil vermeidet Namenskollisionen ohne wiederholte,
+    // synchrone FAT-Verzeichnissuchen. Diese wurden mit wachsender Anzahl
+    // vorhandener Fahrten zunehmend teuer.
+    char uniqueSuffix[12];
+    snprintf(uniqueSuffix, sizeof(uniqueSuffix), "_%08lX",
+             static_cast<unsigned long>(esp_random()));
+    return baseId + uniqueSuffix;
 }
 
 bool SDLogger::createLogFile(LogType type) {
@@ -370,7 +442,7 @@ bool SDLogger::writeHeader(File& file, LogType type) {
     const char* header = nullptr;
     switch(type) {
         case LOG_TYPE_SENSOR:
-            header = "UTC,UptimeMs,RelativeHeading,Pitch,Roll,AccelX,AccelY,AccelZ,GyroX,GyroY,GyroZ,Temp,CalSystemInfo,CalGyro,CalAccel,CalMagUnused";
+            header = "UTC,UptimeMs,Heading,Pitch,Roll,AccelX,AccelY,AccelZ,GyroX,GyroY,GyroZ,Temp,CalSystem,CalGyro,CalAccel,CalMag";
             break;
             
         case LOG_TYPE_EVENT:
@@ -394,7 +466,7 @@ bool SDLogger::writeHeader(File& file, LogType type) {
             break;
 
         case LOG_TYPE_CORRELATED:
-            header = "UTC,UptimeMs,Type,RelativeHeading,Pitch,Roll,AccelMag,Temp,CAN_ID,DLC,D0,D1,D2,D3,D4,D5,D6,D7";
+            header = "UTC,UptimeMs,Type,Heading,Pitch,Roll,AccelMag,Temp,CAN_ID,DLC,D0,D1,D2,D3,D4,D5,D6,D7";
             break;
     }
 
@@ -630,9 +702,12 @@ bool SDLogger::logVibrationMetrics(const VibrationMetrics& metrics) {
 bool SDLogger::logCalibration(const CalibrationData& cal) {
     if (!logging) return false;
     
-    String status = cal.isFullyCalibrated() ? "IMUPLUS_OK" : "IMUPLUS_UNVOLLSTÄNDIG";
-    return logEvent("KALIBRIERUNG", status + " Gyr:" + String(cal.gyro) +
-                    " Acc:" + String(cal.accel));
+    String status = String(ROADTEST_BNO_MODE_NAME) +
+                    (cal.isFullyCalibrated() ? "_OK" : "_UNVOLLSTÄNDIG");
+    return logEvent("KALIBRIERUNG", status + " Sys:" + String(cal.system) +
+                    " Gyr:" + String(cal.gyro) +
+                    " Acc:" + String(cal.accel) +
+                    " Mag:" + String(cal.mag));
 }
 
 bool SDLogger::logCANMessage(const CANMessage& msg) {

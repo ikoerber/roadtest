@@ -586,13 +586,7 @@ bool IntegrationTests::testI2CBusRecovery() {
     delay(100);
     
     // 2. Versuche Sensor-Zugriff (sollte fehlschlagen)
-    bool accessFailed = false;
-    Wire.begin(I2C_SDA, I2C_SCL);
-    Wire.beginTransmission(0x29);  // BNO055 Adresse
-    uint8_t error = Wire.endTransmission();
-    if (error != 0) {
-        accessFailed = true;
-    }
+    bool accessFailed = !BNO055Manager::probeAddress(BNO055_ADDRESS_B);
     
     // 3. Recovery-Versuch
     Serial.println("Führe I2C-Bus-Recovery durch...");
@@ -624,21 +618,20 @@ bool IntegrationTests::testI2CBusRecovery() {
     delay(100);
     Wire.begin(I2C_SDA, I2C_SCL);
     Wire.setClock(I2C_CLOCK_SPEED);
+    Wire.setTimeOut(I2C_TIMEOUT_MS);
     
     // 5. Prüfe ob Geräte wieder erreichbar
     bool recoverySuccess = true;
     
     // BNO055 prüfen
-    Wire.beginTransmission(0x29);
-    error = Wire.endTransmission();
-    if (error != 0) {
+    if (!BNO055Manager::probeAddress(BNO055_ADDRESS_B)) {
         recoverySuccess = false;
         details += "BNO055 nicht wiederhergestellt! ";
     }
     
     // OLED prüfen
     Wire.beginTransmission(0x3C);
-    error = Wire.endTransmission();
+    uint8_t error = Wire.endTransmission();
     if (error != 0) {
         recoverySuccess = false;
         details += "OLED nicht wiederhergestellt! ";
@@ -819,7 +812,7 @@ bool IntegrationTests::testSensorDisconnectReconnect() {
         delay(500);  // Zeit für Initialisierung
         CalibrationData calAfter = bnoManager.getCalibration();
         
-        // Im IMUPLUS-Modus sind nur Gyro und Beschleunigung relevant.
+        // Die Vollständigkeit richtet sich zentral nach dem aktiven Modus.
         if (bnoManager.isCalibrationSaved() ||
             calAfter.gyro > 0 || calAfter.accel > 0) {
             Serial.println("✅ Kalibrierung aus NVS wiederhergestellt");
@@ -1039,7 +1032,7 @@ bool IntegrationTests::testPowerBrownout() {
     // 1. Speichere kritische Daten
     Serial.println("Speichere kritische Daten vor Brownout...");
     
-    // Kalibrierung speichern, sofern der IMUPLUS-Sensor vollständig
+    // Kalibrierung speichern, sofern der aktive Fusionsmodus vollständig
     // kalibriert ist. Der Status wird nach dem Neustart erneut geprüft.
     bool calibrationWasSaved = bnoManager.isCalibrationSaved();
     if (bnoManager.isReady() && !calibrationWasSaved) {
@@ -1081,8 +1074,8 @@ bool IntegrationTests::testPowerBrownout() {
     if (modulesWereReady[0] && bnoManager.begin()) {
         recoveredModules++;
         
-        // Prüfe, ob eine zuvor vorhandene IMUPLUS-Kalibrierung wieder aus
-        // dem NVS geladen wurde.
+        // Prüfe, ob eine zuvor vorhandene Kalibrierung wieder aus dem NVS
+        // geladen wurde.
         if (!calibrationWasSaved) {
             details += "BNO055-Kal vorher nicht gespeichert, ";
         } else if (bnoManager.isCalibrationSaved()) {
@@ -2053,8 +2046,8 @@ bool IntegrationTests::testDataConsistency() {
     for (int i = 1; i < SAMPLE_COUNT; i++) {
         if (!samples[i - 1].valid || !samples[i].valid) continue;
 
-        // IMUPLUS besitzt keinen Nordbezug. Deshalb werden ausschließlich
-        // relative Richtungsänderungen mit dem GPS-Kurs verglichen.
+        // Relative Richtungsänderungen sind gegenüber Startausrichtung und
+        // kurzzeitigen Magnetometerabweichungen robuster als Absolutwinkel.
         float sensorTurn = normalizedDelta(
             samples[i].sensorHeading, samples[i - 1].sensorHeading);
         float gpsTurn = normalizedDelta(

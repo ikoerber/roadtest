@@ -105,7 +105,9 @@ bool WebManager::begin() {
             server.send(
                 409, "text/html; charset=utf-8",
                 buildCalibrationPage(
-                    "Noch nicht gespeichert: Gyro und Beschleunigung müssen 3 sein."));
+                    String("Noch nicht gespeichert: Alle für ") +
+                    ROADTEST_BNO_MODE_NAME +
+                    " benötigten Kalibrierwerte müssen 3 sein."));
             return;
         }
 
@@ -154,17 +156,25 @@ bool WebManager::begin() {
                 "<p>Die SD-Karte ist nicht bereit.</p><p><a href='/'>Zurück</a></p>");
             return;
         }
-        if (!sdLogger.startLogging()) {
+        if (!sdLogger.requestLoggingStart()) {
             server.send(
                 500, "text/html; charset=utf-8",
                 "<!doctype html><meta charset='utf-8'><h1>Start fehlgeschlagen</h1>"
-                "<p>Die Dateien konnten nicht angelegt werden.</p>"
+                "<p>Die Aufzeichnung konnte nicht vorbereitet werden.</p>"
                 "<p><a href='/'>Zurück</a></p>");
             return;
         }
 
-        server.sendHeader("Location", "/", true);
-        server.send(303, "text/plain; charset=utf-8", "");
+        server.sendHeader("Cache-Control", "no-store");
+        server.send(
+            202, "text/html; charset=utf-8",
+            "<!doctype html><html lang='de'><head><meta charset='utf-8'>"
+            "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+            "<meta http-equiv='refresh' content='1;url=/'>"
+            "<title>ROADTEST startet</title></head><body>"
+            "<h1>Aufzeichnung wird vorbereitet</h1>"
+            "<p>Die Logdateien werden schrittweise geöffnet.</p>"
+            "<p><a href='/'>Status anzeigen</a></p></body></html>");
     });
 
     server.on("/ride/stop", HTTP_POST, [this]() {
@@ -250,6 +260,7 @@ String WebManager::buildStatusPage() {
     GPSStatus gpsStatus = gpsManager.getStatus();
     bool requiredHardwareReady =
         bnoManager.isSelfTestPassed() && bnoManager.isFusionModeActive() &&
+        bnoManager.isDataValid() &&
         oledManager.isReady() &&
         sdLogger.isReady() && gpsNMEAStream && isReady();
     String page;
@@ -274,7 +285,8 @@ String WebManager::buildStatusPage() {
     page += F(" s</td></tr><tr><td>System</td><td class='");
     page += requiredHardwareReady ? F("ok'>bereit") : F("warn'>Prüfung läuft");
     page += F("</td></tr><tr><td>BNO055</td><td>");
-    page += bnoManager.isSelfTestPassed() && bnoManager.isFusionModeActive()
+    page += bnoManager.isSelfTestPassed() && bnoManager.isFusionModeActive() &&
+                    bnoManager.isDataValid()
                 ? String("OK · ") + ROADTEST_BNO_MODE_NAME
                 : String("Fehler");
     page += F("</td></tr><tr><td>OLED</td><td>");
@@ -303,9 +315,15 @@ String WebManager::buildStatusPage() {
     page += F("</td></tr><tr><td>SD-Karte</td><td>");
     page += sdLogger.isReady() ? F("OK") : F("Fehler");
     page += F("</td></tr><tr><td>Aufzeichnung</td><td>");
-    page += ride.active ? F("aktiv") : F("gestoppt");
+    if (sdLogger.isLoggingStartPending()) {
+        page += F("wird vorbereitet");
+    } else {
+        page += ride.active ? F("aktiv") : F("gestoppt");
+    }
     page += F("</td></tr><tr><td>Freier SD-Speicher</td><td>");
-    if (sdLogger.isReady()) {
+    if (sdLogger.isLoggingStartPending()) {
+        page += F("wird ermittelt");
+    } else if (sdLogger.isReady()) {
         page += String(sdLogger.getFreeSpace() / 1024);
         page += F(" MB");
     } else {
@@ -316,10 +334,21 @@ String WebManager::buildStatusPage() {
     page += F("</td></tr><tr><td>Kalibrierung</td><td>");
     if (bnoManager.isSelfTestPassed()) {
         CalibrationData calibration = bnoManager.getCalibration();
-        page += F("G");
-        page += String(calibration.gyro);
-        page += F(" A");
-        page += String(calibration.accel);
+        if (ROADTEST_BNO_USES_MAG) {
+            page += F("S");
+            page += String(calibration.system);
+            page += F(" G");
+            page += String(calibration.gyro);
+            page += F(" A");
+            page += String(calibration.accel);
+            page += F(" M");
+            page += String(calibration.mag);
+        } else {
+            page += F("G");
+            page += String(calibration.gyro);
+            page += F(" A");
+            page += String(calibration.accel);
+        }
         page += bnoManager.isCalibrationSaved() ? F(" · gespeichert")
                                                 : F(" · nicht gespeichert");
     } else {
@@ -376,12 +405,20 @@ String WebManager::buildStatusPage() {
 
     if (!sdLogger.isReady()) {
         page += F("<p><strong>Keine Messfahrt möglich: SD-Karte nicht bereit.</strong></p>");
+    } else if (sdLogger.isLoggingStartPending()) {
+        page += F("<p><strong>Aufzeichnung wird vorbereitet …</strong></p>");
     } else if (ride.active) {
         page += F("<form method='POST' action='/ride/stop'>"
                   "<button class='stop' type='submit'>Aufzeichnung beenden</button></form>");
     } else {
         page += F("<form method='POST' action='/ride/start'>"
                   "<button type='submit'>Aufzeichnung starten</button></form>");
+    }
+
+    if (sdLogger.getLastStartError().length() > 0) {
+        page += F("<p class='warn'>Letzter Startfehler: ");
+        page += sdLogger.getLastStartError();
+        page += F("</p>");
     }
 
     page += F("<p class='hint'>Start und Ende sind mit den Admin-Zugangsdaten geschützt.</p>"
@@ -445,8 +482,14 @@ String WebManager::buildCalibrationPage(const String& message) {
     page += String(calibration.gyro);
     page += F(" / 3</td></tr><tr><td>Beschleunigung</td><td>");
     page += String(calibration.accel);
-    page += F(" / 3</td></tr><tr><td>System</td><td>nicht erforderlich</td></tr>"
-              "<tr><td>Magnetometer</td><td>");
+    page += F(" / 3</td></tr><tr><td>System</td><td>");
+    if (ROADTEST_BNO_USES_MAG) {
+        page += String(calibration.system);
+        page += F(" / 3");
+    } else {
+        page += F("nicht erforderlich");
+    }
+    page += F("</td></tr><tr><td>Magnetometer</td><td>");
     if (ROADTEST_BNO_USES_MAG) {
         page += String(calibration.mag);
         page += F(" / 3");
@@ -462,15 +505,24 @@ String WebManager::buildCalibrationPage(const String& message) {
         page += String("<p class='ok'><strong>Für ") + ROADTEST_BNO_MODE_NAME +
                 " ausreichend kalibriert.</strong></p>";
     } else {
-        page += F(
-            "<p class='warn'><strong>Gyro oder Beschleunigung noch nicht kalibriert.</strong></p>");
+        page += String("<p class='warn'><strong>Die für ") +
+                ROADTEST_BNO_MODE_NAME +
+                " benötigte Kalibrierung ist noch nicht vollständig.</strong></p>";
     }
 
     page += F(
         "<ol><li>Gyro: Gerät einige Sekunden völlig stillhalten.</li>"
-        "<li>Beschleunigung: nacheinander auf alle sechs Seiten legen.</li>"
-        "<li>Warten, bis Gyro und Beschleunigung 3 anzeigen.</li></ol>"
-        "<li>Magnetometer: liegende Acht in der Luft beschreiben.</li>"
+        "<li>Beschleunigung: nacheinander auf alle sechs Seiten legen.</li>");
+    if (ROADTEST_BNO_USES_MAG) {
+        page += F(
+            "<li>Magnetometer: liegende Acht in der Luft beschreiben.</li>"
+            "<li>Bewegungen wiederholen, bis System, Gyro, Beschleunigung "
+            "und Magnetometer jeweils 3 anzeigen.</li>");
+    } else {
+        page += F("<li>Warten, bis Gyro und Beschleunigung 3 anzeigen.</li>");
+    }
+    page += F(
+        "</ol>"
         "<form method='POST' action='/calibration/save'>"
         "<button type='submit'>Kalibrierung speichern</button></form>"
         "<form method='POST' action='/calibration/restart'>"

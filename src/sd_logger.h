@@ -95,6 +95,16 @@ struct RideSummary {
 
 class SDLogger {
 private:
+    enum class LoggingStartState : uint8_t {
+        IDLE,
+        PREPARE,
+        OPEN_SENSOR,
+        OPEN_ROAD,
+        OPEN_GPS,
+        OPEN_EVENT,
+        FINALIZE
+    };
+
     // Pin-Konfiguration
     int csPin;
     SPIClass* spiInstance;
@@ -103,6 +113,8 @@ private:
     bool initialized;
     bool cardAvailable;
     bool logging;
+    LoggingStartState loggingStartState;
+    String lastStartError;
     
     // Datei-Management
     File currentLogFile;
@@ -157,6 +169,7 @@ private:
     bool writeHeader(File& file, LogType type);
     bool writeRideSummaryFile();
     void flushBuffer();
+    void failLoggingStart(const String& reason);
     String formatTimestamp();
     String formatUTC();
     
@@ -178,8 +191,14 @@ public:
     
     // Logging Control
     bool startLogging();
+    bool requestLoggingStart();
+    void processLoggingStart();
     void stopLogging();
     bool isLogging() const { return logging; }
+    bool isLoggingStartPending() const {
+        return loggingStartState != LoggingStartState::IDLE;
+    }
+    String getLastStartError() const { return lastStartError; }
     RideSummary getRideSummary() const;
     String getSessionId() const { return sessionId; }
     

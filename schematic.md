@@ -10,7 +10,7 @@ elektrischen Hinweise stehen in [HARDWARE.md](HARDWARE.md).
 ```mermaid
 flowchart TB
     MCU["LOLIN S3 Mini<br/>ESP32-S3, 4 MB"]
-    BNO["BNO055<br/>IMUPLUS, Adresse 0x28"]
+    BNO["BNO055<br/>NDOF, Adresse 0x29"]
     OLED["SSD1306 OLED<br/>Adresse 0x3C/0x3D"]
     GPS["BN-880 GPS<br/>UART, 9600 Baud"]
     SD["PZSMOCN Micro-SD<br/>SPI, 3,3 V"]

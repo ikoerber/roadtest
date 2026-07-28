@@ -258,24 +258,25 @@ void OLEDManager::showTestResults(const String& testName, bool success, const St
     refresh();
 }
 
-void OLEDManager::showCalibrationStatus(uint8_t gyro, uint8_t accel,
-                                        uint8_t mag, bool saved) {
+void OLEDManager::showCalibrationStatus(uint8_t system, uint8_t gyro,
+                                        uint8_t accel, uint8_t mag,
+                                        bool saved) {
     clearAndSetup();
     drawHeader("KALIBRIERUNG");
 
     display->printf("Modus:  %s\n", ROADTEST_BNO_MODE_NAME);
-    display->printf("Gyro:   %u / 3\n", gyro);
-    display->printf("Accel:  %u / 3\n", accel);
     if (ROADTEST_BNO_USES_MAG) {
-        display->printf("Mag:    %u / 3\n", mag);
+        display->printf("S/G/A/M: %u/%u/%u/%u\n",
+                        system, gyro, accel, mag);
     } else {
-        display->println("Mag:    --");
+        display->printf("Gyro/Acc: %u/%u\n", gyro, accel);
     }
     display->print("Gespeichert: ");
     display->println(saved ? "JA" : "NEIN");
 
+    const bool systemOK = !ROADTEST_BNO_USES_MAG || system == 3;
     const bool magOK = !ROADTEST_BNO_USES_MAG || mag == 3;
-    if (gyro == 3 && accel == 3 && magOK) {
+    if (systemOK && gyro == 3 && accel == 3 && magOK) {
         display->println("Bereit zum Speichern");
     } else if (ROADTEST_BNO_USES_MAG && mag < 3) {
         display->println("Liegende Acht");

@@ -3,11 +3,11 @@
 // Globale Instanz
 BNO055Manager bnoManager;
 
-BNO055Manager::BNO055Manager(uint8_t address) 
+BNO055Manager::BNO055Manager()
     : sensor(nullptr), initialized(false), selfTestPassed(false),
-      fusionModeActive(false), fusionModeFailureCount(0),
+      fusionModeActive(false), dataValid(false), fusionModeFailureCount(0),
       runtimeStatus{0xFF, 0xFF, 0x00, 0xFF},
-      i2cAddress(address),
+      i2cAddress(BNO055_ADDRESS_B),
       calibrationSaved(false), bufferIndex(0), bufferCount(0),
       vibrationThreshold(2.0), lastRoadQuality(100.0f),
       hasRoadQuality(false), lastHeading(0), lastHeadingTime(0),
@@ -24,48 +24,48 @@ BNO055Manager::~BNO055Manager() {
     end();
 }
 
-uint8_t BNO055Manager::alternateAddress(uint8_t address) {
-    return address == BNO055_ADDRESS_B ? BNO055_ADDRESS_A : BNO055_ADDRESS_B;
-}
-
 bool BNO055Manager::probeAddress(uint8_t address) {
+    while (Wire.available()) {
+        Wire.read();
+    }
+
     Wire.beginTransmission(address);
-    return Wire.endTransmission() == 0;
+    Wire.write(static_cast<uint8_t>(Adafruit_BNO055::BNO055_CHIP_ID_ADDR));
+    if (Wire.endTransmission(false) != 0) {
+        return false;
+    }
+
+    const size_t received =
+        Wire.requestFrom(address, static_cast<size_t>(1), true);
+    if (received != 1 || !Wire.available()) {
+        while (Wire.available()) {
+            Wire.read();
+        }
+        return false;
+    }
+
+    const uint8_t chipId = static_cast<uint8_t>(Wire.read());
+    while (Wire.available()) {
+        Wire.read();
+    }
+    return chipId == BNO055_ID;
 }
 
 bool BNO055Manager::responds() const {
-    return probeAddress(i2cAddress) || probeAddress(alternateAddress(i2cAddress));
+    return probeAddress(i2cAddress);
 }
 
-bool BNO055Manager::detectAddress() {
-    if (probeAddress(i2cAddress)) {
-        return true;
-    }
-
-    const uint8_t fallback = alternateAddress(i2cAddress);
-    if (probeAddress(fallback)) {
-        Serial.printf("BNO055 antwortet auf 0x%02X statt 0x%02X; Adresse übernommen\n",
-                      fallback, i2cAddress);
-        i2cAddress = fallback;
-        return true;
-    }
-
-    return false;
-}
-
-bool BNO055Manager::begin() {
+bool BNO055Manager::begin(bool chipIdVerified) {
     if (initialized) {
         return true;
     }
 
-    // Erst prüfen, ob der Sensor überhaupt antwortet, und dabei die tatsächlich
-    // belegte Adresse bestimmen. Das ist nicht nur Komfort:
-    // Adafruit_BNO055::begin() wartet nach dem Software-Reset in einer Schleife
-    // ohne Timeout auf die Chip-ID. Fehlt der Sensor oder ist der Bus gestört,
-    // kehrt dieser Aufruf nie zurück und nimmt das gesamte Gerät mit.
-    if (!detectAddress()) {
-        Serial.printf("BNO055 antwortet weder auf 0x%02X noch auf 0x%02X\n",
-                      i2cAddress, alternateAddress(i2cAddress));
+    // Erst über die Chip-ID prüfen, ob auf der fest verdrahteten Adresse
+    // wirklich ein BNO055 antwortet. Der Build begrenzt zusätzlich die
+    // Wartezeit der Adafruit-Bibliothek nach ihrem Software-Reset.
+    if (!chipIdVerified && !responds()) {
+        Serial.printf("BNO055 antwortet nicht auf der festen Adresse 0x%02X\n",
+                      i2cAddress);
         return false;
     }
 
@@ -117,6 +117,7 @@ void BNO055Manager::end() {
     initialized = false;
     selfTestPassed = false;
     fusionModeActive = false;
+    dataValid = false;
     fusionModeFailureCount = 0;
     runtimeStatus = {0xFF, 0xFF, 0x00, 0xFF};
     calibrationSaved = false;
@@ -144,6 +145,7 @@ void BNO055Manager::setExtCrystal(bool useExternal) {
 bool BNO055Manager::runSelfTest() {
     if (!initialized) {
         selfTestPassed = false;
+        dataValid = false;
         return false;
     }
     
@@ -163,6 +165,7 @@ bool BNO055Manager::runSelfTest() {
     constexpr uint8_t REQUIRED_SELF_TESTS = ROADTEST_BNO_USES_MAG ? 0x0F : 0x0D;
     if ((self_test_results & REQUIRED_SELF_TESTS) == REQUIRED_SELF_TESTS) {
         selfTestPassed = true;
+        dataValid = fusionModeActive;
         Serial.println("Alle benötigten Selbsttests bestanden!");
         if (!(self_test_results & 0x02)) {
             Serial.println("Hinweis: Magnetometer-Test fehlgeschlagen (nicht benötigt)");
@@ -170,6 +173,7 @@ bool BNO055Manager::runSelfTest() {
         return true;
     } else {
         selfTestPassed = false;
+        dataValid = false;
         Serial.println("Tests fehlgeschlagen:");
         if (!(self_test_results & 0x01)) Serial.println("  - Accelerometer");
         if (!(self_test_results & 0x02)) Serial.println("  - Magnetometer");
@@ -194,6 +198,7 @@ bool BNO055Manager::ensureFusionMode() {
     runtimeStatus = readRuntimeStatus();
     const bool expectedMode = runtimeStatus.isExpectedModeActive();
     fusionModeActive = runtimeStatus.isFusionRunning();
+    dataValid = fusionModeActive;
     fusionModeFailureCount = 0;
     Serial.printf("BNO055 Betriebsmodus: 0x%02X (%s), System:%u, Fehler:%u\n",
                   runtimeStatus.operationMode,
@@ -209,16 +214,19 @@ bool BNO055Manager::restartFusion() {
     return begin() && runSelfTest();
 }
 
-bool BNO055Manager::verifyFusionMode() {
+bool BNO055Manager::verifyFusionMode(bool chipIdVerified) {
     if (!initialized || !sensor) {
         fusionModeActive = false;
+        dataValid = false;
         return false;
     }
 
-    // Erst prüfen, ob der Sensor überhaupt antwortet. Ein fehlgeschlagener
-    // I²C-Lesevorgang liefert 0x00 zurück — ohne diese Prüfung wäre
-    // "Modus=0x00" nicht von einem echten CONFIG-Modus zu unterscheiden.
-    if (!probeAddress(i2cAddress)) {
+    // Sofern der Aufrufer die Chip-ID nicht unmittelbar zuvor geprüft hat,
+    // geschieht es hier. Ein fehlgeschlagener I²C-Lesevorgang liefert sonst
+    // 0x00, was nicht sicher von einem echten CONFIG-Modus zu unterscheiden
+    // wäre.
+    if (!chipIdVerified && !responds()) {
+        dataValid = false;
         if (fusionModeFailureCount < 3) {
             ++fusionModeFailureCount;
         }
@@ -234,8 +242,13 @@ bool BNO055Manager::verifyFusionMode() {
     if (runtimeStatus.isFusionRunning()) {
         fusionModeFailureCount = 0;
         fusionModeActive = true;
+        dataValid = true;
         return true;
     }
+
+    // Schon der erste unplausible Status sperrt Messwerte. Nur die sichtbare
+    // Störungsmeldung und der vollständige Neustart bleiben entprellt.
+    dataValid = false;
 
     // Steht der Sensor lediglich im falschen Betriebsmodus, genügt es, den
     // Modus erneut zu setzen. Das dauert rund 7 ms und erhält die laufende
@@ -252,6 +265,7 @@ bool BNO055Manager::verifyFusionMode() {
         if (runtimeStatus.isFusionRunning()) {
             fusionModeFailureCount = 0;
             fusionModeActive = true;
+            dataValid = true;
             Serial.printf("✅ BNO055 ohne Neustart wieder in %s\n", ROADTEST_BNO_MODE_NAME);
             return true;
         }
@@ -291,7 +305,7 @@ BNO055RuntimeStatus BNO055Manager::readRuntimeStatus() {
 CalibrationData BNO055Manager::getCalibration() {
     CalibrationData cal = {0, 0, 0, 0};
     
-    if (!initialized) return cal;
+    if (!isDataValid()) return cal;
     
     sensor->getCalibration(&cal.system, &cal.gyro, &cal.accel, &cal.mag);
     return cal;
@@ -299,8 +313,15 @@ CalibrationData BNO055Manager::getCalibration() {
 
 bool BNO055Manager::saveCalibration() {
     if (!initialized) return false;
-    
-    // Im gewaehlten Fusionsmodus muessen Gyro und Beschleunigung kalibriert sein.
+
+    CalibrationData cal = getCalibration();
+    if (!cal.isFullyCalibrated()) {
+        Serial.printf("❌ %s-Kalibrierung unvollständig (S%u/G%u/A%u/M%u)\n",
+                      ROADTEST_BNO_MODE_NAME, cal.system, cal.gyro,
+                      cal.accel, cal.mag);
+        return false;
+    }
+
     // Ohne gültige Offsets wird nichts als "gespeichert" markiert.
     if (!sensor->getSensorOffsets(calibrationOffsets)) {
         Serial.println("❌ Kalibrierungswerte konnten nicht gelesen werden");
@@ -314,15 +335,17 @@ bool BNO055Manager::saveCalibration() {
     preferences.putBytes("offsets", &calibrationOffsets, sizeof(calibrationOffsets));
     
     // Kalibrierungsstatus speichern
-    CalibrationData cal = getCalibration();
+    preferences.putUChar("cal_system", cal.system);
     preferences.putUChar("cal_gyro", cal.gyro);
     preferences.putUChar("cal_accel", cal.accel);
+    preferences.putUChar("cal_mag", cal.mag);
     
     preferences.end();
     
     calibrationSaved = true;
     Serial.println("✅ Kalibrierung in NVS gespeichert!");
-    Serial.printf("   Gyro=%d, Accel=%d\n", cal.gyro, cal.accel);
+    Serial.printf("   System=%d, Gyro=%d, Accel=%d, Mag=%d\n",
+                  cal.system, cal.gyro, cal.accel, cal.mag);
     
     return true;
 }
@@ -346,8 +369,10 @@ bool BNO055Manager::loadCalibration() {
     preferences.getBytes("offsets", &calibrationOffsets, sizeof(calibrationOffsets));
     
     // Kalibrierungsstatus laden
+    uint8_t savedSystem = preferences.getUChar("cal_system", 0);
     uint8_t savedGyro = preferences.getUChar("cal_gyro", 0);
     uint8_t savedAccel = preferences.getUChar("cal_accel", 0);
+    uint8_t savedMag = preferences.getUChar("cal_mag", 0);
     preferences.end();
     
     // Kalibrierungsdaten auf Sensor anwenden
@@ -355,8 +380,8 @@ bool BNO055Manager::loadCalibration() {
     
     calibrationSaved = true;
     Serial.println("✅ Kalibrierung aus NVS geladen!");
-    Serial.printf("   Kalibrierungsstatus: Gyro=%d, Accel=%d\n",
-                  savedGyro, savedAccel);
+    Serial.printf("   Kalibrierungsstatus: System=%d, Gyro=%d, Accel=%d, Mag=%d\n",
+                  savedSystem, savedGyro, savedAccel, savedMag);
     
     return true;
 }
@@ -396,6 +421,9 @@ String BNO055Manager::getCalibrationInstructions() {
     if (ROADTEST_BNO_USES_MAG && cal.mag < 3) {
         instructions += "Mag: liegende Acht in der Luft beschreiben\n";
     }
+    if (ROADTEST_BNO_USES_MAG && cal.system < 3) {
+        instructions += "System: Bewegungen wiederholen, bis S=3\n";
+    }
 
     if (cal.isFullyCalibrated()) {
         instructions = String("Für ") + ROADTEST_BNO_MODE_NAME + " kalibriert!";
@@ -407,7 +435,7 @@ String BNO055Manager::getCalibrationInstructions() {
 SensorData BNO055Manager::getCurrentData() {
     SensorData data = {0};
     
-    if (!initialized) return data;
+    if (!isDataValid()) return data;
     
     // Zeitstempel
     data.timestamp = millis();
@@ -447,12 +475,12 @@ SensorData BNO055Manager::getCurrentData() {
 }
 
 imu::Vector<3> BNO055Manager::getVector(Adafruit_BNO055::adafruit_vector_type_t vectorType) {
-    if (!initialized) return imu::Vector<3>();
+    if (!isDataValid()) return imu::Vector<3>();
     return sensor->getVector(vectorType);
 }
 
 float BNO055Manager::getTemperature() {
-    if (!initialized) return 0;
+    if (!isDataValid()) return 0;
     return sensor->getTemp();
 }
 

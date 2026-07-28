@@ -7,6 +7,31 @@ und dieses Projekt hält sich an [Semantic Versioning](https://semver.org/spec/v
 
 ## [Unveröffentlicht]
 
+### Behoben
+- BNO055-Erkennung liest jetzt die Chip-ID `0xA0`, statt leere
+  I²C-Schreibtransaktionen zu senden, die in der Logic-8-Aufnahme den
+  Folgezugriff beschädigten und `SYS_ERR 5` auslösten
+- Messwerte werden bereits beim ersten Kommunikations- oder Fusionsfehler
+  gesperrt; nur Statusanzeige und automatischer Neustart bleiben entprellt
+- Die unbegrenzte Wartezeit nach dem BNO055-Software-Reset endet nach
+  1,5 Sekunden mit einem kontrollierten Fehler
+- Vollständige NDOF-Kalibrierung verlangt nun konsistent System, Gyro,
+  Beschleunigung und Magnetometer mit Status 3
+- Der Webbutton zum Starten einer Aufzeichnung wartet nicht mehr auf alle
+  SD-Dateioperationen. Die Dateien werden über mehrere Hauptschleifen
+  vorbereitet und Startfehler erscheinen auf der Statusseite
+
+### Geändert
+- Weboberfläche, OLED, NVS-Metadaten und CSV-Spalten sind auf den aktiven
+  NDOF-Modus abgestimmt
+- I²C-Operationen werden nach 20 ms abgebrochen
+- Die fest verdrahtete BNO055-Adresse ist verbindlich `0x29`; der automatische
+  Fallback auf `0x28` entfällt
+- Die periodische Gesundheitsprüfung liest die Chip-ID nur noch einmal pro
+  Fünf-Sekunden-Zyklus
+- Sitzungsnamen erhalten einen Zufallsanteil; wiederholte FAT-Verzeichnissuchen
+  nach freien Dateinamen entfallen
+
 ### Dokumentation
 - Hardwarebeschreibung auf den tatsächlichen LOLIN S3 Mini mit 4 MB Flash
   umgestellt

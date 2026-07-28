@@ -9,7 +9,7 @@ Signalbezeichnungen auf den Modulen. Kabelfarben sind nicht verbindlich.
 | Baugruppe | Ausführung | Verwendung |
 |---|---|---|
 | Controller | LOLIN S3 Mini, ESP32-S3, 4 MB Flash | Firmware, WLAN und OTA |
-| Bewegungssensor | Adafruit BNO055 Breakout | IMUPLUS: Gyro und Beschleunigung |
+| Bewegungssensor | Adafruit BNO055 Breakout | NDOF-Sensorfusion |
 | Display | SSD1306 OLED, 128 × 64 | I²C-Statusanzeige |
 | GPS | Beitian BN-880 | NMEA über UART, 9600 Baud |
 | Speicher | PZSMOCN Micro-SD-Modul | SPI-Datenaufzeichnung |
@@ -109,17 +109,17 @@ GND                  GND                    GND
 | `PS0`, `PS1` | nicht angeschlossen; beim Adafruit-Breakout standardmäßig I²C |
 | `INT` | nicht verwendet |
 
-Der BNO055 läuft im IMUPLUS-Modus 8. Das Magnetometer wird nicht verwendet,
-deshalb gibt es keinen magnetischen Nordbezug und keine
-Magnetometerkalibrierung.
+Der BNO055 läuft im NDOF-Modus 12. System, Gyro, Beschleunigung und
+Magnetometer müssen für eine vollständig speicherbare Kalibrierung jeweils
+den Wert 3 erreichen.
 
 Die erwarteten I²C-Adressen sind:
 
 - BNO055: **`0x29`**. Der `ADR`-Pad des Adafruit-Breakouts liegt in diesem
   Aufbau auf 3,3 V; ohne diese Beschaltung wäre es die Standardadresse `0x28`.
   Frühere Fassungen dieser Datei nannten fälschlich 0x28.
-  Die Firmware prüft seit 1.5.10 beide Adressen und übernimmt die
-  antwortende, beginnend mit `0x29`. `diag` gibt die verwendete Adresse aus.
+  Die Firmware verwendet ausschließlich `0x29` und bestätigt den Sensor über
+  die Chip-ID `0xA0`. `diag` gibt die feste Adresse aus.
 - OLED: `0x3C`, alternativ wird `0x3D` geprüft
 
 Die Breakout-Module besitzen bereits I²C-Pull-ups. Die Parallelschaltung im

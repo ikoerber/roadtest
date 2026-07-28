@@ -78,7 +78,8 @@ public:
                         bool gpsDataStream, bool can, bool wifi,
                         bool allRequiredReady);
     void showTestResults(const String& testName, bool success, const String& details = "");
-    void showCalibrationStatus(uint8_t gyro, uint8_t accel, uint8_t mag, bool saved);
+    void showCalibrationStatus(uint8_t system, uint8_t gyro, uint8_t accel,
+                               uint8_t mag, bool saved);
     
     // Live-Daten Anzeigen
     void showSensorData(float heading, float accel, float temp, int canCount);

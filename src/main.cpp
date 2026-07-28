@@ -82,8 +82,12 @@ void i2cScanner() {
     Serial.println("Detaillierte I2C-Diagnose:");
     
     for (address = 1; address < 127; address++) {
-        Wire.beginTransmission(address);
-        error = Wire.endTransmission();
+        if (address == BNO055_ADDRESS_A || address == BNO055_ADDRESS_B) {
+            error = BNO055Manager::probeAddress(address) ? 0 : 2;
+        } else {
+            Wire.beginTransmission(address);
+            error = Wire.endTransmission();
+        }
         
         // Debug für kritische Adressen
         if (address == 0x28 || address == 0x29 || address == 0x3C || address == 0x3D) {
@@ -387,9 +391,11 @@ void testBNO055() {
     if (bnoManager.isReady()) {
         bnoManager.runSelfTest();
         CalibrationData cal = bnoManager.getCalibration();
-        Serial.println("\nIMUPLUS-Kalibrierung (0-3):");
+        Serial.printf("\n%s-Kalibrierung (0-3):\n", ROADTEST_BNO_MODE_NAME);
+        Serial.printf("  System: %d\n", cal.system);
         Serial.printf("  Gyro: %d\n", cal.gyro);
         Serial.printf("  Accel: %d\n", cal.accel);
+        Serial.printf("  Mag: %d\n", cal.mag);
         
         SensorData data = bnoManager.getCurrentData();
         Serial.printf("Temperatur: %.1f °C\n", data.temperature);
@@ -649,6 +655,7 @@ void recoverI2CBus() {
 
     Wire.begin(I2C_SDA, I2C_SCL);
     Wire.setClock(I2C_CLOCK_SPEED);
+    Wire.setTimeOut(I2C_TIMEOUT_MS);
 }
 
 // Die Testsuiten laufen minutenlang blockierend und warten teilweise auf
@@ -711,7 +718,7 @@ bool initializeOptionalCAN() {
 
 bool requiredHardwareReady() {
     return oledManager.isReady() && bnoManager.isSelfTestPassed() &&
-           bnoManager.isFusionModeActive() &&
+           bnoManager.isFusionModeActive() && bnoManager.isDataValid() &&
            sdLogger.isReady() && gpsManager.isReceivingNMEA() &&
            webAvailable;
 }
@@ -729,7 +736,8 @@ void updateBootStatusDisplay(unsigned long now, bool force = false) {
         (force || (bootStatusActive &&
                    now - lastBootStatusDisplay >= BOOT_STATUS_INTERVAL))) {
         oledManager.showBootStatus(
-            bnoManager.isSelfTestPassed() && bnoManager.isFusionModeActive(),
+            bnoManager.isSelfTestPassed() && bnoManager.isFusionModeActive() &&
+                bnoManager.isDataValid(),
             sdLogger.isReady(),
             gpsManager.isReady(), gpsManager.isReceivingNMEA(),
             canBusAvailable, webAvailable, allReady);
@@ -748,10 +756,13 @@ void handleHardwareRecovery(unsigned long now) {
     }
     lastHardwareCheck = now;
 
-    // BNO055 und OLED werden per I2C-Ping überwacht. Erst drei
-    // aufeinanderfolgende Ausfälle gelten als echte Trennung.
+    // Der BNO055 wird über seine Chip-ID, das OLED per I²C-Ping überwacht.
+    // Erst drei aufeinanderfolgende Ausfälle gelten als echte Trennung.
     bool bnoResponding = bnoManager.responds();
     if (bnoManager.isReady()) {
+        if (!bnoResponding) {
+            bnoManager.invalidateMeasurements();
+        }
         bnoMissingChecks = bnoResponding ? 0 : bnoMissingChecks + 1;
         if (bnoMissingChecks >= 3) {
             // Vor dem Abschalten des Sensors erst den Bus freitakten. Ein
@@ -769,11 +780,11 @@ void handleHardwareRecovery(unsigned long now) {
             }
         } else if (bnoResponding && !bnoManager.isSelfTestPassed()) {
             bnoManager.runSelfTest();
-        } else if (bnoResponding && !bnoManager.verifyFusionMode()) {
+        } else if (bnoResponding && !bnoManager.verifyFusionMode(true)) {
             Serial.println("⚠️ BNO055-Fusion dreimal fehlerhaft; vollständiger Neustart");
             bnoManager.restartFusion();
         }
-    } else if (bnoResponding && bnoManager.begin()) {
+    } else if (bnoResponding && bnoManager.begin(true)) {
         if (bnoManager.runSelfTest()) {
             Serial.println("✅ BNO055 im Hintergrund wieder verbunden");
         } else {
@@ -797,7 +808,7 @@ void handleHardwareRecovery(unsigned long now) {
         Serial.println("✅ OLED im Hintergrund wieder verbunden");
     }
 
-    if (sdLogger.isReady()) {
+    if (sdLogger.isReady() && !sdLogger.isLoggingStartPending()) {
         sdCardAvailable = sdLogger.checkHealth();
     }
     if (!sdLogger.isReady()) {
@@ -844,7 +855,8 @@ void setup() {
 
     Serial.println("\n=== Straßenqualitäts-Messsystem ===");
     Serial.println("Für kurvenreiche Genießer-Strecken");
-    Serial.println("Version 1.5.10 mit entprellter BNO055-IMUPLUS-Prüfung\n");
+    Serial.printf("Version 1.5.10 mit sicherer BNO055-%s-Prüfung\n\n",
+                  ROADTEST_BNO_MODE_NAME);
 
     // Task-Watchdog aktivieren. Bleibt loop() hängen - etwa durch einen
     // abgebrochenen OTA-Upload oder einen blockierenden Peripheriezugriff -
@@ -876,6 +888,7 @@ void setup() {
     pinMode(I2C_SCL, INPUT_PULLUP);
     bool i2cSuccess = Wire.begin(I2C_SDA, I2C_SCL);
     Wire.setClock(I2C_CLOCK_SPEED);
+    Wire.setTimeOut(I2C_TIMEOUT_MS);
     Serial.printf("I2C: %s (SDA=%d, SCL=%d, %d Hz)\n",
                   i2cSuccess ? "OK" : "FEHLER", I2C_SDA, I2C_SCL, I2C_CLOCK_SPEED);
 
@@ -943,6 +956,10 @@ void loop() {
         delay(1);
         return;
     }
+    // Der Web-Handler quittiert den Start sofort. Pro loop()-Runde wird
+    // anschließend höchstens eine SD-Startoperation ausgeführt, damit der
+    // Webserver zwischen den Dateizugriffen weiter Anfragen bedienen kann.
+    sdLogger.processLoggingStart();
     
     unsigned long currentTime = millis();
     handleHardwareRecovery(currentTime);
@@ -951,6 +968,7 @@ void loop() {
     // BNO055 Sensor-Daten lesen (alle 100ms)
     if (bnoManager.isSelfTestPassed() &&
         bnoManager.isFusionModeActive() &&
+        bnoManager.isDataValid() &&
         (currentTime - lastSensorRead >= 100)) {
         SensorData sensorData = bnoManager.getCurrentData();
         lastSensorData = sensorData;  // Für Zeitkorrelation speichern
@@ -1076,12 +1094,13 @@ void loop() {
         // BNO055 Status
         CalibrationData cal = {0, 0, 0, 0};
         if (bnoManager.isSelfTestPassed() &&
-            bnoManager.isFusionModeActive()) {
+            bnoManager.isFusionModeActive() &&
+            bnoManager.isDataValid()) {
             cal = bnoManager.getCalibration();
             BNO055RuntimeStatus bnoStatus = bnoManager.getRuntimeStatus();
-            Serial.printf("BNO055 %s/Sys:%d Kal:G%d/A%d/M%d",
+            Serial.printf("BNO055 %s/Sys:%d Kal:S%d/G%d/A%d/M%d",
                          ROADTEST_BNO_MODE_NAME, bnoStatus.systemStatus,
-                         cal.gyro, cal.accel, cal.mag);
+                         cal.system, cal.gyro, cal.accel, cal.mag);
         } else {
             Serial.print("BNO055: Fusion nicht bereit");
         }
@@ -1136,10 +1155,13 @@ void loop() {
         // Bei Änderungen oder länger unvollständiger Kalibrierung zeigt das
         // OLED den Assistenten, ansonsten die Live-Daten.
         if (!bootStatusActive && bnoManager.isSelfTestPassed() &&
+            bnoManager.isDataValid() &&
             oledManager.isReady()) {
             bool calibrationChanged =
+                cal.system != lastDisplayedCalibration.system ||
                 cal.gyro != lastDisplayedCalibration.gyro ||
                 cal.accel != lastDisplayedCalibration.accel ||
+                cal.mag != lastDisplayedCalibration.mag ||
                 bnoManager.isCalibrationSaved() != lastDisplayedCalibrationSaved;
             bool calibrationReminder =
                 !cal.isFullyCalibrated() &&
@@ -1147,7 +1169,7 @@ void loop() {
 
             if (calibrationChanged || calibrationReminder) {
                 oledManager.showCalibrationStatus(
-                    cal.gyro, cal.accel, cal.mag,
+                    cal.system, cal.gyro, cal.accel, cal.mag,
                     bnoManager.isCalibrationSaved());
                 lastDisplayedCalibration = cal;
                 lastDisplayedCalibrationSaved = bnoManager.isCalibrationSaved();
