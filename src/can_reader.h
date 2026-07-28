@@ -4,6 +4,8 @@
 #include <Arduino.h>
 #include <SD.h>
 
+#include "hardware_config.h"
+
 // CAN-Bus Nachrichtenstruktur
 struct CANMessage {
     unsigned long timestamp;    // Zeitstempel in ms
@@ -28,7 +30,12 @@ private:
     // Pin-Konfiguration
     int csPin;
     int intPin;
-    
+
+    // Quarzfrequenz des MCP2515-Moduls. Wird nicht mehr zur Laufzeit geraten:
+    // Ein falscher Wert halbiert oder verdoppelt die Bitrate, der Knoten geht
+    // in Bus-Off und die INT-Leitung bleibt dauerhaft aktiv.
+    long clockFrequency;
+
     // Statistiken
     unsigned long totalMessages;
     unsigned long errorCount;
@@ -37,14 +44,14 @@ private:
     CANMessage lastMessage;
     
 public:
-    CANReader(int cs = 1, int interrupt = 2);
+    CANReader(int cs = CAN_CS_PIN, int interrupt = CAN_INT_PIN);
     ~CANReader();
-    
+
     // Initialisierung und Konfiguration
-    bool begin(long baudRate = 500E3);
+    bool begin(long baudRate = CAN_BAUDRATE);
     void end();
     void setPins(int cs, int interrupt);
-    void setClockFrequency(long clockFreq = 16E6);
+    void setClockFrequency(long clockFreq = CAN_CLOCK_16MHZ);
     
     // Nachrichtenempfang
     bool hasMessage();

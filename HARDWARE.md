@@ -13,11 +13,20 @@ Signalbezeichnungen auf den Modulen. Kabelfarben sind nicht verbindlich.
 | Display | SSD1306 OLED, 128 × 64 | I²C-Statusanzeige |
 | GPS | Beitian BN-880 | NMEA über UART, 9600 Baud |
 | Speicher | PZSMOCN Micro-SD-Modul | SPI-Datenaufzeichnung |
-| CAN, optional | MCP2515-Modul mit CAN-Transceiver | Derzeit softwareseitig deaktiviert |
+| CAN, optional | Joy-IT SBC-CAN01: MCP2515 + MCP2562, 16-MHz-Quarz | Derzeit softwareseitig deaktiviert |
 
-Der Controller ist ein **LOLIN S3 Mini**. Er ist weder ein Seeed XIAO ESP32C3
-noch ein ESP32-S3 DevKitC-1. Das in `platformio.ini` ausgewählte Board
-`lolin_s3_mini` besitzt 4 MB Flash.
+> ⚠️ **Ungeklärt: der tatsächliche Controllertyp.**
+> Auf den Aufbaufotos vom 28. Juli 2026 trägt das Board die Pinreihe
+> `BAT · 5V · GND · 3V3 · 13 · 12 · 11 · 10 · 9 · 8`, dazu BOOT- und
+> RST-Taster sowie eine RGB-LED an GPIO 48. **Ein LOLIN S3 Mini hat keinen
+> `BAT`-Pin.** Das in `platformio.ini` gewählte Ziel `lolin_s3_mini` passt
+> also vermutlich nicht.
+>
+> Praktische Folge: Das Board-Ziel setzt `-DBOARD_HAS_PSRAM`. Hat der
+> verbaute Controller keinen PSRAM, scheitert dessen Initialisierung bei
+> jedem Start. Vor einer Korrektur von `platformio.ini` muss der reale
+> Boardtyp bestimmt werden — Beschriftung auf der Platinenunterseite und
+> Bootlog auswerten.
 
 ## Verbindliche GPIO-Belegung
 
@@ -88,7 +97,10 @@ Magnetometerkalibrierung.
 
 Die erwarteten I²C-Adressen sind:
 
-- BNO055: `0x28`
+- BNO055: `0x28` bei unbeschaltetem `ADR` (Adafruit-Breakout, wie verbaut).
+  Die Firmware prüft seit 1.5.10 beide dokumentierten Adressen `0x29` und
+  `0x28` und übernimmt die antwortende. `diag` gibt die tatsächlich
+  verwendete Adresse aus.
 - OLED: `0x3C`, alternativ wird `0x3D` geprüft
 
 Die Breakout-Module besitzen gewöhnlich bereits I²C-Pull-ups. Zusätzliche
@@ -130,13 +142,21 @@ fest verdrahteten GPIOs. Alternative Pin-Sätze sind für den realen Aufbau
 nicht vorgesehen. Die SD-Karte sollte FAT32 formatiert und mechanisch sicher
 im Sockel sowie im Steckverbinder sitzen.
 
-## Optionales CAN-Modul
+## Optionales CAN-Modul: Joy-IT SBC-CAN01
+
+Verbaut ist ein **Joy-IT SBC-CAN01** mit MCP2515-Controller und
+**MCP2562**-Transceiver. Der Quarz trägt den Aufdruck **16.000**, also 16 MHz.
+Dieser Wert steht als `CAN_CLOCK_16MHZ` in `hardware_config.h` und wird von
+`CANReader::begin()` fest verwendet. Er wird **nicht** mehr zur Laufzeit
+geraten: Eine falsche Annahme wird von `begin()` nicht erkannt, ergibt eine um
+Faktor zwei falsche Bitrate, treibt den Knoten in Bus-Off und hält die
+INT-Leitung dauerhaft aktiv.
 
 Die Signalleitungen sind in der Firmware vorbereitet:
 
 ```text
-LOLIN S3 Mini       MCP2515
--------------       -------
+Controller          SBC-CAN01
+----------          ---------
 GPIO 1              CS
 GPIO 2              INT
 GPIO 3              SCK
@@ -148,11 +168,32 @@ GND                  GND
 CAN ist in Version 1.5.10 mit `ENABLE_OPTIONAL_CAN = false` deaktiviert und
 blockiert weder Start, WLAN noch Aufzeichnung.
 
-Die Versorgung des abgebildeten MCP2515/TJA1050-Moduls wird bewusst noch nicht
-festgelegt. Viele dieser Module arbeiten mit 5 V und können an den SPI-Pins
-5-V-Pegel ausgeben. Das wäre für den ESP32-S3 gefährlich. Vor dem Anschluss
-müssen Modulvariante, Versorgung und Logikpegel geprüft werden; bei Bedarf ist
-ein 3,3-V-kompatibles Modul oder ein Pegelwandler zu verwenden.
+### Versorgung: VCC und VCC1 sind nicht dasselbe
+
+Der MCP2562 ist ein Zweispannungs-Transceiver. Das Modul hat deshalb zwei
+getrennte Versorgungseingänge:
+
+| Anschluss | Spannung | Versorgt |
+|---|---|---|
+| `VCC`  | **3,3 V** | Logik und MCP2515 — an einem ESP32 also 3,3 V |
+| `VCC1` | **5 V**   | Bustreiber zum Fahrzeug |
+
+Richtig beschaltet ist **kein Pegelwandler** in den SPI-Leitungen nötig. Genau
+so wird das Modul auch am Raspberry Pi betrieben.
+
+Liegt dagegen `VCC` auf 5 V (Arduino-Beschaltung), treibt der `SO`-Ausgang
+5-V-Pegel auf GPIO 11. Der Strom fließt dann über die ESD-Schutzdiode des
+ESP32-S3 in die 3,3-V-Schiene und hebt die Versorgung des gesamten Systems an.
+Der absolute Grenzwert des ESP32-S3 beträgt 3,6 V.
+
+**Vor der Inbetriebnahme `VCC` und `VCC1` einzeln gegen GND messen.**
+
+Zu beachten: Hängt `VCC1` am `5V`-Pad des Controllerboards, ist der Bustreiber
+im reinen Akkubetrieb unversorgt. CAN liefe dann nur am USB-Kabel. Für den
+Fahrbetrieb ist ein 5-V-Boost aus der Zelle erforderlich.
+
+Der 120-Ω-Abschlusswiderstand des Moduls ist über den Jumper `ON`/`OFF`
+schaltbar. Am Fahrzeug bleibt er auf `OFF` — siehe unten.
 
 Für einen späteren Fahrzeuganschluss:
 

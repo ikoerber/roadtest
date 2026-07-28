@@ -696,9 +696,10 @@ bool initializeOptionalCAN() {
     SPI.setDataMode(SPI_MODE0);
     SPI.setBitOrder(MSBFIRST);
     canReader.setPins(CAN_CS_PIN, CAN_INT_PIN);
-    canReader.setClockFrequency(8E6);
+    // Der verbaute Joy-IT SBC-CAN01 hat einen 16-MHz-Quarz (Aufdruck 16.000).
+    canReader.setClockFrequency(CAN_CLOCK_16MHZ);
 
-    bool available = canReader.begin(500E3);
+    bool available = canReader.begin(CAN_BAUDRATE);
     if (available) {
         Serial.println("✅ Optionales CAN-Modul bereit");
     } else {

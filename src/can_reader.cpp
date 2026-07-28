@@ -13,9 +13,10 @@ CANReader canReader;
 // MCP2515 Instanz erstellen
 MCP2515Class canController;
 
-CANReader::CANReader(int cs, int interrupt) 
-    : initialized(false), messageCount(0), lastLogTime(0), 
+CANReader::CANReader(int cs, int interrupt)
+    : initialized(false), messageCount(0), lastLogTime(0),
       loggingEnabled(false), csPin(cs), intPin(interrupt),
+      clockFrequency(CAN_CLOCK_16MHZ),
       totalMessages(0), errorCount(0) {
 }
 
@@ -142,31 +143,28 @@ bool CANReader::begin(long baudRate) {
     // Warte nach Reset
     delay(100);
     
-    // MCP2515 Konfiguration - 16MHz Kristall versuchen (DEBO CON Standard)
-    Serial.println("Teste 16MHz Kristall...");
-    canController.setClockFrequency(16E6);
+    // MCP2515 mit der fest hinterlegten Quarzfrequenz konfigurieren.
+    // Der verbaute Joy-IT SBC-CAN01 trägt einen Quarz mit Aufdruck 16.000.
+    // Früher wurde hier 16 MHz probiert und bei Misserfolg auf 8 MHz
+    // umgeschaltet. Das ist gefährlich: Eine falsche Annahme wird von
+    // begin() nicht erkannt, sondern ergibt eine um Faktor zwei falsche
+    // Bitrate. Der Knoten quittiert dann jeden Frame als Fehler, geht in
+    // Bus-Off und hält die INT-Leitung dauerhaft aktiv.
+    Serial.printf("MCP2515: Quarz %ld Hz, Bitrate %ld bps\n",
+                  clockFrequency, baudRate);
+    canController.setClockFrequency(clockFrequency);
     canController.setSPIFrequency(1E6); // Niedrige SPI-Geschwindigkeit
-    
+
     if (!canController.begin(baudRate)) {
-        Serial.println("16MHz fehlgeschlagen, teste 8MHz...");
-        
-        // Fallback: 8MHz Kristall
-        canController.setClockFrequency(8E6);
-        
-        if (!canController.begin(baudRate)) {
-            Serial.println("❌ CAN-Bus Initialisierung fehlgeschlagen!");
-            Serial.println("Mögliche Ursachen:");
-            Serial.println("• Verkabelung: CS=GPIO1, INT=GPIO2, SCK=GPIO3, MOSI=GPIO13, MISO=GPIO11");
-            Serial.println("• Stromversorgung: VCC1=5V, VCC=3.3V");
-            Serial.println("• MCP2515 defekt oder nicht verbunden");
-            Serial.println("• SPI-Pin-Konflikte");
-            errorCount++;
-            return false;
-        } else {
-            Serial.println("✅ 8MHz Kristall erkannt und konfiguriert");
-        }
-    } else {
-        Serial.println("✅ 16MHz Kristall erkannt und konfiguriert");
+        Serial.println("❌ CAN-Bus Initialisierung fehlgeschlagen!");
+        Serial.println("Mögliche Ursachen:");
+        Serial.printf("• Verkabelung: CS=GPIO%d, INT=GPIO%d, SCK=GPIO%d, MOSI=GPIO%d, MISO=GPIO%d\n",
+                      csPin, intPin, CAN_SCK_PIN, CAN_MOSI_PIN, CAN_MISO_PIN);
+        Serial.println("• Stromversorgung: VCC=3,3V (Logik), VCC1=5V (Bustreiber)");
+        Serial.println("• Quarzaufdruck gegen CAN_CLOCK_16MHZ in hardware_config.h prüfen");
+        Serial.println("• MCP2515 defekt oder nicht verbunden");
+        errorCount++;
+        return false;
     }
     
     initialized = true;
@@ -204,9 +202,10 @@ void CANReader::setClockFrequency(long clockFreq) {
         Serial.println("Warnung: Clock-Frequenz nur vor begin() änderbar");
         return;
     }
-    
-    // MCP2515 nutzt externe Clock-Konfiguration
-    canController.setClockFrequency(clockFreq);
+
+    // Nur merken. Angewendet wird der Wert in begin(), sonst würde ihn die
+    // dortige Konfiguration wieder überschreiben.
+    clockFrequency = clockFreq;
 }
 
 bool CANReader::hasMessage() {
