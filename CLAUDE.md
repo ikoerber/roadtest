@@ -1,298 +1,226 @@
-# ESP32-S3 Straßenqualitäts-Messsystem - Entwicklungsdokumentation
+# ROADTEST Firmware
 
-## ✅ Implementierungsstatus - VOLLSTÄNDIG (v1.5.10)
+ESP32-S3-Firmware zur Aufzeichnung von BNO055-, GPS-, Straßenqualitäts- und
+standardisierten OBD-II-Daten. Aktueller Firmwarestand: **1.5.14**.
 
-Das System ist vollständig implementiert und produktionsreif (Code Quality: 9.5/10).
+Der aktuelle Stand ist ein Hardware- und Fahrzeugteststand, nicht abschließend
+produktionsreif. Bekannte Einschränkungen stehen weiter unten.
 
-### 🆕 Aktuelle Verbesserungen (v1.2.0)
-- ✅ **GPS Interrupt-Modus** - Verlustfreier UART-Empfang mit Ring-Buffer
-- ✅ **NVS-Kalibrierungsspeicher** - BNO055 Kalibrierung übersteht Neustarts
-- ✅ **Erweiterte Sicherheit** - Null-Checks für alle dynamischen Allokationen
-- ✅ **String-Optimierung** - Statische Buffer statt String-Konkatenation
-- ✅ **Code-Bereinigung** - Zentralisierte Hardware-Konfiguration
+## Befehle
 
-### 🎯 Abgeschlossene Module
+| Befehl | Zweck |
+|---|---|
+| `pio run` | Firmware für `lolin_s3_mini` bauen |
+| `pio run -t upload` | Firmware über USB-CDC flashen |
+| `pio device monitor` | Seriellen Monitor mit den Einstellungen aus `platformio.ini` öffnen |
+| `pio run -t clean` | PlatformIO-Buildartefakte löschen |
 
-#### Hardware-Manager (Vollständig implementiert)
-- ✅ **BNO055Manager** - IMUPLUS mit Gyro, Beschleunigung und NVS-Speicher
-- ✅ **OLEDManager** - 128x64 Display mit 8 Test-Modi und Auto-Rotation  
-- ✅ **GPSManager** - BN-880 mit UART2 Interrupt-Support und Ring-Buffer
-- ✅ **CANReader** - MCP2515-Integration mit optimierten String-Operationen
-- ✅ **SDLogger** - Multi-Format-Logging mit erweiterten Sicherheitschecks
+Die Web-OTA-Datei entsteht unter:
 
-#### Sicherheits-Infrastruktur (Vollständig implementiert)
-- ✅ **BufferUtils** - Template-basierte Overflow-Schutz-Library
-- ✅ **SafeStringFormatter** - snprintf-basierte sichere String-Operationen
-- ✅ **SafeRingBuffer** - Overflow-sichere Zirkularpuffer
-- ✅ **SafeMemoryPool** - Fragmentierungsfreie Memory-Allokation
-
-#### System-Integration (Vollständig implementiert)
-- ✅ **HardwareConfig** - Zentrale Pin- und Parameter-Konfiguration  
-- ✅ **HardwareTest** - Umfassende Test-Suite für alle Module
-- ✅ **Korrelierte Datenaufzeichnung** - Sensor + CAN + GPS synchronisiert
-
-### 🛡️ Sicherheits-Features
-
-#### Buffer-Overflow-Schutz (Multi-Layer)
-```cpp
-// Layer 1: Compile-time Limits
-#define MAX_LOG_LINE_LENGTH     256
-#define BUFFER_SAFETY_FACTOR    0.8
-
-// Layer 2: Runtime-Schutz  
-bool safeAppendToBuffer(const char* data, size_t dataLen);
-int safePrintf(char* buffer, size_t bufferSize, const char* format, ...);
-
-// Layer 3: Template-Sicherheit
-SafeRingBuffer<float, BUFFER_SIZE> sensorBuffer;
-
-// Layer 4: Monitoring & Recovery
-if (bufferIndex > BUFFER_SIZE) {
-    Serial.printf("❌ KRITISCH: Buffer-Overflow erkannt!\n");
-    emergency_recovery();
-}
+```text
+.pio/build/lolin_s3_mini/firmware.bin
 ```
 
-#### Hardware-Fehler-Recovery
-- **I2C-Bus-Recovery** bei Sensor-Ausfällen mit Timeout-Detection
-- **SD-Wiederanlauf** auf den fest verdrahteten GPIOs 4 bis 7
-- **CAN optional** und standardmäßig deaktiviert
-- **GPS-Wiederanlauf** ohne blockierendes Warten auf einen Satelliten-Fix
+Der Build verwendet `scripts/patch_bno055_reset_timeout.py` als
+PlatformIO-Pre-Script. Diesen Schritt nicht umgehen.
 
-### 📊 Performance-Optimierungen
+## Architektur
 
-#### Real-Time-Verhalten
-```cpp
-Sensor-Reading:      10Hz (100ms)  ✓ Optimal für Bewegungsdaten
-GPS-Updates:         5Hz (200ms)   ✓ Ausreichend für Navigation  
-CAN-Processing:      100Hz (10ms)  ✓ Hochfrequent für Automotive
-Buffer-Auto-Flush:   80% Auslastung ✓ Verhindert Overflow
-Status-Reports:      0.2Hz (5s)    ✓ Minimaler Debug-Impact
+```text
+src/main.cpp                    Systemstart, Hauptschleife und serielle Befehle
+src/hardware_config.{h,cpp}     Verbindliche Pins, Intervalle und Grenzwerte
+src/bno055_manager.{h,cpp}      NDOF-Sensorfusion, Status und NVS-Kalibrierung
+src/gps_manager.{h,cpp}         BN-880-UART, TinyGPS++ und GPS-Zustand
+src/MCP2515.{h,cpp}             Lokaler MCP2515-Treiber
+src/CANController.{h,cpp}       Abstraktion des CAN-Controllers
+src/can_reader.{h,cpp}          CAN-Empfang und erlaubte OBD-Service-01-PIDs
+src/vehicle_data_discovery.*    Dreiphasige Fahrzeugdaten-Erkennung
+src/sd_logger.{h,cpp}           Sitzungsbezogene CSV-Aufzeichnung
+src/road_quality.h              Fahrbahn- und Kurvenmetriken
+src/oled_manager.{h,cpp}        Optionale Statusanzeige
+src/web_manager.{h,cpp}         ROADTEST-WLAN, Statusseite und Browser-OTA
+src/integration_tests.{h,cpp}   Serielle Hardware- und Integrationstests
 ```
 
-#### Memory-Management  
-```cpp
-RAM Usage:           ~57KB / 320KB
-Flash Usage:         ~1,16MB / 1,31MB OTA-App-Partition
-Heap-Fragmentierung: Verhindert durch Memory-Pool
-Stack-Overflow:      SafeStackBuffer mit 1KB Reserve
+Systemablauf:
+
+1. WLAN und Webseite starten vor den externen Hardwareprüfungen.
+2. BNO055, GPS, SD und optionales CAN werden nicht blockierend geprüft.
+3. Das OLED ist reine Komfortausstattung und darf den Betrieb nie blockieren.
+4. Die Hauptschleife bedient zuerst Web/OTA und anschließend Sensoren,
+   Logging, CAN/OBD und Diagnose.
+5. `VehicleDataDiscovery` übernimmt während einer Discovery-Sitzung die
+   CAN-Modi, OBD-Anfragen und SD-Aufzeichnung.
+
+## Verbindliche Hardware
+
+Die vollständigen Anschluss- und Sicherheitshinweise stehen in
+`HARDWARE.md`; `schematic.md` enthält den logischen Plan.
+
+| Funktion | Pin |
+|---|---:|
+| I²C SDA für BNO055 und OLED | GPIO 8 |
+| I²C SCL für BNO055 und OLED | GPIO 9 |
+| GPS RX am ESP32 | GPIO 16 |
+| GPS TX am ESP32 | GPIO 15 |
+| SD CS | GPIO 4 |
+| SD MOSI | GPIO 5 |
+| SD MISO | GPIO 6 |
+| SD SCK | GPIO 7 |
+| MCP2515 CS | GPIO 1 |
+| MCP2515 INT | GPIO 2 |
+| MCP2515 SCK | GPIO 3 |
+| MCP2515 MOSI/SI | GPIO 13 |
+| MCP2515 MISO/SO | GPIO 11 |
+
+Wichtige Invarianten:
+
+- Zielboard ist ein LOLIN S3 Mini mit ESP32-S3 und 4 MB Flash.
+- Der BNO055 läuft im Modus `NDOF`.
+- Das MCP2515-Modul verwendet fest einen 16-MHz-Quarz und 500 kbit/s.
+- SD und MCP2515 verwenden getrennte SPI-Pins.
+- ESP32-S3-GPIOs sind nicht 5-V-tolerant.
+- Am Fahrzeug sind gemeinsame Masse, kurze CAN-Stichleitung und die
+  Versorgungshinweise aus `HARDWARE.md` zwingend.
+- Der Terminierungsjumper P1 am CAN-Modul bleibt beim Fahrzeuganschluss
+  entfernt.
+- Hardware-Pins nicht aufgrund automatischer Erkennung oder Vermutungen
+  ändern.
+
+## CAN- und OBD-Sicherheit
+
+- CAN ist für die allgemeine Systembereitschaft optional.
+- Die Firmware sendet ausschließlich freigegebene, lesende OBD-Service-01-
+  Anfragen über die funktionale ID `0x7DF`.
+- Antworten werden nur im Bereich `0x7E8` bis `0x7EF` verarbeitet.
+- Erlaubte PIDs stehen als Positivliste in `CANReader::requestOBDPid()`.
+- Keine frei wählbaren CAN-Frames, UDS-Schreibdienste, Codierungen,
+  Stellgliedtests oder Fehlerlöschfunktionen ergänzen.
+- Die Gesamtrate aktiver OBD-Anfragen bleibt auf höchstens zwei Frames pro
+  Sekunde begrenzt.
+- Während Browser-OTA CAN-H und CAN-L vom Fahrzeug trennen.
+
+## Fahrzeugdaten-Erkennung
+
+Serielle Befehle:
+
+```text
+discover begin
+discover status
+discover mark <kurze Beschreibung>
+discover end
 ```
 
-### 🧪 Test-Coverage (92% implementiert)
+Der Ablauf besteht aus:
 
-#### Hardware-Tests (Vollständig)
-- ✅ **I2C-Deep-Scan** - Detaillierte Adress- und Fehler-Analyse
-- ✅ **BNO055-Volltest** - Selbsttest, Kalibrierung, Datenqualität
-- ✅ **OLED-8-Modi-Test** - Alle Display-Funktionen validiert
-- ✅ **SD-Test** - feste GPIOs 4 bis 7 mit mehreren SPI-Taktraten
-- ✅ **CAN-Register-Test** - MCP2515-Funktionalität komplett
-- ✅ **GPS-Kommunikationstest** - NMEA-Parsing und Fix-Detection
+1. 60 Sekunden echtem MCP2515-Listen-Only ohne ACKs oder Anfragen.
+2. Zwei Scanrunden der OBD-Unterstützungsblöcke `00/20/40/60`.
+3. Abfrage ausschließlich bestätigter Standard-PIDs bis `discover end`.
 
-#### Software-Tests (Vollständig)  
-- ✅ **Buffer-Overflow-Simulation** - Schutz-Mechanismen validiert
-- ✅ **Memory-Pool-Test** - Allokation/Deallokation-Zyklen  
-- ✅ **String-Sicherheits-Test** - SafeFormatter-Funktionen
-- ✅ **Ring-Buffer-Test** - Overflow-Verhalten unter Last
+Eine Discovery-Sitzung erzeugt nach Bedarf Sensor-, Straßen-, GPS-, Event-,
+CAN-, OBD- und Zusammenfassungsdateien mit gemeinsamer Sitzungs-ID.
 
-#### Integration-Tests (Vollständig implementiert v1.2.0)
-- ✅ **Multi-Modul Concurrent Tests** - Alle Module unter Volllast
-- ✅ **Sensor-Daten-Korrelation** - Zeitstempel-Synchronisation
-- ✅ **Hardware Failure Recovery** - I2C, SD-Hotplug, Sensor-Reconnect
-- ✅ **Edge-Case Tests** - Buffer-Overflow, Maximale Vibration
-- ✅ **Performance Tests** - Durchsatz, Latenz, CPU-Auslastung
-- ✅ **Datenintegritäts-Tests** - Konsistenz, Timestamp-Genauigkeit
-- ✅ **Memory-Leak Detection** - 2-Minuten Überwachung
-- ✅ **24+ Test-Szenarien** - Umfassende Abdeckung
+## Serielle Diagnose und Tests
 
-### 🔌 Fest verdrahtete Hardware
+`test` zeigt alle verfügbaren seriellen Befehle. Für die normale Arbeit sind
+besonders relevant:
 
-Die verbindliche Pinliste, Modulanschlüsse, Spannungen und Sicherheitshinweise
-stehen ausschließlich in [HARDWARE.md](HARDWARE.md). Der logische Plan ist in
-[schematic.md](schematic.md) dargestellt.
-
-Kurzfassung:
-
-- Controller: LOLIN S3 Mini mit ESP32-S3 und 4 MB Flash
-- I²C: SDA GPIO 8, SCL GPIO 9
-- GPS: ESP32-RX GPIO 16 an GPS-TX; ESP32-TX GPIO 15 an GPS-RX
-- SD: CS 4, MOSI 5, MISO 6, SCLK 7; PZSMOCN-Modul an 3,3 V
-- CAN: GPIO 1, 2, 3, 11 und 13; derzeit deaktiviert und elektrisch noch zu
-  prüfen
-
-Die Software muss der fest verlöteten Pinbelegung folgen. ESP32-S3-GPIOs sind
-nicht 5-V-tolerant.
-
-### 🎛️ Konfigurierbare Parameter
-
-#### Hardware-Pins (hardware_config.h)
-```cpp
-// I2C-Bus (BNO055 + OLED)
-const int I2C_SDA = 8;
-const int I2C_SCL = 9;
-
-// GPS-Modul (UART2)  
-const int GPS_RX_PIN = 16;  // ESP32 empfängt GPS-Daten
-const int GPS_TX_PIN = 15;  // ESP32 sendet GPS-Befehle
-
-// CAN-Bus (SPI + MCP2515)
-const int CAN_CS_PIN = 1;
-const int CAN_INT_PIN = 2;
-
-// SD-Karte (HSPI)
-const int SD_CS_PIN = 4;
+```text
+diag
+hardware
+quick
+integration
+stress
+recovery
+buffer
+memory
+calibration
+clear_cal
+start
+stop
+obd on
+obd off
+test begin
+test status
+test end
 ```
 
-#### Sensor-Parameter
-```cpp
-// BNO055-Kalibrierung
-#define VIBRATION_THRESHOLD 2.0     // m/s² für Schlagloch-Erkennung
-#define CURVE_THRESHOLD     5.0     // ° für Kurven-Detection
+Die Integrationstests sind Firmwaretests mit realer Hardware und teilweise
+interaktiven Schritten. Es gibt derzeit keine belastbare automatisierte
+Coverage-Zahl. Keine erfundenen Qualitäts- oder Abdeckungswerte dokumentieren.
 
-// GPS-Genauigkeit  
-#define GPS_HDOP_THRESHOLD  2.0     // Maximale horizontale Ungenauigkeit
-#define GPS_FIX_TIMEOUT     30000   // 30s für ersten Fix
+Vor einem Commit mindestens ausführen:
 
-// Logging-Intervalle
-#define SENSOR_READ_INTERVAL    100 // 10Hz BNO055
-#define GPS_UPDATE_INTERVAL     200 // 5Hz GPS
-#define CAN_CHECK_INTERVAL      10  // 100Hz CAN-Bus
+```bash
+pio run
+git diff --check
 ```
 
-### 🚀 Neue Implementierungen (v1.2.0)
+## Aktueller Teststand
 
-#### GPS Interrupt-Modus
-```cpp
-// Interrupt-Handler für verlustfreien Empfang
-void IRAM_ATTR GPSManager::onReceiveInterrupt() {
-    while (serial->available() > 0) {
-        rxBuffer[rxIndex] = serial->read();
-        rxIndex = (rxIndex + 1) % RX_BUFFER_SIZE;
-        dataReady = true;
-    }
-}
+- Firmware 1.5.14 baut erfolgreich für `lolin_s3_mini`.
+- Letzter Build: 57.876 Byte RAM (17,7 %) und 1.191.918 Byte Flash (90,9 %).
+- BNO055-Selbsttest, SD-Logging, WLAN, optionales OLED und MCP2515-
+  Grundkommunikation wurden am System geprüft.
+- Am Porsche Carrera S, Baujahr 2012, PDK wurden standardisierte Antworten von
+  CAN-ID `0x7E8` für Drehzahl, Geschwindigkeit und Drosselstellung empfangen.
+- Der ausführliche Fahrzeugtest steht in
+  `testdata/20260728_2300/TESTBERICHT_2026-07-28.md`.
 
-// Aktivierung in main.cpp
-gpsManager.enableInterruptMode(true);  // Keine Daten gehen verloren!
-```
+## Bekannte Einschränkungen
 
-#### NVS-Kalibrierungsspeicher
-```cpp
-// BNO055 Kalibrierung persistent speichern
-bool BNO055Manager::saveCalibration() {
-    if (!cal.isFullyCalibrated()) return false; // Gyro und Accel müssen 3 sein
-    preferences.begin("bno055_cal", false);
-    preferences.putBytes("offsets", &calibrationOffsets, sizeof(calibrationOffsets));
-    preferences.putUChar("cal_gyro", cal.gyro);
-    preferences.putUChar("cal_accel", cal.accel);
-    preferences.end();
-    return true;
-}
-```
+### OBD-Discovery
 
-#### Optimierte String-Operationen
-```cpp
-// Vorher: String-Konkatenation (langsam, fragmentiert Heap)
-String status = "CAN: " + String(messageCount) + " Nachrichten";
+- Der PID-Unterstützungsscan läuft derzeit nur einmal.
+- Startet der Motor erst nach dem Scan, wird die ECU-Erreichbarkeit nicht
+  erneut geprüft.
+- Ohne bestätigten Unterstützungsblock fragt die Live-Phase keine PIDs ab.
+- Anfrage-, Antwort- und Sendefehlerzähler sind Boot-Gesamtzähler und werden
+  beim Discovery-Start nicht vollständig zurückgesetzt.
+- Der Scan protokolliert noch nicht den Erfolg jedes einzelnen
+  Sendeversuchs.
 
-// Nachher: Statische Buffer (schnell, kein Heap)
-static char statusBuffer[512];
-snprintf(statusBuffer, sizeof(statusBuffer), 
-         "CAN: %lu Nachrichten", messageCount);
-```
+Nächster sinnvoller Schritt: Scan nach Motorstart beziehungsweise periodisch
+wiederholen, bekannte PIDs `0x0C`, `0x0D` und `0x11` als sicheren Rückfall
+testen und sitzungsbezogene OBD-Diagnosewerte speichern.
 
-### 🚀 Deployment-Readiness
+### GPS
 
-#### Production-Features
-- ✅ **Automatic Hardware-Detection** - Alle Module mit Fallback-Strategien
-- ✅ **Comprehensive Error-Logging** - Detaillierte Diagnose-Ausgaben
-- ✅ **Buffer-Overflow-Protection** - Multi-Layer-Sicherheitsarchitektur  
-- ✅ **Memory-Leak-Prevention** - Pool-basierte Allokation
-- ✅ **Real-Time-Performance** - Zeitkritische Systeme optimiert
-- ✅ **Interrupt-based GPS** - Keine verlorenen NMEA-Sätze
-- ✅ **Persistent Calibration** - Kalibrierung übersteht Stromausfall
+- `hasValidFix()` prüft derzeit nur eine gültige Position mit weniger als fünf
+  Sekunden Alter.
+- TinyGPS++-Felder werden unabhängig übernommen; dadurch können Position,
+  Satellitenzahl, HDOP, Geschwindigkeit und Höhe unterschiedlich alt sein.
+- Der UART-Ringpuffer besitzt noch keinen sichtbaren Überlaufzähler.
+- Die Aufzeichnung wiederholt GPS-Positionen häufiger als neue NMEA-Fixes
+  eintreffen.
 
-#### Monitoring & Diagnostik
-```cpp
-// Live-System-Monitoring
-printBufferStats();          // Echtzeit-Memory-Überwachung
-oledManager.showSystemInfo(); // Hardware-Status auf Display
-sdLogger.getStatistics();    // Logging-Performance-Metriken
+Nächster sinnvoller Schritt: feldweise Altersprüfung, Satelliten-/HDOP-
+Grenzen, Plausibilitätsfilter, Überlaufzähler und Logging nur bei neuen Fixes.
 
-// Error-Tracking
-stats.errorCount++;          // Automatisches Error-Counting
-stats.droppedLogs++;         // Verloren-gegangene Daten-Tracking  
-overflow_detected = true;    // Buffer-Overflow-Flags
-```
+### Messqualität
 
-### 📋 Empfohlene Erweiterungen
+- Effektive BNO055-Abtastrate lag im Fahrzeugtest bei ungefähr 8,5 statt
+  vorgesehenen 10 Hz.
+- Schlaglochereignisse sind noch nicht an eine Mindestgeschwindigkeit
+  gekoppelt und können daher im Stand ausgelöst werden.
+- Absolute Kurswerte benötigen eine ausreichende Magnetometer- und
+  Systemkalibrierung; relative Beschleunigungen bleiben davon weitgehend
+  unabhängig.
 
-#### Priorität 1 - Kritische Tests (3 Tage Aufwand)
-1. **SD-Ausfallsicherheit** - Karte während Fahrt entfernt
-2. **I2C-Bus-Recovery** - Sensor-Ausfall-Simulation  
-3. **Vollast-Integration** - Alle Module gleichzeitig unter Maximum-Last
+## Entwicklungsregeln
 
-#### Priorität 2 - Produktionsreife (1-2 Wochen)
-1. **Langzeit-Stabilität** - 24h+ Memory-Leak-Tests
-2. **Grenzwert-Tests** - Extreme Beschleunigung (>8G)
-3. **EMI-Resistenz** - Elektromagnetische Störung-Tests
-
-#### Priorität 3 - Nice-to-Have (Optional)
-1. **WiFi-Integration** - Live-Datenübertragung
-2. **Bluetooth-Display** - Smartphone-App-Integration
-3. **Cloud-Logging** - Automatischer Upload der Messdaten
-
-### 🔄 Kontinuierliche Entwicklung
-
-#### Code-Quality-Metriken
-- **Aktueller Score:** 9.5/10 (Exzellent)
-- **Buffer-Sicherheit:** 100% abgedeckt mit erweiterten Checks
-- **Hardware-Tests:** 90% Coverage (inkl. Interrupt-Mode Tests)
-- **Integration-Tests:** 92% Coverage (24+ Szenarien)
-- **Performance:** Real-Time-fähig mit Interrupt-Optimierung
-- **Memory-Safety:** Alle Allokationen mit Null-Checks
-- **String-Operations:** Optimiert mit statischen Buffern
-- **Gesamt-Test-Coverage:** 91% (Hardware + Integration + Software)
-
-#### Wartungs-Aufgaben
-- **Pin-Konfiguration** über hardware_config.h anpassbar
-- **Library-Updates** über platformio.ini verwaltet
-- **Sensor-Kalibrierung** automatisch mit Benutzer-Feedback
-- **Logging-Format** erweiterbar ohne Code-Änderungen
-
-### 🎖️ Qualitätszertifikat
-
-```
-╔═══════════════════════════════════════════════════════╗
-║            ESP32-S3 ROAD QUALITY SYSTEM               ║
-║               DEVELOPMENT COMPLETED                   ║
-║                                                       ║
-║  ✅ Architecture:    Professional Embedded Design     ║
-║  ✅ Security:        Multi-Layer Buffer Protection    ║  
-║  ✅ Performance:     Real-Time Optimized             ║
-║  ✅ Reliability:     Hardware-Fault-Tolerant         ║
-║  ✅ Maintainability: Modular & Well-Documented       ║
-║                                                       ║
-║              STATUS: PRODUCTION READY ✨              ║
-║               Final Rating: 9.5/10                    ║
-║                  Version: 1.2.0                       ║
-╚═══════════════════════════════════════════════════════╝
-```
-
-## 💡 Entwicklungs-Leitfaden
-
-### Für neue Features
-1. **Erweitere hardware_config.h** für neue Pin-Definitionen
-2. **Erstelle *_manager.h/.cpp** nach bestehendem Pattern  
-3. **Integriere in main.cpp** mit Hardware-Test-Funktion
-4. **Füge Buffer-Schutz hinzu** mit SafeStringFormatter
-5. **Dokumentiere in README.md** mit Verkabelungsdiagramm
-
-### Für Bug-Fixes
-1. **Prüfe Buffer-Overflow** als erste Ursache
-2. **Validiere Hardware-Verkabelung** mit Test-Suite
-3. **Checke Memory-Statistiken** mit printBufferStats()
-4. **Teste Error-Recovery** mit Ausfall-Simulation
-
----
-
-**🏁 System ist bereit für ausgedehnte Straßentests auf kurvenreichen Strecken! 🏁**
+- Bestehende, fest verdrahtete Pinbelegung beibehalten.
+- Hardwarezugriffe nicht blockierend halten; WLAN, Webseite und OTA müssen
+  erreichbar bleiben.
+- OLED und CAN dürfen die allgemeine Bereitschaft nicht blockieren.
+- SD-Aufzeichnung über die vorhandene nicht blockierende Startlogik öffnen.
+- Die entfernte Web-Downloadfunktion für SD-Dateien nicht wieder einführen;
+  sie war auf dem Gerät zu langsam.
+- GPS- oder OBD-Werte nur als gültig ausgeben, wenn ihre Aktualität
+  nachweisbar ist; unbekannte Werte nicht als Nullwert ausgeben.
+- Firmwareversion in `src/web_manager.cpp`, `CHANGELOG.md` und `README.md`
+  gemeinsam aktualisieren.
+- Rohmessungen, Fotos, `.sal`-Dateien, `.claude/` und temporäre Dateien nur auf
+  ausdrückliche Anforderung committen.
+- Bestehende Nutzeränderungen im Arbeitsbaum nicht verwerfen oder
+  überschreiben.
