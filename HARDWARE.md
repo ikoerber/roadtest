@@ -10,10 +10,10 @@ Signalbezeichnungen auf den Modulen. Kabelfarben sind nicht verbindlich.
 |---|---|---|
 | Controller | LOLIN S3 Mini, ESP32-S3, 4 MB Flash | Firmware, WLAN und OTA |
 | Bewegungssensor | Adafruit BNO055 Breakout | NDOF-Sensorfusion |
-| Display | SSD1306 OLED, 128 × 64 | I²C-Statusanzeige |
+| Display, optional | SSD1306 OLED, 128 × 64 | Steckbare I²C-Statusanzeige |
 | GPS | Beitian BN-880 | NMEA über UART, 9600 Baud |
 | Speicher | PZSMOCN Micro-SD-Modul | SPI-Datenaufzeichnung |
-| CAN, optional | Joy-IT SBC-CAN01: MCP2515 + MCP2562, 16-MHz-Quarz | Derzeit softwareseitig deaktiviert |
+| CAN/OBD | Joy-IT SBC-CAN01: MCP2515 + MCP2562, 16-MHz-Quarz | Nur lesende OBD-II-Liveabfrage |
 
 > ⚠️ **Ungeklärt: der tatsächliche Controllertyp.**
 > Auf den Aufbaufotos vom 28. Juli 2026 trägt das Board die Pinreihe
@@ -53,7 +53,7 @@ Diese Tabelle entspricht `src/hardware_config.cpp`:
 | LOLIN S3 Mini | Richtung | Modulanschluss | Funktion |
 |---|---:|---|---|
 | GPIO 8 | ↔ | BNO055 SDA und OLED SDA | I²C-Daten |
-| GPIO 9 | → | BNO055 SCL und OLED SCL | I²C-Takt, 50 kHz |
+| GPIO 9 | → | BNO055 SCL und OLED SCL | I²C-Takt, 100 kHz |
 | GPIO 16 | ← | BN-880 TX | GPS-NMEA zum ESP32 |
 | GPIO 15 | → | BN-880 RX | ESP32 zum GPS |
 | GPIO 4 | → | SD CS | SD Chip Select |
@@ -75,10 +75,11 @@ TX und RX werden beim GPS gekreuzt: **GPS-TX geht an ESP32-RX (GPIO 16)** und
 |---|---|
 | LOLIN S3 Mini | USB-C oder vorhandener LiPo-Akkuanschluss des Boards |
 | BNO055 | geregelte 3,3 V an `VIN`, GND an GND |
-| OLED | geregelte 3,3 V an `VCC`, GND an GND |
+| OLED, optional | geregelte 3,3 V an `VCC`, GND an GND |
 | BN-880 | geregelte 3,3 V an `VCC`, GND an GND |
 | PZSMOCN SD-Modul | **3,3 V** an den mit `3.3V` beschrifteten Eingang |
-| MCP2515/CAN | noch nicht freigegeben; siehe CAN-Hinweis |
+| MCP2515 `VCC` | geregelte 3,3 V für Logik und MCP2515 |
+| MCP2515 `VCC1` | geregelte 5 V für den MCP2562-Bustreiber |
 
 Alle angeschlossenen Module benötigen eine gemeinsame Masse. Die
 ESP32-S3-GPIOs sind nicht 5-V-tolerant. Das PZSMOCN-Modul darf in diesem Aufbau
@@ -89,6 +90,11 @@ Peripherie wird aus der geregelten 3,3-V-Schiene versorgt, nicht direkt aus der
 variablen LiPo-Zellenspannung.
 
 ## BNO055 und OLED am gemeinsamen I²C-Bus
+
+Das OLED ist steckbar und für Messung, Aufzeichnung und Systembereitschaft
+nicht erforderlich. Die Firmware erkennt es beim Start und später im
+Hintergrund automatisch. Wegen des gemeinsam mit dem BNO055 genutzten
+I²C-Busses darf der Stecker nur bei ausgeschaltetem System betätigt werden.
 
 ```text
 LOLIN S3 Mini       BNO055                 SSD1306 OLED
@@ -170,7 +176,7 @@ fest verdrahteten GPIOs. Alternative Pin-Sätze sind für den realen Aufbau
 nicht vorgesehen. Die SD-Karte sollte FAT32 formatiert und mechanisch sicher
 im Sockel sowie im Steckverbinder sitzen.
 
-## Optionales CAN-Modul: Joy-IT SBC-CAN01
+## CAN-/OBD-Modul: Joy-IT SBC-CAN01
 
 Verbaut ist ein **Joy-IT SBC-CAN01** mit MCP2515-Controller und
 **MCP2562**-Transceiver. Der Quarz trägt den Aufdruck **16.000**, also 16 MHz.
@@ -193,8 +199,21 @@ GPIO 11             SO / MISO
 GND                  GND
 ```
 
-CAN ist in Version 1.5.10 mit `ENABLE_OPTIONAL_CAN = false` deaktiviert und
-blockiert weder Start, WLAN noch Aufzeichnung.
+Version 1.5.11 verwendet das Modul mit ISO 15765-4 CAN, 11-Bit-Identifiern und
+500 kbit/s. Sie sendet höchstens zweimal pro Sekunde eine funktionale,
+standardisierte OBD-Anfrage auf `0x7DF`: Service 01, PID `0x0C` (Drehzahl),
+`0x0D` (Geschwindigkeit) oder `0x11` (Drosselklappe). Akzeptiert werden
+Antworten auf `0x7E8` bis `0x7EF`.
+
+Das ist eine eng begrenzte Leseimplementierung. Fehlerlöschen, Codierung,
+Stellgliedtests, UDS-Schreibdienste und frei wählbare CAN-Telegramme sind nicht
+implementiert. Ein fehlendes ACK wird nach 25 ms abgebrochen, damit weder
+Webseite noch Watchdog hängen.
+
+Ab Version 1.5.13 liest die Diagnose zusätzlich die MCP2515-Register `TEC`,
+`REC` und `EFLG`. Diese Zugriffe verändern den Buszustand nicht. Der geführte
+Testlauf hält Spitzenwerte und zwischenzeitlich beobachtete Warn-, Bus-Off-
+und Empfangspufferüberlaufbits bis zu `test end` fest.
 
 ### Versorgung: VCC und VCC1 sind nicht dasselbe
 
@@ -232,15 +251,12 @@ Zu beachten: Hängt `VCC1` am `5V`-Pad des Controllerboards, ist der Bustreiber
 im reinen Akkubetrieb unversorgt. CAN liefe dann nur am USB-Kabel. Für den
 Fahrbetrieb ist ein 5-V-Boost aus der Zelle erforderlich.
 
-### Abschlusswiderstand: aktuell aktiv
+### Abschlusswiderstand: am Fahrzeug entfernt
 
 Der 120-Ω-Abschluss (R1, Aufdruck `1200`) wird über den Jumper `P1` geschaltet.
 
-> **Ist-Zustand, Stand 28. Juli 2026: Jumper steckt auf `ON`, der Abschluss ist
-> also aktiv.**
-
-Das ist für einen Laboraufbau mit einem zweiten CAN-Knoten richtig, denn dort
-muss jedes Busende abgeschlossen sein.
+> **Ist-Zustand, Stand 28. Juli 2026: Jumper `P1` ist abgezogen; der
+> 120-Ω-Widerstand des Moduls ist damit nicht zugeschaltet.**
 
 **Am Fahrzeug muss der Jumper abgezogen werden.** Zwei Gründe:
 
@@ -278,19 +294,20 @@ Für einen späteren Fahrzeuganschluss:
 - [ ] Alle Module teilen dieselbe Masse.
 - [ ] I²C: GPIO 8 = SDA und GPIO 9 = SCL.
 - [ ] BNO055 antwortet auf `0x29` (ADR liegt auf 3,3 V).
-- [ ] OLED antwortet auf `0x3C` oder `0x3D`.
+- [ ] Optionales OLED: nur ausgeschaltet stecken; verbunden antwortet es auf `0x3C` oder `0x3D`.
 - [ ] GPS-TX ist mit GPIO 16 verbunden und liefert NMEA-Daten.
 - [ ] GPS-RX ist mit GPIO 15 verbunden; PPS bleibt frei.
 - [ ] SD: CS 4, MOSI 5, MISO 6 und SCLK 7.
 - [ ] PZSMOCN SD-Modul wird mit 3,3 V versorgt.
-- [ ] CAN bleibt unverbunden, bis Versorgung und Pegel geprüft wurden.
 - [ ] CAN-Modul: `VCC` führt 3,3 V, `VCC1` führt 5 V (einzeln gegen GND messen).
-- [ ] CAN-Modul: Jumper `P1` vor dem Fahrzeuganschluss abgezogen.
+- [ ] CAN-Modul und Fahrzeug teilen eine gemeinsame Masse.
+- [ ] CAN-Modul: Jumper `P1` ist vor dem Fahrzeuganschluss abgezogen.
+- [ ] OBD: Pin 6 führt CAN-H, Pin 14 CAN-L; Stichleitung bleibt unter etwa 30 cm.
 - [ ] SD-Karte ist FAT32 formatiert und mechanisch sicher eingesteckt.
 
 ## Fehlersuche
 
-### BNO055 oder OLED wird nicht erkannt
+### BNO055 oder optionales OLED wird nicht erkannt
 
 1. Gemeinsame Masse und 3,3-V-Versorgung prüfen.
 2. SDA an GPIO 8 und SCL an GPIO 9 kontrollieren.
@@ -299,6 +316,9 @@ Für einen späteren Fahrzeuganschluss:
 4. Steckverbindungen und Lötstellen bewegen beziehungsweise auf Durchgang
    prüfen.
 5. Erst danach zusätzliche Pull-ups in Betracht ziehen.
+
+Fehlt ausschließlich das OLED, darf die Webseite trotzdem `System: bereit`
+anzeigen und die Aufzeichnung muss funktionieren.
 
 ### SD-Karte wird nicht erkannt
 
@@ -318,5 +338,11 @@ Für einen späteren Fahrzeuganschluss:
 
 ### CAN
 
-CAN erst diagnostizieren, nachdem die elektrische Kompatibilität des konkreten
-Moduls geklärt und die Firmwareoption bewusst aktiviert wurde.
+1. Fahrzeug abstellen und Zündung einschalten.
+2. Auf der Webseite `OBD-Livedaten` prüfen. Steigende Anfragen bei null
+   Antworten und steigenden Sendefehlern deuten zuerst auf Versorgung,
+   gemeinsame Masse, vertauschte CAN-Leitungen oder fehlende Busverbindung.
+3. Steigende Anfragen ohne Sendefehler, aber ohne Antworten bedeuten, dass der
+   Frame bestätigt wurde, jedoch kein Steuergerät auf die freigegebenen
+   Service-01-PIDs antwortet.
+4. Während eines Firmware-Uploads CAN-H und CAN-L vom Fahrzeug trennen.

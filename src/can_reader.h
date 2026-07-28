@@ -17,6 +17,58 @@ struct CANMessage {
     float rssi;               // Signal-Stärke (falls verfügbar)
 };
 
+// Ausschließlich dekodierte Live-Werte aus standardisiertem OBD-II
+// Service 01. Ungültige Werte werden nie als Null ausgegeben.
+struct OBDLiveData {
+    bool rpmValid = false;
+    bool speedValid = false;
+    bool throttleValid = false;
+    bool mafValid = false;
+    bool ambientTemperatureValid = false;
+    bool oilTemperatureValid = false;
+    bool fuelRateValid = false;
+    float rpm = 0.0f;
+    uint8_t speedKmh = 0;
+    float throttlePercent = 0.0f;
+    float mafGramsPerSecond = 0.0f;
+    float ambientTemperatureC = 0.0f;
+    float oilTemperatureC = 0.0f;
+    float fuelRateLitersPerHour = 0.0f;
+    unsigned long lastResponseMs = 0;
+    unsigned long rpmUpdatedMs = 0;
+    unsigned long speedUpdatedMs = 0;
+    unsigned long throttleUpdatedMs = 0;
+    unsigned long mafUpdatedMs = 0;
+    unsigned long ambientTemperatureUpdatedMs = 0;
+    unsigned long oilTemperatureUpdatedMs = 0;
+    unsigned long fuelRateUpdatedMs = 0;
+    uint8_t lastPid = 0;
+    unsigned long requestCount = 0;
+    unsigned long responseCount = 0;
+    unsigned long requestErrors = 0;
+    unsigned long supportResponseCount = 0;
+    bool supportBlockValid[4] = {false, false, false, false};
+    uint32_t supportBitmap[4] = {0, 0, 0, 0};
+};
+
+// Dekodierte, ausschließlich gelesene MCP2515-Fehlerdiagnose.
+struct CANHardwareDiagnostics {
+    bool valid = false;
+    uint8_t operatingMode = 0;
+    uint8_t transmitErrorCount = 0;
+    uint8_t receiveErrorCount = 0;
+    uint8_t errorFlags = 0;
+    uint8_t txBuffer0Control = 0;
+    bool errorWarning = false;
+    bool receiveWarning = false;
+    bool transmitWarning = false;
+    bool receiveErrorPassive = false;
+    bool transmitErrorPassive = false;
+    bool transmitBusOff = false;
+    bool receiveBuffer0Overflow = false;
+    bool receiveBuffer1Overflow = false;
+};
+
 // CAN-Bus Reader Klasse
 class CANReader {
 private:
@@ -48,6 +100,8 @@ private:
     // Aufruf darf deshalb pro Nachricht genau einmal erfolgen.
     CANMessage pendingMessage;
     bool hasPendingMessage;
+    OBDLiveData obdData;
+    bool obdPollingEnabled;
 
     // Holt höchstens einen Frame aus dem Controller in pendingMessage.
     bool fetchPacket();
@@ -69,6 +123,22 @@ public:
     bool available();  // Alias für hasMessage
     void update();     // Prozessiert anstehende Nachrichten
     CANMessage getLastMessage();  // Gibt letzte empfangene Nachricht zurück
+
+    // Begrenzte, nur lesende OBD-II-Abfrage (Service 01).
+    bool requestOBDPid(uint8_t pid);
+    bool processOBDResponse(const CANMessage& msg);
+    OBDLiveData getOBDData() const;
+    void resetOBDDiscoveryData();
+    bool isOBDPidSupportKnown(uint8_t pid) const;
+    bool isOBDPidSupported(uint8_t pid) const;
+    void setOBDPollingEnabled(bool enabled) { obdPollingEnabled = enabled; }
+    bool isOBDPollingEnabled() const { return obdPollingEnabled; }
+
+    // Der Erkennungsmodus schaltet den MCP2515 wirklich auf Listen-Only und
+    // öffnet den Standard-ID-Filter. Für OBD-Abfragen wird anschließend der
+    // Normalmodus mit dem engen 0x7E8..0x7EF-Antwortfilter wiederhergestellt.
+    bool configurePassiveCapture();
+    bool configureOBDResponseMode();
     
     // Logging-Funktionen
     bool enableLogging(const String& fileName);
@@ -87,6 +157,7 @@ public:
     unsigned long getMessageCount() const { return messageCount; }
     unsigned long getTotalMessages() const { return totalMessages; }
     unsigned long getErrorCount() const { return errorCount; }
+    CANHardwareDiagnostics getHardwareDiagnostics();
     
     // Debugging
     void dumpRegisters();

@@ -209,7 +209,7 @@ void OLEDManager::showBootStatus(bool bno055, bool sd, bool gpsInitialized,
                                  bool allRequiredReady) {
     clearAndSetup();
 
-    display->println("ROADTEST 1.5.10 CHECK");
+    display->println("ROADTEST 1.5.14 CHECK");
     display->println("OLED:   OK");
     display->println(String("BNO055: ") + (bno055 ? "OK" : "FEHLER"));
     display->println(String("SD:     ") + (sd ? "OK" : "FEHLER"));
@@ -308,8 +308,8 @@ void OLEDManager::showSensorData(float heading, float accel, float temp, int can
     
     display->println();
     
-    // CAN-Nachrichten
-    display->print("CAN: ");
+    // Im aktiven OBD-Modus zählt die Firmware die empfangenen Antworten.
+    display->print("CAN/OBD: ");
     display->print(canCount);
     display->println(" msg");
     

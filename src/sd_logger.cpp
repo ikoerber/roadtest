@@ -332,6 +332,7 @@ String SDLogger::generateFileName(LogType type) {
         case LOG_TYPE_EVENT: typeStr = "event"; break;
         case LOG_TYPE_SYSTEM: typeStr = "system"; break;
         case LOG_TYPE_GPS: typeStr = "gps"; break;
+        case LOG_TYPE_OBD: typeStr = "obd"; break;
         case LOG_TYPE_CORRELATED: typeStr = "correlated"; break;
     }
     
@@ -410,6 +411,7 @@ void SDLogger::closeLogFiles() {
     if (roadLogFile) roadLogFile.close();
     if (gpsLogFile) gpsLogFile.close();
     if (canLogFile) canLogFile.close();
+    if (obdLogFile) obdLogFile.close();
     if (eventLogFile) eventLogFile.close();
     if (correlatedLogFile) correlatedLogFile.close();
 }
@@ -463,6 +465,19 @@ bool SDLogger::writeHeader(File& file, LogType type) {
 
         case LOG_TYPE_GPS:
             header = "UTC,UptimeMs,Latitude,Longitude,AltitudeM,SpeedKmh,HeadingDeg,Satellites,ValidFix,HDOP";
+            break;
+
+        case LOG_TYPE_OBD:
+            header =
+                "UTC,UptimeMs,LastPID,"
+                "RPMValid,RPM,SpeedValid,SpeedKmh,"
+                "ThrottleValid,ThrottlePercent,"
+                "MAFValid,MAFGramsPerSecond,"
+                "AmbientValid,AmbientC,OilValid,OilC,"
+                "FuelRateValid,FuelRateLitersPerHour,"
+                "Support00Valid,Support00,Support20Valid,Support20,"
+                "Support40Valid,Support40,Support60Valid,Support60,"
+                "Requests,Responses,SendErrors";
             break;
 
         case LOG_TYPE_CORRELATED:
@@ -765,6 +780,66 @@ bool SDLogger::logCANMessage(const CANMessage& msg) {
     return false;
 }
 
+bool SDLogger::logOBDData(const OBDLiveData& obd) {
+    if (!logging || !config.enableCANLog) {
+        return false;
+    }
+
+    if (!obdLogFile &&
+        !openLogFile(obdLogFile, obdFileName, LOG_TYPE_OBD)) {
+        return false;
+    }
+
+    char logBuffer[512];
+    const int written = snprintf(
+        logBuffer, sizeof(logBuffer),
+        "%s,%02X,"
+        "%d,%.2f,%d,%u,"
+        "%d,%.3f,"
+        "%d,%.3f,"
+        "%d,%.1f,%d,%.1f,"
+        "%d,%.3f,"
+        "%d,%08lX,%d,%08lX,%d,%08lX,%d,%08lX,"
+        "%lu,%lu,%lu\n",
+        formatTimestamp().c_str(), obd.lastPid,
+        obd.rpmValid ? 1 : 0, obd.rpm,
+        obd.speedValid ? 1 : 0, obd.speedKmh,
+        obd.throttleValid ? 1 : 0, obd.throttlePercent,
+        obd.mafValid ? 1 : 0, obd.mafGramsPerSecond,
+        obd.ambientTemperatureValid ? 1 : 0, obd.ambientTemperatureC,
+        obd.oilTemperatureValid ? 1 : 0, obd.oilTemperatureC,
+        obd.fuelRateValid ? 1 : 0, obd.fuelRateLitersPerHour,
+        obd.supportBlockValid[0] ? 1 : 0,
+        static_cast<unsigned long>(obd.supportBitmap[0]),
+        obd.supportBlockValid[1] ? 1 : 0,
+        static_cast<unsigned long>(obd.supportBitmap[1]),
+        obd.supportBlockValid[2] ? 1 : 0,
+        static_cast<unsigned long>(obd.supportBitmap[2]),
+        obd.supportBlockValid[3] ? 1 : 0,
+        static_cast<unsigned long>(obd.supportBitmap[3]),
+        obd.requestCount, obd.responseCount, obd.requestErrors);
+
+    if (written < 0 || written >= static_cast<int>(sizeof(logBuffer))) {
+        Serial.println("⚠️ OBD-Log-Zeile konnte nicht vollständig formatiert werden");
+        stats.errorCount++;
+        stats.droppedLogs++;
+        return false;
+    }
+
+    const size_t logLength = static_cast<size_t>(written);
+    if (obdLogFile &&
+        obdLogFile.write(
+            reinterpret_cast<const uint8_t*>(logBuffer), logLength) ==
+            logLength) {
+        stats.totalWrites++;
+        stats.totalBytes += logLength;
+        return true;
+    }
+
+    handleCardFailure("OBD-Daten konnten nicht geschrieben werden", 1);
+    return false;
+}
+
 bool SDLogger::logGPSData(const GPSData& gps) {
     if (!logging || !config.enableGPSLog) return false;
     
@@ -953,6 +1028,7 @@ void SDLogger::flush() {
     if (roadLogFile) roadLogFile.flush();
     if (gpsLogFile) gpsLogFile.flush();
     if (canLogFile) canLogFile.flush();
+    if (obdLogFile) obdLogFile.flush();
     if (eventLogFile) eventLogFile.flush();
     if (correlatedLogFile) correlatedLogFile.flush();
     

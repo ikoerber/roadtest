@@ -15,7 +15,7 @@ constexpr const char* WIFI_SSID = "ROADTEST";
 constexpr const char* WIFI_PASSWORD = "roadtest123";
 constexpr const char* OTA_USERNAME = "admin";
 constexpr const char* OTA_PASSWORD = "roadtest123";
-constexpr const char* FIRMWARE_VERSION = "1.5.10";
+constexpr const char* FIRMWARE_VERSION = "1.5.14";
 
 String formatDuration(uint32_t totalSeconds) {
     char duration[16];
@@ -25,6 +25,7 @@ String formatDuration(uint32_t totalSeconds) {
              static_cast<unsigned long>(totalSeconds % 60));
     return String(duration);
 }
+
 }
 
 WebManager webManager;
@@ -258,13 +259,20 @@ String WebManager::buildStatusPage() {
     bool gpsCommunication = gpsManager.isCommunicating();
     bool gpsNMEAStream = gpsManager.isReceivingNMEA();
     GPSStatus gpsStatus = gpsManager.getStatus();
+    OBDLiveData obd = canReader.getOBDData();
+    CANHardwareDiagnostics canHardware =
+        canReader.getHardwareDiagnostics();
+    const bool ecuResponding =
+        obd.lastResponseMs > 0 &&
+        millis() - obd.lastResponseMs <= CAN_OBD_VALUE_MAX_AGE_MS;
+    const bool obdPollingEnabled = canReader.isOBDPollingEnabled();
     bool requiredHardwareReady =
         bnoManager.isSelfTestPassed() && bnoManager.isFusionModeActive() &&
         bnoManager.isDataValid() &&
-        oledManager.isReady() &&
+        (!OLED_REQUIRED || oledManager.isReady()) &&
         sdLogger.isReady() && gpsNMEAStream && isReady();
     String page;
-    page.reserve(3800);
+    page.reserve(4500);
     page += F("<!doctype html><html lang='de'><head><meta charset='utf-8'>"
               "<meta name='viewport' content='width=device-width,initial-scale=1'>"
               "<meta http-equiv='refresh' content='3'>"
@@ -290,7 +298,8 @@ String WebManager::buildStatusPage() {
                 ? String("OK · ") + ROADTEST_BNO_MODE_NAME
                 : String("Fehler");
     page += F("</td></tr><tr><td>OLED</td><td>");
-    page += oledManager.isReady() ? F("OK") : F("Fehler");
+    page += oledManager.isReady() ? F("OK · optional")
+                                 : F("nicht verbunden · optional");
     page += F("</td></tr><tr><td>GPS</td><td>");
     if (gpsManager.hasValidFix()) {
         page += F("Fix, ");
@@ -329,9 +338,92 @@ String WebManager::buildStatusPage() {
     } else {
         page += F("-");
     }
-    page += F("</td></tr><tr><td>CAN</td><td>");
-    page += canReader.isReady() ? F("OK") : F("optional, nicht verbunden");
-    page += F("</td></tr><tr><td>Kalibrierung</td><td>");
+    page += F("</td></tr><tr><td>CAN-Adapter</td><td>");
+    if (canReader.isReady()) {
+        page += F("OK · ");
+        if (CAN_OBD_POLLING_ENABLED) {
+            page += obdPollingEnabled ? F("OBD nur lesend · ")
+                                      : F("OBD pausiert · ");
+        } else {
+            page += CAN_LISTEN_ONLY ? F("Listen-Only · ") : F("Normal · ");
+        }
+        page += String(canReader.getTotalMessages());
+        page += F(" Nachrichten");
+    } else {
+        page += F("optional, nicht verbunden");
+    }
+    page += F("</td></tr>");
+    if (canHardware.valid) {
+        const bool canHardwareOK = canHardware.errorFlags == 0;
+        page += F("<tr><td>CAN-Hardware</td><td class='");
+        page += canHardwareOK ? F("ok'>OK") : F("warn'>");
+        if (!canHardwareOK) {
+            if (canHardware.transmitBusOff) {
+                page += F("Bus-Off");
+            } else if (canHardware.receiveBuffer0Overflow ||
+                       canHardware.receiveBuffer1Overflow) {
+                page += F("Pufferüberlauf");
+            } else if (canHardware.transmitErrorPassive ||
+                       canHardware.receiveErrorPassive) {
+                page += F("fehlerpassiv");
+            } else {
+                page += F("Warnung");
+            }
+        }
+        page += F(" · TEC ");
+        page += String(canHardware.transmitErrorCount);
+        page += F(" · REC ");
+        page += String(canHardware.receiveErrorCount);
+        page += F(" · EFLG 0x");
+        if (canHardware.errorFlags < 0x10) {
+            page += F("0");
+        }
+        page += String(canHardware.errorFlags, HEX);
+        page += F("</td></tr>");
+    }
+    if (CAN_OBD_POLLING_ENABLED) {
+        page += F("<tr><td>ECU-Verbindung</td><td class='");
+        if (!obdPollingEnabled) {
+            page += F("'>Abfrage seriell pausiert");
+        } else {
+            page += ecuResponding ? F("ok'>verbunden")
+                                  : F("warn'>warte auf Antwort");
+        }
+        if (obd.lastResponseMs > 0) {
+            page += F(" · ");
+            page += String((millis() - obd.lastResponseMs) / 1000.0f, 1);
+            page += F(" s alt");
+        }
+        page += F("</td></tr><tr><td>OBD-Livedaten</td><td>");
+        if (obd.rpmValid) {
+            page += String(obd.rpm, 0);
+            page += F(" rpm");
+        } else {
+            page += F("- rpm");
+        }
+        page += F(" · ");
+        if (obd.speedValid) {
+            page += String(obd.speedKmh);
+            page += F(" km/h");
+        } else {
+            page += F("- km/h");
+        }
+        page += F(" · ");
+        if (obd.throttleValid) {
+            page += String(obd.throttlePercent, 1);
+            page += F(" %");
+        } else {
+            page += F("- %");
+        }
+        page += F("<br><span class='hint'>");
+        page += String(obd.requestCount);
+        page += F(" Anfragen · ");
+        page += String(obd.responseCount);
+        page += F(" Antworten · ");
+        page += String(obd.requestErrors);
+        page += F(" Sendefehler</span></td></tr>");
+    }
+    page += F("<tr><td>Kalibrierung</td><td>");
     if (bnoManager.isSelfTestPassed()) {
         CalibrationData calibration = bnoManager.getCalibration();
         if (ROADTEST_BNO_USES_MAG) {

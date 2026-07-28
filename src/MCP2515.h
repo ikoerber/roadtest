@@ -19,6 +19,15 @@
 #define MCP2515_DEFAULT_INT_PIN         2
 #endif
 
+struct MCP2515Diagnostics {
+  uint8_t canStatus = 0;
+  uint8_t canControl = 0;
+  uint8_t transmitErrorCount = 0;
+  uint8_t receiveErrorCount = 0;
+  uint8_t errorFlags = 0;
+  uint8_t txBuffer0Control = 0;
+};
+
 class MCP2515Class : public CANControllerClass {
 
 public:
@@ -47,7 +56,10 @@ public:
   void setPins(int cs = MCP2515_DEFAULT_CS_PIN, int irq = MCP2515_DEFAULT_INT_PIN);
   void setSPIFrequency(uint32_t frequency);
   void setClockFrequency(long clockFrequency);
+  void setListenOnly(bool listenOnly);
+  void setTransmitTimeout(uint32_t timeoutMs);
 
+  MCP2515Diagnostics readDiagnostics();
   void dumpRegisters(Stream& out);
 
 private:
@@ -66,6 +78,8 @@ private:
   int _csPin;
   int _intPin;
   long _clockFrequency;
+  bool _listenOnly;
+  uint32_t _transmitTimeoutMs;
 };
 
 extern MCP2515Class CAN;

@@ -6,7 +6,10 @@
 #define REG_BFPCTRL                0x0c
 #define REG_TXRTSCTRL              0x0d
 
+#define REG_CANSTAT                0x0e
 #define REG_CANCTRL                0x0f
+#define REG_TEC                    0x1c
+#define REG_REC                    0x1d
 
 #define REG_CNF3                   0x28
 #define REG_CNF2                   0x29
@@ -14,6 +17,7 @@
 
 #define REG_CANINTE                0x2b
 #define REG_CANINTF                0x2c
+#define REG_EFLG                   0x2d
 
 #define FLAG_RXnIE(n)              (0x01 << n)
 #define FLAG_RXnIF(n)              (0x01 << n)
@@ -59,7 +63,9 @@ MCP2515Class::MCP2515Class() :
   _spiSettings(10E6, MSBFIRST, SPI_MODE0),
   _csPin(MCP2515_DEFAULT_CS_PIN),
   _intPin(MCP2515_DEFAULT_INT_PIN),
-  _clockFrequency(MCP2515_DEFAULT_CLOCK_FREQUENCY)
+  _clockFrequency(MCP2515_DEFAULT_CLOCK_FREQUENCY),
+  _listenOnly(false),
+  _transmitTimeoutMs(25)
 {
 }
 
@@ -140,8 +146,12 @@ int MCP2515Class::begin(long baudRate)
   writeRegister(REG_RXBnCTRL(0), FLAG_RXM1 | FLAG_RXM0);
   writeRegister(REG_RXBnCTRL(1), FLAG_RXM1 | FLAG_RXM0);
 
-  writeRegister(REG_CANCTRL, 0x00);
-  if (readRegister(REG_CANCTRL) != 0x00) {
+  // Den vor der Initialisierung gewählten Betriebsmodus übernehmen.
+  // Listen-Only sendet im Gegensatz zum Normalmodus weder ACK- noch
+  // Error-Frames.
+  const uint8_t requestedMode = _listenOnly ? 0x60 : 0x00;
+  writeRegister(REG_CANCTRL, requestedMode);
+  if (readRegister(REG_CANCTRL) != requestedMode) {
     return 0;
   }
 
@@ -158,6 +168,9 @@ void MCP2515Class::end()
 int MCP2515Class::endPacket()
 {
   if (!CANControllerClass::endPacket()) {
+    return 0;
+  }
+  if (_listenOnly) {
     return 0;
   }
 
@@ -188,26 +201,39 @@ int MCP2515Class::endPacket()
   writeRegister(REG_TXBnCTRL(n), 0x08);
 
   bool aborted = false;
+  const uint32_t transmitStartedAt = millis();
+  uint8_t txControl = readRegister(REG_TXBnCTRL(n));
 
-  while (readRegister(REG_TXBnCTRL(n)) & 0x08) {
-    if (readRegister(REG_TXBnCTRL(n)) & 0x10) {
-      // abort
+  while (txControl & 0x08) {
+    // TXERR bedeutet, dass der Controller den Frame nicht erfolgreich
+    // übertragen konnte. Ohne weiteren aktiven CAN-Knoten kann das schon
+    // durch ein fehlendes ACK passieren.
+    if ((txControl & 0x10) ||
+        (millis() - transmitStartedAt >= _transmitTimeoutMs)) {
       aborted = true;
-
-      modifyRegister(REG_CANCTRL, 0x10, 0x10);
+      modifyRegister(REG_CANCTRL, 0x10, 0x10); // alle laufenden TX abbrechen
+      break;
     }
 
     yield();
+    txControl = readRegister(REG_TXBnCTRL(n));
   }
 
   if (aborted) {
-    // clear abort command
+    // Dem MCP2515 kurz Gelegenheit geben, TXREQ nach ABAT zu löschen. Auch
+    // dieser Pfad bleibt bewusst begrenzt.
+    const uint32_t abortStartedAt = millis();
+    while ((readRegister(REG_TXBnCTRL(n)) & 0x08) &&
+           (millis() - abortStartedAt < 2)) {
+      yield();
+    }
     modifyRegister(REG_CANCTRL, 0x10, 0x00);
   }
 
   modifyRegister(REG_CANINTF, FLAG_TXnIF(n), 0x00);
 
-  return (readRegister(REG_TXBnCTRL(n)) & 0x70) ? 0 : 1;
+  txControl = readRegister(REG_TXBnCTRL(n));
+  return (!aborted && !(txControl & 0x70)) ? 1 : 0;
 }
 
 int MCP2515Class::parsePacket()
@@ -241,6 +267,9 @@ int MCP2515Class::parsePacket()
     _rxRtr = (readRegister(REG_RXBnSIDL(n)) & FLAG_SRR) ? true : false;
   }
   _rxDlc = readRegister(REG_RXBnDLC(n)) & 0x0f;
+  if (_rxDlc > 8) {
+    _rxDlc = 8;
+  }
   _rxIndex = 0;
 
   if (_rxRtr) {
@@ -315,9 +344,10 @@ int MCP2515Class::filter(int id, int mask)
     writeRegister(REG_RXFnEID0(n), 0);
   }
 
-  // normal mode
-  writeRegister(REG_CANCTRL, 0x00);
-  if (readRegister(REG_CANCTRL) != 0x00) {
+  // Ursprünglichen Betriebsmodus wiederherstellen.
+  const uint8_t requestedMode = _listenOnly ? 0x60 : 0x00;
+  writeRegister(REG_CANCTRL, requestedMode);
+  if (readRegister(REG_CANCTRL) != requestedMode) {
     return 0;
   }
 
@@ -353,9 +383,10 @@ int MCP2515Class::filterExtended(long id, long mask)
     writeRegister(REG_RXFnEID0(n), id & 0xff);
   }
 
-  // normal mode
-  writeRegister(REG_CANCTRL, 0x00);
-  if (readRegister(REG_CANCTRL) != 0x00) {
+  // Ursprünglichen Betriebsmodus wiederherstellen.
+  const uint8_t requestedMode = _listenOnly ? 0x60 : 0x00;
+  writeRegister(REG_CANCTRL, requestedMode);
+  if (readRegister(REG_CANCTRL) != requestedMode) {
     return 0;
   }
 
@@ -369,6 +400,7 @@ int MCP2515Class::observe()
     return 0;
   }
 
+  _listenOnly = true;
   return 1;
 }
 
@@ -394,8 +426,9 @@ int MCP2515Class::sleep()
 
 int MCP2515Class::wakeup()
 {
-  writeRegister(REG_CANCTRL, 0x00);
-  if (readRegister(REG_CANCTRL) != 0x00) {
+  const uint8_t requestedMode = _listenOnly ? 0x60 : 0x00;
+  writeRegister(REG_CANCTRL, requestedMode);
+  if (readRegister(REG_CANCTRL) != requestedMode) {
     return 0;
   }
 
@@ -416,6 +449,28 @@ void MCP2515Class::setSPIFrequency(uint32_t frequency)
 void MCP2515Class::setClockFrequency(long clockFrequency)
 {
   _clockFrequency = clockFrequency;
+}
+
+void MCP2515Class::setListenOnly(bool listenOnly)
+{
+  _listenOnly = listenOnly;
+}
+
+void MCP2515Class::setTransmitTimeout(uint32_t timeoutMs)
+{
+  _transmitTimeoutMs = timeoutMs > 0 ? timeoutMs : 1;
+}
+
+MCP2515Diagnostics MCP2515Class::readDiagnostics()
+{
+  MCP2515Diagnostics diagnostics;
+  diagnostics.canStatus = readRegister(REG_CANSTAT);
+  diagnostics.canControl = readRegister(REG_CANCTRL);
+  diagnostics.transmitErrorCount = readRegister(REG_TEC);
+  diagnostics.receiveErrorCount = readRegister(REG_REC);
+  diagnostics.errorFlags = readRegister(REG_EFLG);
+  diagnostics.txBuffer0Control = readRegister(REG_TXBnCTRL(0));
+  return diagnostics;
 }
 
 void MCP2515Class::dumpRegisters(Stream& out)

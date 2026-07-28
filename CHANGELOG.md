@@ -37,9 +37,97 @@ und dieses Projekt hält sich an [Semantic Versioning](https://semver.org/spec/v
   umgestellt
 - Verbindliche GPIO-Belegung mit dem Firmwarecode abgeglichen
 - Versorgung des PZSMOCN-SD-Moduls auf 3,3 V korrigiert
-- Unbenutzte BNO055- und GPS-Pins sowie der deaktivierte CAN-Aufbau eindeutig
+- Unbenutzte BNO055- und GPS-Pins sowie CAN-Aufbau und Versorgung eindeutig
   dokumentiert
 - Unsichere pauschale Angaben zu CAN-Versorgung und Busterminierung entfernt
+
+## [1.5.14] - 2026-07-28
+
+### Hinzugefügt
+- Geführte Fahrzeugdaten-Erkennung über `discover begin`, `discover status`,
+  `discover mark <Text>` und `discover end`
+- Automatische 60-Sekunden-Phase im echten MCP2515-Listen-Only-Modus ohne
+  OBD-Anfragen, ACK- oder Error-Frames
+- Zweifacher, auf insgesamt zwei Anfragen pro Sekunde begrenzter Scan der
+  standardisierten Service-01-Unterstützungsblöcke `00`, `20`, `40` und `60`
+- Fortlaufende Abfrage ausschließlich der vom Fahrzeug bestätigten PIDs für
+  Drehzahl, Geschwindigkeit, Luftmassenstrom, Drosselstellung,
+  Außentemperatur, Öltemperatur und Kraftstoffrate
+- Eigenes OBD-CSV mit dekodierten Messwerten, Gültigkeitskennzeichen,
+  Unterstützungsbitmaps und Diagnosezählern
+- Zeitmarken und Phasenwechsel im Ereignis-CSV zur späteren gemeinsamen
+  Auswertung von CAN-, GPS-, BNO055- und OBD-Dateien
+
+### Sicherheit
+- Der MCP2515 empfängt während des passiven Mitschnitts ausschließlich und
+  wird erst vor den standardisierten Service-01-Abfragen in den Normalmodus
+  zurückgeschaltet
+- Frei wählbare CAN-Telegramme, herstellerspezifische Dienste, PID-Bruteforce,
+  UDS-Schreibdienste und Fehlerlöschen bleiben ausgeschlossen
+- Die Datenerkennung übernimmt ihre SD-Aufzeichnung und verhindert
+  konkurrierende `start`-, `stop`- und `obd on/off`-Kommandos
+
+### Leistung
+- Während der Erkennung werden CAN-Empfangspuffer in jeder Hauptschleife mit
+  begrenztem Budget geleert
+- Das redundante Korrelations-CSV bleibt in diesem Modus aus; Sensor-, GPS-
+  und CAN-Dateien sind bereits über UTC und Sitzungs-Uptime synchronisiert
+
+## [1.5.13] - 2026-07-28
+
+### Hinzugefügt
+- Rein beobachtender Fahrzeug-Testlauf über `test begin`, `test status` und
+  `test end`; Aufzeichnung und OBD-Abfragen werden nicht automatisch verändert
+- PASS-/WARN-/FAIL-Abschluss anhand der während des Testzeitraums neu
+  aufgetretenen OBD-, I²C-, SD- und CAN-Hardwarefehler
+- Dekodierte MCP2515-Diagnose mit Betriebsmodus, Transmit Error Counter
+  (`TEC`), Receive Error Counter (`REC`) und Error Flag Register (`EFLG`)
+- TEC-/REC-Spitzenwerte und EFLG-Bits werden während eines Testlaufs
+  festgehalten, damit zwischenzeitliche Fehler im Abschlussbericht sichtbar
+  bleiben
+- CAN-Hardwarezustand mit TEC, REC und EFLG auf der Web-Statusseite
+
+### Sicherheit
+- Die neue Testfunktion führt selbst keine CAN- oder OBD-Anfrage aus und
+  startet oder beendet keine SD-Aufzeichnung
+- MCP2515-Diagnoseregister werden ausschließlich gelesen
+
+## [1.5.12] - 2026-07-28
+
+### Geändert
+- Das steckbare OLED ist optional und blockiert weder Systembereitschaft noch
+  SD-Aufzeichnung
+- Die automatische Erkennung beim Start und Wiederverbindung eines später
+  angeschlossenen OLED bleiben aktiv
+- Die Weboberfläche unterscheidet zwischen bereitem CAN-Adapter und einer
+  aktuell antwortenden ECU
+
+### Diagnose
+- Der serielle Fünf-Sekunden-Status meldet kumulierte BNO055-/OLED-I²C-
+  Aussetzer, ECU-Antwortalter sowie SD-Schreibvorgänge, Fehler und verworfene
+  Datensätze
+- Bereits die erste fehlgeschlagene BNO055- oder OLED-I²C-Prüfung wird seriell
+  gemeldet; die bestehende Drei-Prüfungen-Entprellung bleibt erhalten
+- Das serielle Kommando `diag` enthält die neuen OBD-, SD- und I²C-Zähler
+- `obd off` pausiert aktive OBD-Anfragen bei Tests ohne Fahrzeug; `obd on`
+  aktiviert sie wieder, ohne den MCP2515 neu zu initialisieren
+
+## [1.5.11] - 2026-07-28
+
+### Hinzugefügt
+- Begrenzte, nur lesende OBD-II-Service-01-Abfrage für Drehzahl (PID `0x0C`),
+  Geschwindigkeit (`0x0D`) und Drosselklappenstellung (`0x11`)
+- OBD-Livewerte sowie Anfrage-, Antwort- und Sendefehlerzähler auf der
+  Web-Statusseite
+- Hardwarefilter für die OBD-Antwort-IDs `0x7E8` bis `0x7EF`; Livewerte
+  verfallen nach fünf Sekunden ohne neue Antwort
+
+### Sicherheit
+- Die gesamte OBD-Senderate ist auf zwei Anfragen pro Sekunde begrenzt
+- Der MCP2515 bricht eine nicht bestätigte Übertragung nach 25 ms ab, damit
+  Webseite und Watchdog nicht blockieren
+- Fehlerlöschen, Codierung, Stellgliedtests und frei wählbare CAN-Nachrichten
+  sind nicht implementiert
 
 ## [1.5.10] - 2026-07-27
 

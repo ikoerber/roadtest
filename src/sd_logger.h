@@ -20,6 +20,7 @@ enum LogType {
     LOG_TYPE_EVENT,     // Ereignisse (Schlaglöcher, Kurven)
     LOG_TYPE_SYSTEM,    // System-Status
     LOG_TYPE_GPS,       // GPS-Daten
+    LOG_TYPE_OBD,       // Dekodierte OBD-II-Service-01-Daten
     LOG_TYPE_CORRELATED // Zeitlich korrelierte Sensor-/CAN-Daten
 };
 
@@ -125,6 +126,8 @@ private:
     String gpsFileName;
     File canLogFile;
     String canFileName;
+    File obdLogFile;
+    String obdFileName;
     File eventLogFile;
     String eventFileName;
     File correlatedLogFile;
@@ -210,6 +213,7 @@ public:
     // CAN-Daten loggen
     bool logCANMessage(const CANMessage& msg);
     bool logCANStatistics(uint32_t received, uint32_t errors);
+    bool logOBDData(const OBDLiveData& obd);
     
     // GPS-Daten loggen
     bool logGPSData(const GPSData& gps);

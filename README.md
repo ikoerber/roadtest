@@ -21,7 +21,7 @@ Das System erfasst Bewegungsdaten, GPS-Position und CAN-Bus-Signale, um die Qual
 - **Real-Time Straßenqualitäts-Bewertung** (0-100 Punkte)
 - **Multi-Sensor-Fusion** (BNO055 + GPS + CAN)
 - **Robustes SD-Karten-Logging** mit Buffer-Overflow-Schutz
-- **Live-Display** auf 128x64 OLED mit Auto-Rotation
+- **Optionales steckbares Live-Display** auf 128x64 OLED mit Auto-Rotation
 - **Eigenes ROADTEST-WLAN** mit Statusseite, Kalibrierassistent und Browser-OTA
 - **Kontrollierte Messfahrten** mit Start, sicherem Ende und Zusammenfassung
 - **Umfassende Hardware-Tests** und Diagnostik
@@ -39,7 +39,7 @@ Das System erfasst Bewegungsdaten, GPS-Position und CAN-Bus-Signale, um die Qual
 ### 📊 Datenerfassung
 - **Beschleunigungsdaten** (10Hz) mit Vibrations-Analyse
 - **GPS-Tracking** (5Hz) mit Fix-Detection und HDOP
-- **Optionale CAN-Bus-Unterstützung** für MCP2515, standardmäßig deaktiviert
+- **Begrenzte OBD-II-Liveabfrage** über MCP2515 (nur lesender Service 01)
 - **Korrelierte Datenlogs** mit präzisen Zeitstempeln
 - **NEU: Interrupt-basiertes GPS** ohne Datenverlust bei hoher CPU-Last
 - **NEU: Optimierte String-Operationen** für bessere Performance
@@ -57,9 +57,9 @@ Das System erfasst Bewegungsdaten, GPS-Position und CAN-Bus-Signale, um die Qual
 | Komponente | Modell | Schnittstelle | Pins | Funktion |
 |------------|--------|---------------|------|----------|
 | **IMU-Sensor** | BNO055 | I2C | GPIO 8/9 | NDOF-Sensorfusion |
-| **Display** | SSD1306 | I2C | GPIO 8/9 | 128x64 OLED |
+| **Display** | SSD1306 | I2C | GPIO 8/9 | optionales 128x64 OLED |
 | **GPS-Modul** | BN-880 | UART2 | GPIO 15/16 | Position & Geschwindigkeit |
-| **CAN-Interface** | MCP2515 | SPI | GPIO 1,2,3,11,13 | optional, derzeit deaktiviert |
+| **CAN-Interface** | Joy-IT SBC-CAN01, MCP2515/MCP2562 | SPI | GPIO 1,2,3,11,13 | OBD-II, 11 Bit, 500 kbit/s |
 | **SD-Speicher** | MicroSD | SPI | GPIO 4,5,6,7 | Datenlogging |
 
 ## 📐 Schaltplan & Verkabelung
@@ -106,9 +106,12 @@ GPIO 11   <--   MISO
 GND       -->   GND
 ```
 
-CAN ist standardmäßig deaktiviert. Die Versorgung und SPI-Logikpegel des
-konkreten MCP2515/TJA1050-Moduls müssen vor dem Anschluss geprüft werden; viele
-dieser Module sind nicht direkt 3,3-V-kompatibel.
+Die Firmware fragt am bestätigten ISO-15765-4-Anschluss des Porsche 991.1
+höchstens zweimal pro Sekunde standardisierte OBD-Livedaten ab: Motordrehzahl
+(PID `0x0C`), Geschwindigkeit (`0x0D`) und Drosselklappenstellung (`0x11`).
+Sie implementiert weder Fehlerlöschen noch Codierung oder Stellgliedtests.
+Versorgung, gemeinsame Masse und SPI-Logikpegel müssen vor dem Anschluss
+gemäß [HARDWARE.md](HARDWARE.md) geprüft sein.
 
 ### SD-Karten-Modul
 ```
@@ -186,15 +189,102 @@ Start automatisch aus dem NVS geladen.
 
 ## 🧪 Startprüfung und System-Tests
 
-Beim Einschalten zeigt das OLED eine einzige, fortlaufend aktualisierte
-Prüfseite. Geprüft werden OLED, BNO055, SD-Karte, GPS-Kommunikation und WLAN.
-Ein GPS-Fix ist dafür nicht nötig; empfangene NMEA-Daten reichen. CAN ist
-optional und blockiert die Bereitschaft nicht.
+Ist das OLED beim Einschalten verbunden, zeigt es eine fortlaufend
+aktualisierte Prüfseite. Das Display selbst ist optional und blockiert weder
+Systembereitschaft noch Aufzeichnung. Erforderlich sind BNO055, SD-Karte,
+GPS-NMEA-Daten und WLAN; ein GPS-Fix ist nicht nötig. CAN bleibt für die
+allgemeine Bereitschaft ebenfalls optional.
 
 Fehlt eine erforderliche Komponente, bleibt die Firmware trotzdem bedienbar
 und versucht alle fünf Sekunden automatisch eine Wiederverbindung. Die
 Prüfseite verschwindet erst, wenn alles Erforderliche bereit ist. Bei einem
-späteren Ausfall erscheint sie erneut.
+späteren Ausfall erscheint sie erneut. Ein später angestecktes OLED wird
+automatisch erkannt; an- und abgesteckt wird nur bei ausgeschaltetem System.
+
+Der serielle Fünf-Sekunden-Status enthält für mechanische Tests zusätzlich:
+
+- aktuellen OLED-Zustand und kumulierte BNO-/OLED-I²C-Aussetzer
+- getrennten CAN-Adapter- und ECU-Verbindungsstatus samt Antwortalter
+- SD-Schreibvorgänge, Schreibfehler und verworfene Datensätze
+- WLAN-Zustand; `diag` gibt dieselben Diagnosezähler auf Anforderung aus
+
+Ohne Fahrzeug können die aktiven OBD-Anfragen mit `obd off` pausiert werden;
+`obd on` aktiviert sie vor dem nächsten Fahrzeugtest wieder. Der MCP2515
+bleibt dabei initialisiert, und Webseite sowie serieller Status zeigen die
+Pause ausdrücklich an.
+
+### Fahrzeugdaten für die spätere Auswertung erkennen
+
+Version 1.5.14 besitzt eine eigene Diagnoseaufzeichnung. Sie startet und
+beendet ihre SD-Sitzung selbst:
+
+```text
+discover begin
+discover status
+discover mark motor_gestartet
+discover mark fahrt_begonnen
+discover mark gleichmaessig_50_kmh
+discover end
+```
+
+`discover begin` führt automatisch drei Phasen aus:
+
+1. **60 Sekunden passiv:** Der MCP2515 arbeitet im echten Listen-Only-Modus
+   und sendet weder Diagnoseanfragen noch CAN-Bestätigungen. Alle am
+   OBD-Anschluss sichtbaren 11-Bit-Telegramme werden aufgezeichnet.
+2. **Standard-PID-Scan:** Die Blöcke `0100`, `0120`, `0140` und `0160` werden
+   zweimal und mit insgesamt höchstens zwei Anfragen pro Sekunde gelesen.
+3. **Messphase:** Nur bestätigte Standard-PIDs werden bis `discover end`
+   abgefragt. Geschwindigkeit erhält für den späteren GPS-Vergleich die
+   höchste Gewichtung; langsame Temperaturwerte werden seltener gelesen.
+
+Die Dateien mit demselben Sitzungsnamen gehören zusammen:
+
+- `road_sensor_...csv`: Orientierung, lineare Beschleunigung, Gyro und
+  BNO055-Temperatur
+- `road_gps_...csv`: Position, GPS-Geschwindigkeit, Kurs, Satelliten und HDOP
+- `road_can_...csv`: unveränderte CAN-Rohframes mit ECU-ID
+- `road_obd_...csv`: dekodierte Standardwerte und PID-Unterstützungsbitmaps
+- `road_event_...csv`: Phasenwechsel und manuelle `discover mark`-Zeitpunkte
+
+Wenn das Porsche-Gateway keine zyklischen Fahrzeugtelegramme an den
+OBD-Anschluss weiterleitet, bleibt die passive CAN-Datei in der ersten Phase
+leer. Das ist ein verwertbares Testergebnis und kein Loggerfehler. Der
+PID-Scan erkennt ausschließlich standardisierte Service-01-Werte; unbekannte
+Porsche-UDS-Kennungen werden nicht durchprobiert.
+
+Während dieses Ablaufs sind `start`, `stop` und `obd on/off` absichtlich
+gesperrt. Das optionale OLED wird nicht benötigt. `discover end` stellt den
+vorherigen OBD-Zustand wieder her und schließt alle SD-Dateien.
+
+### Geführter Fahrzeug-Test
+
+Version 1.5.13 besitzt einen rein beobachtenden Testlauf. Er verändert weder
+den OBD-Zustand noch startet er selbst eine Aufzeichnung:
+
+```text
+test begin
+start
+test status
+stop
+test end
+```
+
+Der Abschlussbericht bewertet neue SD-Fehler, verworfene Datensätze,
+BNO055-I²C-Aussetzer, CAN-Bus-Off und Empfangspufferüberläufe als `FAIL`.
+Vorübergehende CAN-Warnungen, Sendefehler, ein Aussetzer des optionalen OLED
+oder eine aktuell fehlende ECU-Antwort ergeben `WARN`. Ohne durchgeführten
+SD-Schreibtest bleibt das Ergebnis ebenfalls `WARN`. `PASS` bedeutet, dass
+alle erforderlichen Module stabil blieben und der SD-Schreibtest erfolgreich
+war.
+
+Die MCP2515-Zeile zeigt zusätzlich:
+
+- `TEC`: Transmit Error Counter
+- `REC`: Receive Error Counter
+- `EFLG`: dekodierte Warn-, Fehlerpassiv-, Bus-Off- und Pufferüberlaufbits
+- aktuellen Betriebsmodus sowie die während des Tests beobachteten
+  TEC-/REC-Spitzen und EFLG-Bits
 
 Die ausführlichen Hardware-, Integrations- und Belastungstests werden nicht
 bei jedem Start ausgeführt. Sie können bei Bedarf über den seriellen Monitor
@@ -330,7 +420,7 @@ Richtung: 123.5 Grad
 Beschl.: 1.23 m/s²
 Temp: 24.5 C
 
-CAN: 42 msg
+CAN/OBD: 42 msg
 Zeit: 1234s
 ```
 
@@ -369,16 +459,22 @@ gpsManager.testCommunication();  // Kommunikationstest
 gpsManager.printDiagnostics();   // Detaillierte NMEA-Diagnose
 ```
 
-### CAN-Bus Konfiguration  
+### CAN-/OBD-Konfiguration
 ```cpp
-// Automatische Oszillator-Erkennung (8MHz/16MHz)
-canReader.setClockFrequency(8E6);   // Für 8MHz Quarz
-canReader.begin(500E3);             // 500 kbps CAN-Rate
-
-// Filter für spezifische CAN-IDs
-canReader.setFilter(0x123, 0x7FF);  // Nur ID 0x123
-canReader.clearFilters();           // Alle IDs empfangen
+// Fest für den vorhandenen Aufbau:
+#define CAN_BAUDRATE                 500000
+#define CAN_CLOCK_16MHZ            16000000
+#define CAN_OBD_REQUEST_INTERVAL_MS      500
+#define CAN_OBD_VALUE_MAX_AGE_MS        5000
+#define CAN_TX_TIMEOUT_MS                 25
 ```
+
+Gesendet werden ausschließlich funktionale OBD-Anfragen auf `0x7DF` mit
+Service `01`. Antworten auf `0x7E8` bis `0x7EF` werden für die drei
+freigegebenen PIDs dekodiert. Ein MCP2515-Hardwarefilter verwirft andere
+Identifier. Die Webseite zeigt Anfragen, Antworten, Sendefehler und nur bis zu
+fünf Sekunden alte Werte. Der OLED-Zähler `CAN/OBD` steigt mit den empfangenen
+Antworten.
 
 ### SD-Logger Konfiguration
 ```cpp
@@ -424,10 +520,11 @@ Lösung:
 **Problem: CAN-Bus Fehler**
 ```
 Lösung:
-1. Prüfen, ob CAN in der Firmware bewusst aktiviert wurde
-2. Versorgung und 3,3-V-Kompatibilität des Moduls prüfen
-3. MCP2515-Verkabelung und Oszillator-Frequenz prüfen
-4. Terminierung und aktiven Fahrzeug-CAN-Bus kontrollieren
+1. Fahrzeug abstellen, Zündung einschalten und gemeinsame Masse prüfen
+2. VCC=3,3 V, VCC1=5 V und P1/Jumper offen kontrollieren
+3. OBD Pin 6=CAN-H und Pin 14=CAN-L kontrollieren
+4. Auf der Webseite Anfragen, Antworten und Sendefehler vergleichen
+5. Bei Sendefehlern MCP2515-Verkabelung und 16-MHz-Quarz prüfen
 ```
 
 ### Debug-Features
@@ -521,6 +618,35 @@ Der priorisierte Backlog für gleichmäßigere Sensorabtastung und geringere
 Buslast steht in [OPTIMIERUNGEN.md](OPTIMIERUNGEN.md).
 
 ## 📈 Version History
+
+### v1.5.14 - Fahrzeugdaten-Erkennung
+- ✅ 60 Sekunden echter Listen-Only-Mitschnitt ohne Sendungen
+- ✅ Standard-PID-Erkennung über `00`, `20`, `40` und `60`
+- ✅ Synchronisierte CAN-, OBD-, GPS-, BNO055- und Ereignisdaten
+- ✅ Markierungen über `discover mark <Text>` für die spätere Auswertung
+- ✅ Nur bestätigte, standardisierte Service-01-PIDs in der Messphase
+
+### v1.5.13 - Geführter Fahrzeug-Test
+- ✅ `test begin`, `test status` und `test end`
+- ✅ PASS/WARN/FAIL anhand der während des Tests neu aufgetretenen Fehler
+- ✅ MCP2515-Diagnose mit Modus, TEC, REC und dekodiertem EFLG
+- ✅ Spitzenwerte und Fehlerbits werden während des Testlaufs festgehalten
+- ✅ CAN-Hardwarestatus zusätzlich auf der Webseite
+
+### v1.5.12 - Optionales OLED und Testdiagnose
+- ✅ OLED blockiert weder Bereitschaft noch Aufzeichnung
+- ✅ Automatische Erkennung beim Start und Wiederverbindung bleiben aktiv
+- ✅ Serielle Aussetzerzähler für BNO055 und OLED
+- ✅ ECU-Verbindungsstatus, Antwortalter und SD-Fehler im Teststatus
+- ✅ Webseite unterscheidet CAN-Adapter und ECU-Verbindung
+- ✅ Serielle Befehle `obd off`/`obd on` für Tests ohne Fahrzeug
+
+### v1.5.11 - Begrenzte OBD-Liveabfrage
+- ✅ ISO 15765-4 CAN mit 11-Bit-ID und 500 kbit/s für den Porsche 991.1
+- ✅ Nur lesender Service 01 für Drehzahl, Geschwindigkeit und Drosselklappe
+- ✅ Höchstens zwei Anfragen pro Sekunde und 25-ms-Sende-Timeout
+- ✅ OBD-Werte und Anfrage-/Antwortstatistik auf der Statusseite
+- ✅ Keine Funktionen zum Fehlerlöschen, Codieren oder Ansteuern
 
 ### Unveröffentlicht - Sichere BNO055-Kommunikation
 - ✅ BNO055-Erkennung über die Chip-ID statt leerer I²C-Schreibzugriffe

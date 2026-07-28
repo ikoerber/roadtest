@@ -13,12 +13,20 @@ CANReader canReader;
 // MCP2515 Instanz erstellen
 MCP2515Class canController;
 
+static_assert(CAN_OBD_REQUEST_INTERVAL_MS >= 500,
+              "OBD-Abfragen duerfen insgesamt hoechstens mit 2 Hz laufen");
+static_assert(CAN_OBD_VALUE_MAX_AGE_MS >= CAN_OBD_REQUEST_INTERVAL_MS * 3,
+              "OBD-Livewerte muessen mindestens einen vollen PID-Zyklus gelten");
+static_assert(!CAN_OBD_POLLING_ENABLED || !CAN_LISTEN_ONLY,
+              "Aktive OBD-Abfragen sind im Listen-Only-Modus nicht moeglich");
+
 CANReader::CANReader(int cs, int interrupt)
     : initialized(false), messageCount(0), lastLogTime(0),
       loggingEnabled(false), csPin(cs), intPin(interrupt),
       clockFrequency(CAN_CLOCK_16MHZ),
       totalMessages(0), errorCount(0),
-      lastMessage{}, pendingMessage{}, hasPendingMessage(false) {
+      lastMessage{}, pendingMessage{}, hasPendingMessage(false), obdData{},
+      obdPollingEnabled(CAN_OBD_POLLING_ENABLED) {
 }
 
 CANReader::~CANReader() {
@@ -65,6 +73,12 @@ bool CANReader::begin(long baudRate) {
                   clockFrequency, baudRate);
     canController.setClockFrequency(clockFrequency);
     canController.setSPIFrequency(1E6); // Niedrige SPI-Geschwindigkeit
+    canController.setListenOnly(CAN_LISTEN_ONLY);
+    canController.setTransmitTimeout(CAN_TX_TIMEOUT_MS);
+    Serial.printf("MCP2515-Modus: %s\n",
+                  CAN_OBD_POLLING_ENABLED
+                      ? "OBD-Abfrage (aktiv, nur lesend)"
+                      : (CAN_LISTEN_ONLY ? "Listen-Only (passiv)" : "Normal"));
 
     if (!canController.begin(baudRate)) {
         Serial.println("❌ CAN-Bus Initialisierung fehlgeschlagen!");
@@ -77,13 +91,29 @@ bool CANReader::begin(long baudRate) {
         errorCount++;
         return false;
     }
+
+    // Im aktiven OBD-Modus nur die acht standardisierten physischen
+    // Antwort-IDs in die beiden MCP2515-Empfangspuffer lassen. So verdrängt
+    // normaler Fahrzeugverkehr keine angeforderte OBD-Antwort.
+    if (CAN_OBD_POLLING_ENABLED &&
+        !canController.filter(0x7E8, 0x7F8)) {
+        Serial.println("❌ OBD-Antwortfilter konnte nicht gesetzt werden");
+        canController.end();
+        errorCount++;
+        return false;
+    }
     
     initialized = true;
     messageCount = 0;
     totalMessages = 0;
+    obdData = OBDLiveData{};
     
     Serial.println("✅ CAN-Bus Reader erfolgreich gestartet!");
     Serial.printf("Bereit für Nachrichten auf %ld bps\n", baudRate);
+    if (CAN_OBD_POLLING_ENABLED) {
+        Serial.printf("OBD-II Service 01: PID 0C/0D/11, Intervall %d ms\n",
+                      CAN_OBD_REQUEST_INTERVAL_MS);
+    }
     
     return true;
 }
@@ -179,6 +209,244 @@ CANMessage CANReader::readMessage() {
     hasPendingMessage = false;
     lastMessage = pendingMessage;
     return pendingMessage;
+}
+
+bool CANReader::requestOBDPid(uint8_t pid) {
+    if (!initialized || !CAN_OBD_POLLING_ENABLED || !obdPollingEnabled) {
+        return false;
+    }
+
+    // Bewusst feste Positivliste: Neben den bisher verwendeten Livewerten
+    // sind nur die vier standardisierten Unterstützungsblöcke sowie die für
+    // die Datenerkennung benötigten, ausschließlich lesenden PIDs zulässig.
+    const bool allowed =
+        pid == 0x00 || pid == 0x20 || pid == 0x40 || pid == 0x60 ||
+        pid == 0x0C || pid == 0x0D || pid == 0x10 || pid == 0x11 ||
+        pid == 0x46 || pid == 0x5C || pid == 0x5E;
+    if (!allowed) {
+        return false;
+    }
+
+    // Funktionale ISO-15765-4-Anfrage an alle OBD-Steuergeräte:
+    // Single Frame, zwei Nutzbytes, Service 01 (aktuelle Messwerte).
+    const uint8_t request[8] = {0x02, 0x01, pid, 0x00, 0x00, 0x00, 0x00, 0x00};
+    obdData.requestCount++;
+    if (!canController.beginPacket(0x7DF, 8) ||
+        canController.write(request, sizeof(request)) != sizeof(request) ||
+        !canController.endPacket()) {
+        obdData.requestErrors++;
+        errorCount++;
+        return false;
+    }
+
+    return true;
+}
+
+bool CANReader::processOBDResponse(const CANMessage& msg) {
+    if (msg.extended || msg.rtr || msg.canId < 0x7E8 ||
+        msg.canId > 0x7EF || msg.dlc < 4) {
+        return false;
+    }
+
+    // Nur ISO-TP Single Frames und positive Antworten auf Service 01
+    // akzeptieren. Diagnose-, Schreib- oder Steuerdienste werden nicht
+    // implementiert.
+    const uint8_t payloadLength = msg.data[0] & 0x0F;
+    if ((msg.data[0] & 0xF0) != 0x00 || payloadLength < 3 ||
+        payloadLength + 1 > msg.dlc ||
+        msg.data[1] != 0x41) {
+        return false;
+    }
+
+    const uint8_t pid = msg.data[2];
+    const unsigned long now = millis();
+    bool decoded = false;
+
+    // 00/20/40/60 liefern je eine 32-Bit-Bitmap für die darauf folgenden
+    // PIDs. Antworten mehrerer Steuergeräte werden als Vereinigungsmenge
+    // gespeichert; die Rohframes mit ihrer jeweiligen ECU-ID bleiben
+    // zusätzlich vollständig im CAN-Log erhalten.
+    if ((pid == 0x00 || pid == 0x20 || pid == 0x40 || pid == 0x60) &&
+        payloadLength >= 6 && msg.dlc >= 7) {
+        const uint8_t block = pid / 0x20;
+        const uint32_t bitmap =
+            (static_cast<uint32_t>(msg.data[3]) << 24) |
+            (static_cast<uint32_t>(msg.data[4]) << 16) |
+            (static_cast<uint32_t>(msg.data[5]) << 8) |
+            static_cast<uint32_t>(msg.data[6]);
+        obdData.supportBlockValid[block] = true;
+        obdData.supportBitmap[block] |= bitmap;
+        obdData.supportResponseCount++;
+        decoded = true;
+    } else if (pid == 0x0C && payloadLength >= 4 && msg.dlc >= 5) {
+        obdData.rpm =
+            ((static_cast<uint16_t>(msg.data[3]) << 8) | msg.data[4]) / 4.0f;
+        obdData.rpmValid = true;
+        obdData.rpmUpdatedMs = now;
+        decoded = true;
+    } else if (pid == 0x0D) {
+        obdData.speedKmh = msg.data[3];
+        obdData.speedValid = true;
+        obdData.speedUpdatedMs = now;
+        decoded = true;
+    } else if (pid == 0x10 && payloadLength >= 4 && msg.dlc >= 5) {
+        obdData.mafGramsPerSecond =
+            ((static_cast<uint16_t>(msg.data[3]) << 8) | msg.data[4]) /
+            100.0f;
+        obdData.mafValid = true;
+        obdData.mafUpdatedMs = now;
+        decoded = true;
+    } else if (pid == 0x11) {
+        obdData.throttlePercent = msg.data[3] * 100.0f / 255.0f;
+        obdData.throttleValid = true;
+        obdData.throttleUpdatedMs = now;
+        decoded = true;
+    } else if (pid == 0x46) {
+        obdData.ambientTemperatureC =
+            static_cast<int16_t>(msg.data[3]) - 40.0f;
+        obdData.ambientTemperatureValid = true;
+        obdData.ambientTemperatureUpdatedMs = now;
+        decoded = true;
+    } else if (pid == 0x5C) {
+        obdData.oilTemperatureC =
+            static_cast<int16_t>(msg.data[3]) - 40.0f;
+        obdData.oilTemperatureValid = true;
+        obdData.oilTemperatureUpdatedMs = now;
+        decoded = true;
+    } else if (pid == 0x5E && payloadLength >= 4 && msg.dlc >= 5) {
+        obdData.fuelRateLitersPerHour =
+            ((static_cast<uint16_t>(msg.data[3]) << 8) | msg.data[4]) *
+            0.05f;
+        obdData.fuelRateValid = true;
+        obdData.fuelRateUpdatedMs = now;
+        decoded = true;
+    }
+
+    if (decoded) {
+        obdData.lastResponseMs = now;
+        obdData.lastPid = pid;
+        obdData.responseCount++;
+    }
+    return decoded;
+}
+
+OBDLiveData CANReader::getOBDData() const {
+    OBDLiveData current = obdData;
+    const unsigned long now = millis();
+    if (current.rpmValid &&
+        now - current.rpmUpdatedMs > CAN_OBD_VALUE_MAX_AGE_MS) {
+        current.rpmValid = false;
+    }
+    if (current.speedValid &&
+        now - current.speedUpdatedMs > CAN_OBD_VALUE_MAX_AGE_MS) {
+        current.speedValid = false;
+    }
+    if (current.throttleValid &&
+        now - current.throttleUpdatedMs > CAN_OBD_VALUE_MAX_AGE_MS) {
+        current.throttleValid = false;
+    }
+    if (current.mafValid &&
+        now - current.mafUpdatedMs > CAN_OBD_SLOW_VALUE_MAX_AGE_MS) {
+        current.mafValid = false;
+    }
+    if (current.ambientTemperatureValid &&
+        now - current.ambientTemperatureUpdatedMs >
+            CAN_OBD_SLOW_VALUE_MAX_AGE_MS) {
+        current.ambientTemperatureValid = false;
+    }
+    if (current.oilTemperatureValid &&
+        now - current.oilTemperatureUpdatedMs >
+            CAN_OBD_SLOW_VALUE_MAX_AGE_MS) {
+        current.oilTemperatureValid = false;
+    }
+    if (current.fuelRateValid &&
+        now - current.fuelRateUpdatedMs > CAN_OBD_SLOW_VALUE_MAX_AGE_MS) {
+        current.fuelRateValid = false;
+    }
+    return current;
+}
+
+void CANReader::resetOBDDiscoveryData() {
+    obdData.supportResponseCount = 0;
+    for (uint8_t block = 0; block < 4; block++) {
+        obdData.supportBlockValid[block] = false;
+        obdData.supportBitmap[block] = 0;
+    }
+}
+
+bool CANReader::isOBDPidSupportKnown(uint8_t pid) const {
+    if (pid == 0 || pid > 0x80) {
+        return false;
+    }
+    const uint8_t block = (pid - 1) / 0x20;
+    return block < 4 && obdData.supportBlockValid[block];
+}
+
+bool CANReader::isOBDPidSupported(uint8_t pid) const {
+    if (!isOBDPidSupportKnown(pid)) {
+        return false;
+    }
+    const uint8_t block = (pid - 1) / 0x20;
+    const uint8_t offset = pid - block * 0x20;
+    return (obdData.supportBitmap[block] &
+            (static_cast<uint32_t>(1) << (32 - offset))) != 0;
+}
+
+bool CANReader::configurePassiveCapture() {
+    if (!initialized) {
+        return false;
+    }
+
+    // Bereits gepufferte OBD-Antworten gehören nicht in die passive Phase.
+    hasPendingMessage = false;
+    pendingMessage = CANMessage{};
+    for (uint8_t buffer = 0; buffer < 2; buffer++) {
+        const int packetSize = canController.parsePacket();
+        if (packetSize <= 0 && canController.packetId() == -1) {
+            break;
+        }
+        while (canController.available()) {
+            canController.read();
+        }
+    }
+
+    canController.setListenOnly(true);
+    if (!canController.filter(0x000, 0x000)) {
+        Serial.println("❌ CAN konnte nicht auf passiven Empfang umgeschaltet werden");
+        errorCount++;
+        return false;
+    }
+
+    Serial.println("✅ CAN: Listen-Only aktiv, alle 11-Bit-IDs freigegeben");
+    return true;
+}
+
+bool CANReader::configureOBDResponseMode() {
+    if (!initialized) {
+        return false;
+    }
+
+    hasPendingMessage = false;
+    pendingMessage = CANMessage{};
+    for (uint8_t buffer = 0; buffer < 2; buffer++) {
+        const int packetSize = canController.parsePacket();
+        if (packetSize <= 0 && canController.packetId() == -1) {
+            break;
+        }
+        while (canController.available()) {
+            canController.read();
+        }
+    }
+
+    canController.setListenOnly(false);
+    if (!canController.filter(0x7E8, 0x7F8)) {
+        Serial.println("❌ CAN konnte nicht auf OBD-Antwortbetrieb umgeschaltet werden");
+        errorCount++;
+        return false;
+    }
+
+    Serial.println("✅ CAN: OBD-Antwortbetrieb, Filter 0x7E8..0x7EF");
+    return true;
 }
 
 int CANReader::getAvailableMessages() {
@@ -305,6 +573,30 @@ void CANReader::dumpRegisters() {
     
     Serial.println("=== MCP2515 Register-Dump ===");
     canController.dumpRegisters(Serial);
+}
+
+CANHardwareDiagnostics CANReader::getHardwareDiagnostics() {
+    CANHardwareDiagnostics result;
+    if (!initialized) {
+        return result;
+    }
+
+    const MCP2515Diagnostics raw = canController.readDiagnostics();
+    result.valid = true;
+    result.operatingMode = (raw.canStatus >> 5) & 0x07;
+    result.transmitErrorCount = raw.transmitErrorCount;
+    result.receiveErrorCount = raw.receiveErrorCount;
+    result.errorFlags = raw.errorFlags;
+    result.txBuffer0Control = raw.txBuffer0Control;
+    result.errorWarning = raw.errorFlags & 0x01;
+    result.receiveWarning = raw.errorFlags & 0x02;
+    result.transmitWarning = raw.errorFlags & 0x04;
+    result.receiveErrorPassive = raw.errorFlags & 0x08;
+    result.transmitErrorPassive = raw.errorFlags & 0x10;
+    result.transmitBusOff = raw.errorFlags & 0x20;
+    result.receiveBuffer0Overflow = raw.errorFlags & 0x40;
+    result.receiveBuffer1Overflow = raw.errorFlags & 0x80;
+    return result;
 }
 
 String CANReader::getStatusString() {

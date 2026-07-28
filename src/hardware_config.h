@@ -16,6 +16,7 @@ extern const int I2C_SCL;          // GPIO 9  - I2C Clock Line
 // I2C-Geräte-Adressen (BNO055_ADDRESS_* bereits in Adafruit_BNO055.h definiert)
 #define OLED_ADDRESS_A      0x3C    // OLED Standard-Adresse
 #define OLED_ADDRESS_B      0x3D    // OLED Alternative-Adresse
+#define OLED_REQUIRED       false   // Steckbares Display darf für Tests fehlen
 
 // -----------------------------------------------------------------------------
 // SPI-Bus Konfiguration
@@ -74,6 +75,12 @@ extern const int GPS_BAUD_RATE;    // 9600    - GPS Baudrate
 #define CAN_BAUDRATE        500000  // 500kbps CAN-Bus
 #define CAN_CLOCK_8MHZ      8000000 // 8MHz MCP2515 Oszillator
 #define CAN_CLOCK_16MHZ     16000000// 16MHz MCP2515 Oszillator
+#define CAN_OBD_POLLING_ENABLED true // Nur Standard-OBD Service 01 aktiv abfragen
+#define CAN_LISTEN_ONLY        false // Aktive OBD-Anfragen benötigen den Normalmodus
+#define CAN_OBD_REQUEST_INTERVAL_MS 500 // Insgesamt höchstens zwei Anfragen pro Sekunde
+#define CAN_OBD_VALUE_MAX_AGE_MS   5000 // Alte Livewerte nicht weiter anzeigen
+#define CAN_OBD_SLOW_VALUE_MAX_AGE_MS 30000 // Langsame Temperatur-/Verbrauchswerte
+#define CAN_TX_TIMEOUT_MS         25 // Fehlendes ACK darf die Hauptschleife nicht blockieren
 
 // Task-Watchdog: Ein hängender loop() führt zum Neustart statt zu einem
 // stummen Gerät auf der Strecke. Grosszügig bemessen, damit langsame
