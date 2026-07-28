@@ -192,8 +192,25 @@ Zu beachten: Hängt `VCC1` am `5V`-Pad des Controllerboards, ist der Bustreiber
 im reinen Akkubetrieb unversorgt. CAN liefe dann nur am USB-Kabel. Für den
 Fahrbetrieb ist ein 5-V-Boost aus der Zelle erforderlich.
 
-Der 120-Ω-Abschlusswiderstand des Moduls ist über den Jumper `ON`/`OFF`
-schaltbar. Am Fahrzeug bleibt er auf `OFF` — siehe unten.
+### Abschlusswiderstand: aktuell aktiv
+
+Der 120-Ω-Abschluss (R1, Aufdruck `1200`) wird über den Jumper `P1` geschaltet.
+
+> **Ist-Zustand, Stand 28. Juli 2026: Jumper steckt auf `ON`, der Abschluss ist
+> also aktiv.**
+
+Das ist für einen Laboraufbau mit einem zweiten CAN-Knoten richtig, denn dort
+muss jedes Busende abgeschlossen sein.
+
+**Am Fahrzeug muss der Jumper abgezogen werden.** Zwei Gründe:
+
+1. Der Fahrzeugbus ist bereits an beiden Enden mit je 120 Ω abgeschlossen, was
+   zusammen 60 Ω ergibt. Ein dritter Widerstand parallel führt auf rund 40 Ω.
+   Der Transceiver muss für einen dominanten Pegel entsprechend mehr Strom
+   treiben und erreicht die geforderte Differenzspannung unter Umständen nicht
+   mehr.
+2. ROADTEST hängt als Stichleitung am OBD-Stecker und ist damit kein Busende.
+   Stichleitungen werden grundsätzlich nicht abgeschlossen.
 
 Für einen späteren Fahrzeuganschluss:
 
@@ -201,6 +218,8 @@ Für einen späteren Fahrzeuganschluss:
 - OBD-II Pin 14 ist üblicherweise CAN-L.
 - Eine 120-Ω-Terminierung darf nicht pauschal ergänzt werden; zunächst den
   Widerstand zwischen CAN-H und CAN-L am ausgeschalteten Fahrzeug prüfen.
+  Rund 60 Ω bedeuten: Bus ist beidseitig abgeschlossen, `P1` bleibt offen.
+- Die Stichleitung vom OBD-Stecker zum Modul kurz halten, etwa unter 30 cm.
 
 ## Mechanischer Aufbau
 
@@ -225,6 +244,8 @@ Für einen späteren Fahrzeuganschluss:
 - [ ] SD: CS 4, MOSI 5, MISO 6 und SCLK 7.
 - [ ] PZSMOCN SD-Modul wird mit 3,3 V versorgt.
 - [ ] CAN bleibt unverbunden, bis Versorgung und Pegel geprüft wurden.
+- [ ] CAN-Modul: `VCC` führt 3,3 V, `VCC1` führt 5 V (einzeln gegen GND messen).
+- [ ] CAN-Modul: Jumper `P1` vor dem Fahrzeuganschluss abgezogen.
 - [ ] SD-Karte ist FAT32 formatiert und mechanisch sicher eingesteckt.
 
 ## Fehlersuche
