@@ -135,3 +135,52 @@ Sinnvolle Reihenfolge je Kampagne:
    werden kann
 
 `wait_capture` blockiert bis zum Ende der Aufnahme und kann Minuten dauern.
+
+---
+
+## Ergebnis Kampagne 2 (I²C), 28. Juli 2026
+
+Aufnahme: 60 s, 25 MS/s, Kanal 0 = SDA, Kanal 1 = SCL, Kanal 2 = RST.
+Rohdaten in `i2c_bno055_ausfall.sal`.
+
+| Adresse | Transaktionen | davon NACK |
+|---|---:|---:|
+| `0x29` BNO055 | 3670 | **94** |
+| `0x3C` OLED | 183 | **0** |
+| `0x28` Probe | 10 | 10 (erwartet) |
+| `0x3D` Probe | 8 | 8 (erwartet) |
+
+**Der Bus ist elektrisch in Ordnung.** Das OLED quittiert über die gesamte
+Aufnahme jede einzelne Transaktion. Es traten ausserdem **keine unerwarteten
+Adressen** auf — Bitfehler auf SDA scheiden damit aus.
+
+Die 94 NACKs liegen in genau **zwei Clustern**, beide mit identischer Signatur:
+
+```
+t=26,687 s bis 27,147 s   47 NACKs   Dauer 0,460 s, danach 0,552 s Stille
+t=44,372 s bis 44,832 s   47 NACKs   Dauer 0,459 s, danach 0,552 s Stille
+```
+
+Rund **1 s Totalausfall, etwa alle 18 s**, deterministisch und identisch
+wiederholt. Das entspricht der Bootzeit eines BNO055 nach einem Power-on-Reset
+(Datenblatt: rund 650 ms). Unmittelbar vor jedem Cluster laufen die
+Transaktionen normal und werden alle quittiert.
+
+**Schlussfolgerung: Der BNO055 startet sich selbst neu.** Nicht der Bus, nicht
+die Adressierung, nicht die Firmware.
+
+Damit sind widerlegt:
+
+- **Bitfehler durch 400-kHz-Displaytransfers.** Keine Fremdadressen, OLED
+  fehlerfrei. Die Absenkung auf 100 kHz bleibt trotzdem richtig, weil die
+  Flankenreserve rechnerisch zu knapp war.
+- **Floatender RST-Pin.** Der 10-kΩ-Pull-up ist gesetzt, die Ausfälle bleiben.
+
+Offen bleiben zwei Möglichkeiten:
+
+1. **Versorgungseinbruch am Sensor.** Nächste Messung: Analogkanal auf `3Vo`
+   des Breakouts, also der Ausgang des bordeigenen Reglers und die tatsächliche
+   VDD des BNO055. Digitaltrigger auf SDA, damit die Aufnahme den Ausfall
+   einfängt.
+2. **Defekter Baustein.** Bleibt die Versorgung stabil, ist der Sensor zu
+   tauschen.
