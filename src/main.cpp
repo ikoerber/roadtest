@@ -853,9 +853,15 @@ void setup() {
     wdtConfig.timeout_ms = WDT_TIMEOUT_MS;
     wdtConfig.idle_core_mask = 0;
     wdtConfig.trigger_panic = true;
+    // Der Arduino-Kern initialisiert den Task-Watchdog bereits selbst. Der
+    // zweite Aufruf ist deshalb erwartbar und wird unten sauber abgefangen -
+    // die IDF protokolliert ihn aber als Fehler. Die Meldung sieht im Bootlog
+    // wie ein echter Defekt aus und wird daher für diesen Aufruf unterdrückt.
+    esp_log_level_set("task_wdt", ESP_LOG_NONE);
     if (esp_task_wdt_init(&wdtConfig) == ESP_ERR_INVALID_STATE) {
         esp_task_wdt_reconfigure(&wdtConfig);
     }
+    esp_log_level_set("task_wdt", ESP_LOG_ERROR);
     esp_task_wdt_add(nullptr);
     Serial.printf("Watchdog aktiv (%d ms)\n", WDT_TIMEOUT_MS);
 
