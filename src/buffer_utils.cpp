@@ -208,18 +208,19 @@ void printBufferStats() {
     // Memory Pool Stats
     globalMemoryPool.printStats();
     
-    // Format Buffer Stats  
-    Serial.printf("Format Buffer: %zu/%zu bytes used (%.1f%%)\n",
-                 formatBuffer.used(), 1024, 
+    // Format Buffer Stats
+    Serial.printf("Format Buffer: %zu/%zu Bytes belegt (%.1f%%)\n",
+                 formatBuffer.used(), (size_t)1024,
                  (float)formatBuffer.used() / 1024.0f * 100.0f);
-                 
+
     if (formatBuffer.hasOverflowed()) {
         Serial.println("⚠️ Format Buffer overflow detected!");
     }
-    
+
     // ESP32 Heap Stats
-    Serial.printf("ESP32 Heap: %zu bytes free, %zu largest block\n",
-                 ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+    Serial.printf("ESP32 Heap: %lu Bytes frei, groesster Block %lu Bytes\n",
+                 (unsigned long)ESP.getFreeHeap(),
+                 (unsigned long)ESP.getMaxAllocHeap());
                  
     Serial.println("========================");
 }

@@ -24,9 +24,27 @@ Signalbezeichnungen auf den Modulen. Kabelfarben sind nicht verbindlich.
 >
 > Praktische Folge: Das Board-Ziel setzt `-DBOARD_HAS_PSRAM`. Hat der
 > verbaute Controller keinen PSRAM, scheitert dessen Initialisierung bei
-> jedem Start. Vor einer Korrektur von `platformio.ini` muss der reale
-> Boardtyp bestimmt werden — Beschriftung auf der Platinenunterseite und
-> Bootlog auswerten.
+> jedem Start.
+>
+> Der Boardtyp lässt sich nicht mehr ablesen, weil das Modul verlötet ist.
+> Für die Wahl des richtigen Ziels ist das aber auch nicht nötig — es zählen
+> Chip, Flash und PSRAM, und die meldet der Controller selbst. Das Kommando
+> `diag` gibt dafür einen **Controller-Steckbrief** aus:
+>
+> ```text
+> === Controller-Steckbrief ===
+> Chip: ESP32-S3, Revision 0, 2 Kern(e), 240 MHz
+> Flash: 4194304 Bytes (4 MB) bei 80000000 Hz
+> Build: BOARD_HAS_PSRAM ist gesetzt
+> PSRAM: 2097152 Bytes vorhanden, 2093964 Bytes frei
+> eFuse-MAC: ...
+> ```
+>
+> Meldet die Zeile `PSRAM: nicht gefunden`, obwohl `BOARD_HAS_PSRAM` gesetzt
+> ist, passt das Board-Ziel nicht und gehört in `platformio.ini` auf eine
+> Variante ohne PSRAM geändert. Stimmen dagegen Flashgröße und PSRAM mit den
+> Werten oben überein, ist `lolin_s3_mini` trotz des abweichenden Boardlayouts
+> eine tragfähige Wahl — die Pinbelegung setzt die Firmware ohnehin selbst.
 
 ## Verbindliche GPIO-Belegung
 

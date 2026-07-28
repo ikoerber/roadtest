@@ -579,8 +579,9 @@ void testBufferSafety() {
     }
     
     // ESP32 Heap Stats
-    Serial.printf("ESP32 Heap: %zu bytes free, %zu largest block\n",
-                 ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+    Serial.printf("ESP32 Heap: %lu Bytes frei, groesster Block %lu Bytes\n",
+                 (unsigned long)ESP.getFreeHeap(),
+                 (unsigned long)ESP.getMaxAllocHeap());
                  
     Serial.println("========================");
     
@@ -1247,11 +1248,51 @@ void loop() {
         }
         else if (command == "diag") {
             Serial.println("\n=== System-Diagnose ===");
-            Serial.printf("Free Heap: %d bytes\n", ESP.getFreeHeap());
-            Serial.printf("Heap Size: %d bytes\n", ESP.getHeapSize());
-            Serial.printf("Min Free Heap: %d bytes\n", ESP.getMinFreeHeap());
-            Serial.printf("Chip Model: %s\n", ESP.getChipModel());
-            Serial.printf("CPU Freq: %d MHz\n", ESP.getCpuFreqMHz());
+            Serial.printf("Free Heap: %lu Bytes\n",
+                          (unsigned long)ESP.getFreeHeap());
+            Serial.printf("Heap Size: %lu Bytes\n",
+                          (unsigned long)ESP.getHeapSize());
+            Serial.printf("Min Free Heap: %lu Bytes\n",
+                          (unsigned long)ESP.getMinFreeHeap());
+
+            // Steckbrief des Controllers. Das Board ist verlötet und trägt
+            // keine auswertbare Typbezeichnung; für die Wahl des richtigen
+            // Ziels in platformio.ini genügen aber Chip, Flash und PSRAM.
+            Serial.println("\n=== Controller-Steckbrief ===");
+            Serial.printf("Chip: %s, Revision %d, %d Kern(e), %lu MHz\n",
+                          ESP.getChipModel(), ESP.getChipRevision(),
+                          ESP.getChipCores(),
+                          (unsigned long)ESP.getCpuFreqMHz());
+            Serial.printf("Flash: %lu Bytes (%lu MB) bei %lu Hz\n",
+                          (unsigned long)ESP.getFlashChipSize(),
+                          (unsigned long)(ESP.getFlashChipSize() / (1024UL * 1024UL)),
+                          (unsigned long)ESP.getFlashChipSpeed());
+#ifdef BOARD_HAS_PSRAM
+            Serial.println("Build: BOARD_HAS_PSRAM ist gesetzt");
+#else
+            Serial.println("Build: BOARD_HAS_PSRAM ist NICHT gesetzt");
+#endif
+            if (psramFound()) {
+                Serial.printf("PSRAM: %lu Bytes vorhanden, %lu Bytes frei\n",
+                              (unsigned long)ESP.getPsramSize(),
+                              (unsigned long)ESP.getFreePsram());
+            } else {
+                Serial.println("PSRAM: nicht gefunden");
+#ifdef BOARD_HAS_PSRAM
+                Serial.println("  ⚠️ Der Build erwartet PSRAM, der Chip hat keinen.");
+                Serial.println("     Board-Ziel in platformio.ini passt nicht.");
+#endif
+            }
+            {
+                const uint64_t mac = ESP.getEfuseMac();
+                Serial.printf("eFuse-MAC: %04X%08X\n",
+                              (unsigned)(uint16_t)(mac >> 32),
+                              (unsigned)(uint32_t)mac);
+            }
+            Serial.printf("Sketch: %lu Bytes belegt, %lu Bytes frei in der Partition\n",
+                          (unsigned long)ESP.getSketchSize(),
+                          (unsigned long)ESP.getFreeSketchSpace());
+
             Serial.println("\nModule-Status:");
             Serial.printf("BNO055: %s (I2C 0x%02X)\n",
                           bnoManager.isSelfTestPassed() ? "OK" : "Fehler",
