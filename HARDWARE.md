@@ -205,6 +205,18 @@ Liegt dagegen `VCC` auf 5 V (Arduino-Beschaltung), treibt der `SO`-Ausgang
 ESP32-S3 in die 3,3-V-Schiene und hebt die Versorgung des gesamten Systems an.
 Der absolute Grenzwert des ESP32-S3 beträgt 3,6 V.
 
+> **Genau das war hier der Fall.** `VCC` lag ursprünglich auf 5 V. Das erklärt
+> die Beobachtung, dass sich beim Aktivieren des CAN-Moduls andere Komponenten
+> aufhängen. Die Beschaltung ist am 28. Juli 2026 korrigiert worden:
+> `VCC` auf 3,3 V, `VCC1` auf 5 V.
+>
+> **Folge im Auge behalten:** GPIO 11 hat über längere Zeit Klemmstrom geführt.
+> Der zulässige Klemmstrom liegt bei etwa 20 mA; ein Transceiver-Ausgang ohne
+> Serienwiderstand liefert mehr. ESP32-Pins überstehen das häufig, aber nicht
+> immer. Läuft die SPI-Kommunikation zum MCP2515 nach der Umverdrahtung
+> zuverlässig, ist der Pin in Ordnung. Bleiben sporadische Fehler, ist ein
+> beschädigter Eingang der nächste Verdacht.
+
 **Vor der Inbetriebnahme `VCC` und `VCC1` einzeln gegen GND messen.**
 
 Zu beachten: Hängt `VCC1` am `5V`-Pad des Controllerboards, ist der Bustreiber
