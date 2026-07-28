@@ -86,7 +86,7 @@ GND                  GND                    GND
 | BNO055-Pin | Aktueller Aufbau |
 |---|---|
 | `3Vo` | nicht anschließen; dies ist ein Ausgang des Breakout-Reglers |
-| `ADR` | nicht angeschlossen, dadurch Standardadresse `0x28` |
+| `ADR` | **auf 3,3 V gelegt, dadurch Adresse `0x29`** (nicht die Adafruit-Standardadresse 0x28) |
 | `RST` | nicht angeschlossen; die Firmware initialisiert den Sensor über I²C neu |
 | `PS0`, `PS1` | nicht angeschlossen; beim Adafruit-Breakout standardmäßig I²C |
 | `INT` | nicht verwendet |
@@ -97,10 +97,11 @@ Magnetometerkalibrierung.
 
 Die erwarteten I²C-Adressen sind:
 
-- BNO055: `0x28` bei unbeschaltetem `ADR` (Adafruit-Breakout, wie verbaut).
-  Die Firmware prüft seit 1.5.10 beide dokumentierten Adressen `0x29` und
-  `0x28` und übernimmt die antwortende. `diag` gibt die tatsächlich
-  verwendete Adresse aus.
+- BNO055: **`0x29`**. Der `ADR`-Pad des Adafruit-Breakouts liegt in diesem
+  Aufbau auf 3,3 V; ohne diese Beschaltung wäre es die Standardadresse `0x28`.
+  Frühere Fassungen dieser Datei nannten fälschlich 0x28.
+  Die Firmware prüft seit 1.5.10 beide Adressen und übernimmt die
+  antwortende, beginnend mit `0x29`. `diag` gibt die verwendete Adresse aus.
 - OLED: `0x3C`, alternativ wird `0x3D` geprüft
 
 Die Breakout-Module besitzen gewöhnlich bereits I²C-Pull-ups. Zusätzliche
@@ -237,7 +238,7 @@ Für einen späteren Fahrzeuganschluss:
 - [ ] An der 3,3-V-Schiene liegen ungefähr 3,3 V gegen GND an.
 - [ ] Alle Module teilen dieselbe Masse.
 - [ ] I²C: GPIO 8 = SDA und GPIO 9 = SCL.
-- [ ] BNO055 antwortet auf `0x28`.
+- [ ] BNO055 antwortet auf `0x29` (ADR liegt auf 3,3 V).
 - [ ] OLED antwortet auf `0x3C` oder `0x3D`.
 - [ ] GPS-TX ist mit GPIO 16 verbunden und liefert NMEA-Daten.
 - [ ] GPS-RX ist mit GPIO 15 verbunden; PPS bleibt frei.
@@ -254,7 +255,8 @@ Für einen späteren Fahrzeuganschluss:
 
 1. Gemeinsame Masse und 3,3-V-Versorgung prüfen.
 2. SDA an GPIO 8 und SCL an GPIO 9 kontrollieren.
-3. Im seriellen I²C-Scan nach `0x28` und `0x3C`/`0x3D` suchen.
+3. Im seriellen I²C-Scan nach `0x29` und `0x3C`/`0x3D` suchen.
+   Antwortet stattdessen `0x28`, ist die ADR-Brücke nach 3,3 V offen.
 4. Steckverbindungen und Lötstellen bewegen beziehungsweise auf Durchgang
    prüfen.
 5. Erst danach zusätzliche Pull-ups in Betracht ziehen.

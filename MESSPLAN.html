@@ -300,9 +300,10 @@
       </div>
       <div class="outcome o-pass">
         <span class="dot pass"></span><span class="reading">BNO055</span>
-        <span class="meaning">Echtes Adafruit-Breakout. Bei unbeschaltetem <code>ADR</code> ist
-        die Adresse <strong>0x28</strong> — also die Angabe aus HARDWARE.md, nicht die 0x29 des
-        alten Codes. Die neue Firmware erkennt beide.</span>
+        <span class="meaning">Echtes Adafruit-Breakout. Der <code>ADR</code>-Pad liegt
+        <strong>auf 3,3 V</strong>, die Adresse ist damit <strong>0x29</strong> — der alte Code
+        lag richtig, HARDWARE.md nannte fälschlich 0x28 und ist korrigiert. Damit ist die
+        Adresse <em>nicht</em> die Ursache der Kalibrierprobleme.</span>
       </div>
       <div class="outcome o-pass">
         <span class="dot pass"></span><span class="reading">SD-Modul</span>
@@ -520,7 +521,7 @@
       </div>
       <figcaption>Adafruit BNO055 Breakout</figcaption>
       <div class="legend">
-          <div class="lg"><span class="lg-k lg-warn">5</span><span class="lg-v"><strong>ADR</strong> — der unterste der vier Pads am rechten Rand. Ist er unbeschaltet, antwortet der Sensor auf <strong>0x28</strong>; auf 3,3 V gelegt auf 0x29. Auf dem Foto wirkt er unverlötet, sicher entscheiden lässt sich das aber nur am Bauteil oder per <code>hardware</code>-Scan.</span></div>
+          <div class="lg"><span class="lg-k lg-warn">5</span><span class="lg-v"><strong>ADR</strong> — der unterste der vier Pads am rechten Rand. Er liegt in diesem Aufbau <strong>auf 3,3 V</strong>, die Adresse ist deshalb <strong>0x29</strong> statt der Adafruit-Vorgabe 0x28. Auf dem Foto sieht der Pad unverlötet aus; das täuscht.</span></div>
           <div class="lg"><span class="lg-k lg-">6</span><span class="lg-v"><strong>SDA und SCL</strong> — an dieser Reihe für Messpunkt 6 den Pull-up gegen 3,3 V messen, im spannungsfreien Zustand.</span></div>
       </div>
     </figure>
@@ -708,7 +709,7 @@
           <span class="badge">5</span>
           <div class="card-title">
             <h3>Tatsächliche I²C-Adresse des BNO055</h3>
-            <span class="why">Löst den Widerspruch zwischen HARDWARE.md (0x28) und dem bisherigen Code (0x29).</span>
+            <span class="why">Bestätigt in zehn Sekunden, dass die Firmware den Sensor überhaupt erreicht.</span>
           </div>
           <span class="tool">Konsole</span>
         </div>
@@ -717,11 +718,11 @@
             <div class="row"><dt>Vorgehen</dt><dd>Serielle Konsole mit 115200 Baud öffnen, <span class="k">diag</span> eingeben.</dd></div>
             <div class="row"><dt>Zeile</dt><dd><span class="k">BNO055: OK (I2C 0x28)</span> — die neue Firmware erkennt beide Adressen selbst und meldet die gefundene.</dd></div>
             <div class="row"><dt>Gegenprobe</dt><dd><span class="k">hardware</span> startet den I²C-Scan und listet alle antwortenden Adressen unabhängig davon auf.</dd></div>
-            <div class="row"><dt>Verdacht</dt><dd>Der <code>ADR</code>-Pad wirkt auf dem Foto unverlötet. Ist das so, antwortet der Sensor auf <strong>0x28</strong> — und die Firmware sprach seit dem ersten Commit ausschließlich <span class="k">0x29</span> an. Dann hätte <code>sensor->begin()</code> nie funktioniert, und der Sensor wäre nie initialisiert worden.</dd></div>
+            <div class="row"><dt>Erwartet</dt><dd><span class="k">0x29</span> — der <code>ADR</code>-Pad des Breakouts liegt auf 3,3 V. Ohne diese Brücke wäre es die Adafruit-Standardadresse 0x28.</dd></div>
           </dl>
           <div class="outcomes">
-            <div class="outcome o-danger"><span class="dot danger"></span><span class="reading">0x28</span><span class="meaning"><strong>Das wäre die vollständige Erklärung für Symptom 2.</strong> Die alte Firmware hat den Sensor nie erreicht, also konnte auch nie eine Kalibrierung entstehen. Die Autoerkennung im aktuellen Stand behebt es.</span></div>
-            <div class="outcome o-pass"><span class="dot pass"></span><span class="reading">0x29</span><span class="meaning">Der alte Code lag richtig, HARDWARE.md muss korrigiert werden. Dann bleibt die Kalibrierung ein Störungs- und Versorgungsproblem.</span></div>
+            <div class="outcome o-pass"><span class="dot pass"></span><span class="reading">0x29</span><span class="meaning">Erwarteter Fall. Der Sensor ist erreichbar; die Kalibrierprobleme haben eine andere Ursache — Versorgungswelligkeit, die Neustartkaskade der Überwachung und der bis 1.5.10 fehlende automatische NVS-Sicherungsschritt.</span></div>
+            <div class="outcome o-warn"><span class="dot warn"></span><span class="reading">0x28</span><span class="meaning">Dann ist die ADR-Brücke nach 3,3 V offen oder unterbrochen. Die Firmware arbeitet trotzdem weiter, aber die Lötstelle gehört geprüft.</span></div>
             <div class="outcome o-danger"><span class="dot danger"></span><span class="reading">keine Antwort</span><span class="meaning">Verdrahtung und Versorgung des Sensors prüfen, bevor irgendetwas anderes untersucht wird.</span></div>
           </div>
         </div>
@@ -817,7 +818,7 @@
           <tr><td class="reading">2</td><td>Welligkeit unter Last, Akku</td><td><span class="k">&lt; 50 mV pp</span></td><td class="fill">_________</td></tr>
           <tr><td class="reading">3</td><td>Welligkeit unter Last, USB</td><td><span class="k">&lt; 50 mV pp</span></td><td class="fill">_________</td></tr>
           <tr><td class="reading">4</td><td>Zellspannung beim ersten SD-Fehler</td><td><span class="k">&lt; 3,5 V</span></td><td class="fill">_________</td></tr>
-          <tr><td class="reading">5</td><td>I²C-Adresse BNO055</td><td><span class="k">0x28</span> erwartet</td><td class="fill">_________</td></tr>
+          <tr><td class="reading">5</td><td>I²C-Adresse BNO055</td><td><span class="k">0x29</span> erwartet</td><td class="fill">_________</td></tr>
           <tr><td class="reading">6</td><td>Pull-up SDA und SCL</td><td><span class="k">2,2–4,7 kΩ</span></td><td class="fill">_________</td></tr>
           <tr><td class="reading">7a</td><td>VCC am CAN-Modul</td><td><span class="k">3,3 V</span></td><td class="fill">_________</td></tr>
           <tr><td class="reading">7b</td><td>VCC1 am CAN-Modul</td><td><span class="k">5 V</span></td><td class="fill">_________</td></tr>
