@@ -122,10 +122,19 @@ Die erwarteten I²C-Adressen sind:
   antwortende, beginnend mit `0x29`. `diag` gibt die verwendete Adresse aus.
 - OLED: `0x3C`, alternativ wird `0x3D` geprüft
 
-Die Breakout-Module besitzen gewöhnlich bereits I²C-Pull-ups. Zusätzliche
-4,7-kΩ-Pull-ups sollten nur eingebaut werden, wenn sie elektrisch erforderlich
-sind; mehrere parallel geschaltete Pull-ups können den Bus unnötig stark
-belasten.
+Die Breakout-Module besitzen bereits I²C-Pull-ups. Die Parallelschaltung im
+fertigen Aufbau ergibt **2,54 kΩ** gegen 3,3 V, an SDA wie an SCL (gemessen am
+28. Juli 2026, spannungsfrei). Der Wert liegt im empfohlenen Fenster von 2,2
+bis 4,7 kΩ; im gezogenen Zustand fließen rund 1,3 mA, deutlich unter den 3 mA
+der I²C-Spezifikation. **Zusätzliche Pull-ups sind nicht erforderlich.**
+
+Zur Flankenreserve: Die Anstiegszeit beträgt näherungsweise 2,2 · R · C. Bei
+2,54 kΩ bleibt der Bus bis etwa 180 pF innerhalb der 1000 ns, die der Basistakt
+von 100 kHz zulässt — reichlich Reserve. Die 400 kHz, mit denen der
+SSD1306-Treiber seine Bildtransfers fährt (`I2C_DISPLAY_SPEED`), verlangen
+dagegen 300 ns und damit unter etwa 54 pF. Auf Lochraster ist das knapp. Das
+Display arbeitet zwar einwandfrei; sollten dort je Artefakte auftreten, ist
+`I2C_DISPLAY_SPEED` der Stellhebel und nicht `I2C_CLOCK_SPEED`.
 
 ## GPS BN-880
 
