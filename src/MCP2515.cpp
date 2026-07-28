@@ -267,7 +267,16 @@ void MCP2515Class::onReceive(void(*callback)(int))
   if (callback) {
     // ESP32 doesn't have SPI.usingInterrupt
     // SPI.usingInterrupt(digitalPinToInterrupt(_intPin));
-    attachInterrupt(digitalPinToInterrupt(_intPin), MCP2515Class::onInterrupt, LOW);
+    //
+    // FALLING statt LOW: Die INT-Leitung des MCP2515 bleibt aktiv, bis das
+    // ausloesende Flag per SPI geloescht wurde. Ein pegelgetriggerter
+    // Interrupt feuert deshalb ununterbrochen weiter und blockiert die CPU.
+    //
+    // ACHTUNG: handleInterrupt() fuehrt SPI-Transfers aus. Auf dem ESP32
+    // nimmt SPI.beginTransaction() einen FreeRTOS-Mutex, was im
+    // Interruptkontext zum Abbruch fuehrt. Dieser Pfad ist deshalb nicht
+    // benutzbar; CANReader verwendet stattdessen Polling.
+    attachInterrupt(digitalPinToInterrupt(_intPin), MCP2515Class::onInterrupt, FALLING);
   } else {
     detachInterrupt(digitalPinToInterrupt(_intPin));
     // ESP32 doesn't have SPI.notUsingInterrupt

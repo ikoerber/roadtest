@@ -1031,30 +1031,31 @@ void loop() {
     
     // CAN-Bus Nachrichten empfangen (alle 10ms)
     if (canBusAvailable && (currentTime - lastCANCheck >= 10)) {
+        // hasMessage() puffert den Frame bereits; readMessage() liefert danach
+        // genau diesen zurück. Eine zusätzliche Prüfung auf canId != 0 wäre
+        // falsch, weil 0x000 eine gültige CAN-ID mit höchster Priorität ist.
         if (canReader.hasMessage()) {
             CANMessage msg = canReader.readMessage();
-            
-            if (msg.canId != 0) { // Gültige Nachricht empfangen
-                canMessageCount++;
-                totalCANMessages++;
-                lastCANMessage = msg;  // Für Zeitkorrelation speichern
-                
-                // In SDLogger aufzeichnen
-                if (sdLogger.isLogging()) {
-                    sdLogger.logCANMessage(msg);
-                    
-                    // Zeitkorrelation: Wenn aktuelle Sensor-Daten vorhanden
-                    if (lastSensorData.timestamp > 0 && 
-                        abs((long)(msg.timestamp - lastSensorData.timestamp)) < 1000) {
-                        sdLogger.logCorrelatedData(lastSensorData, msg);
-                    }
+
+            canMessageCount++;
+            totalCANMessages++;
+            lastCANMessage = msg;  // Für Zeitkorrelation speichern
+
+            // In SDLogger aufzeichnen
+            if (sdLogger.isLogging()) {
+                sdLogger.logCANMessage(msg);
+
+                // Zeitkorrelation: Wenn aktuelle Sensor-Daten vorhanden
+                if (lastSensorData.timestamp > 0 &&
+                    abs((long)(msg.timestamp - lastSensorData.timestamp)) < 1000) {
+                    sdLogger.logCorrelatedData(lastSensorData, msg);
                 }
-                
-                // Detaillierte Ausgabe für die ersten 10 Nachrichten
-                if (canMessageCount <= 10) {
-                    Serial.printf("CAN #%d: ", canMessageCount);
-                    Serial.println(formatCANMessage(msg));
-                }
+            }
+
+            // Detaillierte Ausgabe für die ersten 10 Nachrichten
+            if (canMessageCount <= 10) {
+                Serial.printf("CAN #%d: ", canMessageCount);
+                Serial.println(formatCANMessage(msg));
             }
         }
         lastCANCheck = currentTime;

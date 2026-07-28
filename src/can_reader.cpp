@@ -17,7 +17,8 @@ CANReader::CANReader(int cs, int interrupt)
     : initialized(false), messageCount(0), lastLogTime(0),
       loggingEnabled(false), csPin(cs), intPin(interrupt),
       clockFrequency(CAN_CLOCK_16MHZ),
-      totalMessages(0), errorCount(0) {
+      totalMessages(0), errorCount(0),
+      lastMessage{}, pendingMessage{}, hasPendingMessage(false) {
 }
 
 CANReader::~CANReader() {
@@ -31,118 +32,28 @@ bool CANReader::begin(long baudRate) {
     }
     
     Serial.println("=== CAN-Bus Reader Initialisierung ===");
-    Serial.printf("Pins: CS=%d, INT=%d\n", csPin, intPin);
-    Serial.printf("Baudrate: %ld bps\n", baudRate);
-    
-    // ESP32-S3 spezifische Pin-Konfiguration
-    pinMode(csPin, OUTPUT);
-    digitalWrite(csPin, HIGH);
+    Serial.printf("Pins: CS=%d, INT=%d, SCK=%d, MOSI=%d, MISO=%d\n",
+                  csPin, intPin, CAN_SCK_PIN, CAN_MOSI_PIN, CAN_MISO_PIN);
+
+    // Der SPI-Bus wird vom Aufrufer einmalig eingerichtet, siehe
+    // initializeOptionalCAN() in main.cpp.
+    //
+    // Frühere Fassungen riefen hier erneut SPI.end() und SPI.begin() auf, mit
+    // dem Kommentar, damit werde "eventuelle SD-SPI Nutzung" beendet. Das war
+    // sachlich falsch: Die SD-Karte hängt an der eigenen HSPI-Instanz, CAN am
+    // globalen SPI-Objekt. Es sind getrennte Peripherien. Ein Busneustart zur
+    // Laufzeit bringt hier nichts und kann eine laufende Übertragung abreißen.
+    //
+    // Ebenfalls entfernt: die Toggle-Tests, die SCK und MOSI per pinMode() und
+    // digitalWrite() ansteuerten, nachdem SPI.begin() dieselben Pins bereits
+    // über die GPIO-Matrix der SPI-Einheit zugewiesen hatte. Beide Treiber
+    // arbeiteten dabei gegeneinander.
     pinMode(intPin, INPUT_PULLUP);
-    
-    // SPI-Bus für CAN sauber initialisieren
-    Serial.println("Initialisiere SPI für CAN...");
-    SPI.end();  // Beende eventuelle SD-SPI Nutzung
-    delay(100);
-    
-    // ESP32-S3 sichere SPI-Pins nutzen - CS wird NICHT hier angegeben!
-    Serial.printf("SPI.begin(SCK=%d, MISO=%d, MOSI=%d)\n", CAN_SCK_PIN, CAN_MISO_PIN, CAN_MOSI_PIN);
-    SPI.begin(CAN_SCK_PIN, CAN_MISO_PIN, CAN_MOSI_PIN);  // Verwende Pins aus hardware_config.h
-    delay(100);
-    Serial.println("SPI initialisiert");
-    
-    // Pin-Konfiguration setzen
-    canController.setPins(csPin, intPin);
-    
-    // Pin als Output setzen bevor SPI-Test
     pinMode(csPin, OUTPUT);
     digitalWrite(csPin, HIGH);
-    
-    // Zusätzliche Pins als Output
-    pinMode(CAN_SCK_PIN, OUTPUT);  // SCK
-    pinMode(CAN_MOSI_PIN, OUTPUT); // MOSI
-    pinMode(CAN_MISO_PIN, INPUT_PULLUP); // MISO
-    delay(10);
-    
-    // Debug: Teste SPI-Kommunikation direkt
-    Serial.println("Teste SPI-Kommunikation...");
-    Serial.printf("CS-Pin GPIO%d ist %s\n", csPin, digitalRead(csPin) ? "HIGH" : "LOW");
-    Serial.printf("MISO-Pin GPIO%d ist %s\n", CAN_MISO_PIN, digitalRead(CAN_MISO_PIN) ? "HIGH" : "LOW");
-    Serial.printf("MOSI-Pin GPIO%d\n", CAN_MOSI_PIN);
-    Serial.printf("SCK-Pin GPIO%d\n", CAN_SCK_PIN);
-    
-    // Teste ob SCK überhaupt toggeln kann
-    Serial.println("\nTeste SCK-Pin Toggle...");
-    pinMode(CAN_SCK_PIN, OUTPUT);
-    for(int i = 0; i < 5; i++) {
-        digitalWrite(CAN_SCK_PIN, HIGH);
-        delayMicroseconds(10);
-        bool sckHigh = (digitalRead(CAN_SCK_PIN) == HIGH);
-        digitalWrite(CAN_SCK_PIN, LOW);
-        delayMicroseconds(10);
-        bool sckLow = (digitalRead(CAN_SCK_PIN) == LOW);
-        if(!sckHigh || !sckLow) {
-            Serial.printf("❌ SCK-Pin GPIO%d reagiert nicht!\n", CAN_SCK_PIN);
-            return false;
-        }
-    }
-    Serial.println("✓ SCK-Pin funktioniert");
-    
-    // Teste ob CS-Pin überhaupt funktioniert
-    Serial.println("Teste CS-Pin Toggle...");
-    digitalWrite(csPin, LOW);
-    delayMicroseconds(100);
-    bool csLow = (digitalRead(csPin) == LOW);
-    Serial.printf("CS LOW Test: %s\n", csLow ? "OK" : "FEHLER");
-    
-    digitalWrite(csPin, HIGH);
-    delayMicroseconds(100);
-    bool csHigh = (digitalRead(csPin) == HIGH);
-    Serial.printf("CS HIGH Test: %s\n", csHigh ? "OK" : "FEHLER");
-    
-    if (!csLow || !csHigh) {
-        Serial.println("❌ CS-Pin reagiert nicht! GPIO1 könnte blockiert sein.");
-        Serial.println("   GPIO1 wird möglicherweise für USB verwendet.");
-        return false;
-    }
-    
-    Serial.println("CS-Pin funktioniert, teste SPI-Transfer...");
-    
-    Serial.println("Starte SPI Transaction...");
-    SPI.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE0));
-    Serial.println("SPI Transaction gestartet");
-    
-    digitalWrite(csPin, LOW);
-    delayMicroseconds(10);
-    
-    Serial.println("Sende RESET Command...");
-    uint8_t testResult = SPI.transfer(0xC0);  // RESET command
-    Serial.printf("Empfangen: 0x%02X\n", testResult);
-    
-    delayMicroseconds(10);
-    digitalWrite(csPin, HIGH);
-    
-    Serial.println("Beende SPI Transaction...");
-    SPI.endTransaction();
-    Serial.printf("SPI Test-Response: 0x%02X\n", testResult);
-    
-    // Wenn immer noch 0xFF, versuche anderen Ansatz
-    if (testResult == 0xFF) {
-        Serial.println("\nVersuche alternativen SPI-Test...");
-        
-        // Versuche CANSTAT Register zu lesen
-        digitalWrite(csPin, LOW);
-        delayMicroseconds(10);
-        SPI.transfer(0x03);  // READ instruction
-        SPI.transfer(0x0E);  // CANSTAT address
-        uint8_t canstat = SPI.transfer(0x00);  // Dummy byte to read
-        digitalWrite(csPin, HIGH);
-        
-        Serial.printf("CANSTAT Register: 0x%02X\n", canstat);
-    }
-    
-    // Warte nach Reset
-    delay(100);
-    
+
+    canController.setPins(csPin, intPin);
+
     // MCP2515 mit der fest hinterlegten Quarzfrequenz konfigurieren.
     // Der verbaute Joy-IT SBC-CAN01 trägt einen Quarz mit Aufdruck 16.000.
     // Früher wurde hier 16 MHz probiert und bei Misserfolg auf 8 MHz
@@ -183,7 +94,9 @@ void CANReader::end() {
     disableLogging();
     canController.end();
     initialized = false;
-    
+    hasPendingMessage = false;
+    pendingMessage = CANMessage{};
+
     Serial.println("CAN-Bus Reader beendet");
 }
 
@@ -208,56 +121,71 @@ void CANReader::setClockFrequency(long clockFreq) {
     clockFrequency = clockFreq;
 }
 
+bool CANReader::fetchPacket() {
+    if (hasPendingMessage) {
+        return true;
+    }
+    if (!initialized) {
+        return false;
+    }
+
+    // parsePacket() liest den Frame aus dem Empfangspuffer des MCP2515 und
+    // quittiert dabei RXnIF. Ein zweiter Aufruf findet die Nachricht deshalb
+    // nicht mehr vor. Genau das passierte bisher: hasMessage() parste den
+    // Frame, readMessage() rief parsePacket() erneut auf, bekam nichts mehr
+    // und lieferte eine leere Nachricht zurück - jeder Frame ging verloren.
+    // Das Ergebnis wird deshalb hier zwischengespeichert.
+    const int packetSize = canController.parsePacket();
+    if (packetSize <= 0 && canController.packetId() == -1) {
+        return false;
+    }
+
+    pendingMessage = CANMessage{};
+    pendingMessage.timestamp = millis();
+    pendingMessage.canId = canController.packetId();
+    pendingMessage.extended = canController.packetExtended();
+    pendingMessage.rtr = canController.packetRtr();
+    pendingMessage.dlc = canController.packetDlc();
+    pendingMessage.rssi = 0.0f; // Nicht verfügbar bei MCP2515
+
+    int dataIndex = 0;
+    while (canController.available() && dataIndex < 8) {
+        pendingMessage.data[dataIndex++] = canController.read();
+    }
+
+    hasPendingMessage = true;
+    messageCount++;
+    totalMessages++;
+
+    if (loggingEnabled) {
+        logMessage(pendingMessage);
+    }
+
+    return true;
+}
+
 bool CANReader::hasMessage() {
-    if (!initialized) return false;
-    
-    return (canController.parsePacket() > 0 || canController.packetId() != -1);
+    return fetchPacket();
 }
 
 CANMessage CANReader::readMessage() {
-    CANMessage msg = {0};
-    
-    if (!initialized) {
-        Serial.println("CAN-Reader nicht initialisiert");
-        errorCount++;
-        return msg;
+    if (!fetchPacket()) {
+        // Keine Nachricht vorhanden. Der Aufrufer sollte vorher hasMessage()
+        // prüfen; die CAN-ID 0x000 ist ein gültiger Bezeichner und taugt
+        // deshalb nicht als Kennzeichen für "leer".
+        return CANMessage{};
     }
-    
-    int packetSize = canController.parsePacket();
-    
-    if (packetSize > 0 || canController.packetId() != -1) {
-        // Nachricht empfangen
-        msg.timestamp = millis();
-        msg.canId = canController.packetId();
-        msg.extended = canController.packetExtended();
-        msg.rtr = canController.packetRtr();
-        msg.dlc = canController.packetDlc();
-        msg.rssi = 0.0; // Nicht verfügbar bei MCP2515
-        
-        // Daten lesen (falls nicht RTR)
-        int dataIndex = 0;
-        while (canController.available() && dataIndex < 8) {
-            msg.data[dataIndex++] = canController.read();
-        }
-        
-        messageCount++;
-        totalMessages++;
-        
-        // Automatisches Logging
-        if (loggingEnabled) {
-            logMessage(msg);
-        }
-        
-        return msg;
-    }
-    
-    return msg; // Leere Nachricht
+
+    hasPendingMessage = false;
+    lastMessage = pendingMessage;
+    return pendingMessage;
 }
 
 int CANReader::getAvailableMessages() {
-    if (!initialized) return 0;
-    
-    return canController.available();
+    // Der MCP2515 gibt keine Anzahl wartender Frames heraus; available() des
+    // Treibers meldet lediglich die Restbytes des gerade geparsten Frames.
+    // Hier zählt deshalb nur, ob ein abholbereiter Frame vorliegt.
+    return fetchPacket() ? 1 : 0;
 }
 
 bool CANReader::enableLogging(const String& fileName) {
@@ -405,13 +333,21 @@ String CANReader::getStatusString() {
 }
 
 void CANReader::onReceive(void(*callback)(int)) {
-    if (!initialized) {
-        Serial.println("CAN-Reader nicht initialisiert für Callback");
-        return;
-    }
-    
-    canController.onReceive(callback);
-    Serial.println("✅ CAN-Receive-Callback registriert");
+    // Bewusst nicht an den Treiber weitergereicht.
+    //
+    // MCP2515Class::onReceive() haengt den Callback an einen GPIO-Interrupt.
+    // Der Handler ruft handleInterrupt() und darueber parsePacket() und
+    // readRegister() auf - also SPI-Transfers. SPI.beginTransaction() nimmt
+    // auf dem ESP32 einen FreeRTOS-Mutex; das im Interruptkontext zu tun
+    // fuehrt zum Abbruch der Firmware. Zusaetzlich liegt der Handler nicht im
+    // IRAM.
+    //
+    // Der unterstuetzte Weg ist das Polling in loop(): dort wird alle 10 ms
+    // hasMessage() geprueft und readMessage() abgeholt.
+    (void)callback;
+    Serial.println("⚠️ CAN-Callback nicht unterstuetzt: Der Treiber wuerde SPI "
+                   "im Interruptkontext ausfuehren.");
+    Serial.println("   Nachrichten werden stattdessen in loop() abgefragt.");
 }
 
 // Hilfsfunktionen
@@ -516,14 +452,11 @@ bool CANReader::available() {
 }
 
 void CANReader::update() {
-    // Prozessiert anstehende Nachrichten
-    if (!initialized) return;
-    
-    // Prüfe ob neue Nachrichten vorhanden sind
+    // Holt einen anstehenden Frame ab. readMessage() aktualisiert lastMessage
+    // selbst; der Zeitstempel stammt aus dem Empfangszeitpunkt und wird hier
+    // bewusst nicht überschrieben.
     if (hasMessage()) {
-        // Lese und speichere die letzte Nachricht
-        lastMessage = readMessage();
-        lastMessage.timestamp = millis();
+        readMessage();
     }
 }
 

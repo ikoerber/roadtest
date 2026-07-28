@@ -1102,7 +1102,7 @@ bool IntegrationTests::testPowerBrownout() {
         gpsManager.enableInterruptMode(true);  // Interrupt-Modus wiederherstellen
     }
     
-    if (modulesWereReady[3] && canReader.begin(500E3)) {
+    if (modulesWereReady[3] && canReader.begin(CAN_BAUDRATE)) {
         recoveredModules++;
     }
     

@@ -42,7 +42,16 @@ private:
     
     // Letzte empfangene Nachricht
     CANMessage lastMessage;
-    
+
+    // Zwischengespeicherter Frame. parsePacket() entnimmt den Frame aus dem
+    // Empfangspuffer des MCP2515 und löscht dabei das Interrupt-Flag; der
+    // Aufruf darf deshalb pro Nachricht genau einmal erfolgen.
+    CANMessage pendingMessage;
+    bool hasPendingMessage;
+
+    // Holt höchstens einen Frame aus dem Controller in pendingMessage.
+    bool fetchPacket();
+
 public:
     CANReader(int cs = CAN_CS_PIN, int interrupt = CAN_INT_PIN);
     ~CANReader();
