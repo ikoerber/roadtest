@@ -53,8 +53,21 @@ extern const int GPS_BAUD_RATE;    // 9600    - GPS Baudrate
 // bereits nach dem ersten Bildaufbau wirkungslos. Beide Werte werden daher
 // explizit an den Displaykonstruktor übergeben (oled_manager.cpp), erst damit
 // steuern die Konstanten hier den Bus tatsächlich.
+// Gemessen wurden 2,54 kOhm Pull-up. Die Anstiegszeit betraegt naeherungsweise
+// 2,2 * R * C; bei 400 kHz sind nur 300 ns erlaubt, also unter etwa 54 pF
+// Buskapazitaet. Auf Lochraster mit zwei Modulen und 10 bis 15 cm Draht liegt
+// die reale Kapazitaet darueber. Verstuemmelte Bits auf SDA koennen ein
+// Adressbyte zufaellig auf 0x29 verfaelschen; ein Schreibzugriff landet dann im
+// BNO055 und trifft dort eine beliebige Registeradresse. Genau dazu passen die
+// beobachteten Symptome: Fehler 5 (Registeradresse ausserhalb des Bereichs),
+// Fehler 9 (Fusionskonfiguration) und spontane Resets ueber SYS_TRIGGER.
+//
+// Beide Werte sind deshalb gleich: Der Bustakt wechselt gar nicht mehr und
+// bleibt durchgehend bei den 100 kHz, die zwischen den Displayaufbauten
+// nachweislich stabil laufen. Der Bildaufbau dauert damit rund 92 ms statt
+// 23 ms - bei einem Aktualisierungsintervall von 5 s ohne Belang.
 #define I2C_CLOCK_SPEED     100000  // Basistakt für BNO055 zwischen den Transfers
-#define I2C_DISPLAY_SPEED   400000  // Takt während der SSD1306-Übertragungen
+#define I2C_DISPLAY_SPEED   100000  // Takt während der SSD1306-Übertragungen
 
 // SD: Die Bibliothek verwendet ohne Argument 4 MHz. Auf Lochraster ohne
 // Serienterminierung ist das die Schwelle, ab der sporadische Aussetzer
