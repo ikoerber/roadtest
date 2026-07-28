@@ -213,11 +213,46 @@ bool BNO055Manager::verifyFusionMode() {
         return false;
     }
 
+    // Erst prüfen, ob der Sensor überhaupt antwortet. Ein fehlgeschlagener
+    // I²C-Lesevorgang liefert 0x00 zurück — ohne diese Prüfung wäre
+    // "Modus=0x00" nicht von einem echten CONFIG-Modus zu unterscheiden.
+    if (!probeAddress(i2cAddress)) {
+        if (fusionModeFailureCount < 3) {
+            ++fusionModeFailureCount;
+        }
+        if (fusionModeFailureCount >= 3) {
+            fusionModeActive = false;
+        }
+        Serial.printf("⚠️ BNO055 Fusionsprüfung %u/3: keine Antwort auf 0x%02X\n",
+                      fusionModeFailureCount, i2cAddress);
+        return fusionModeFailureCount < 3;
+    }
+
     runtimeStatus = readRuntimeStatus();
     if (runtimeStatus.isFusionRunning()) {
         fusionModeFailureCount = 0;
         fusionModeActive = true;
         return true;
+    }
+
+    // Steht der Sensor lediglich im falschen Betriebsmodus, genügt es, den
+    // Modus erneut zu setzen. Das dauert rund 7 ms und erhält die laufende
+    // Kalibrierung. Ein vollständiger Neustart verwirft sie dagegen — genau
+    // das führte bisher zur Dauerschleife aus Neustart und erneutem Ausfall.
+    if (!runtimeStatus.isExpectedModeActive()) {
+        Serial.printf("⚠️ BNO055 steht in Modus 0x%02X (System=%u, Fehler=%u); "
+                      "setze IMUPLUS erneut\n",
+                      runtimeStatus.operationMode, runtimeStatus.systemStatus,
+                      runtimeStatus.systemError);
+        sensor->setMode(ROADTEST_BNO_MODE);
+        delay(30);
+        runtimeStatus = readRuntimeStatus();
+        if (runtimeStatus.isFusionRunning()) {
+            fusionModeFailureCount = 0;
+            fusionModeActive = true;
+            Serial.println("✅ BNO055 ohne Neustart wieder in IMUPLUS");
+            return true;
+        }
     }
 
     // Einzelne Laufzeitstatus-Abfragen können trotz weiterlaufender Fusion
