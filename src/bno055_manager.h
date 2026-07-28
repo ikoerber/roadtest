@@ -28,6 +28,10 @@ constexpr adafruit_bno055_opmode_t ROADTEST_BNO_MODE = OPERATION_MODE_NDOF;
 // verlangt die bekannte Achterbewegung. In IMUPLUS bleibt mag unbeachtet.
 constexpr bool ROADTEST_BNO_USES_MAG = (ROADTEST_BNO_MODE == OPERATION_MODE_NDOF);
 
+// Klartextname für Log, OLED und Webseite, damit der Modus nur an einer
+// Stelle steht und Ausgaben nicht auseinanderlaufen.
+constexpr const char* ROADTEST_BNO_MODE_NAME = ROADTEST_BNO_USES_MAG ? "NDOF" : "IMUPLUS";
+
 // Kalibrierungs-Datenstruktur
 struct CalibrationData {
     uint8_t system;

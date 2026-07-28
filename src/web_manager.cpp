@@ -136,7 +136,7 @@ bool WebManager::begin() {
         const bool healthy = restarted && status.isFusionRunning();
         String message =
             healthy
-                ? "BNO055 neu gestartet: IMUPLUS-Sensorfusion läuft."
+                ? String("BNO055 neu gestartet: ") + ROADTEST_BNO_MODE_NAME + "-Sensorfusion läuft."
                 : "BNO055-Neustart ohne Erfolg. Modus und Fehlercode prüfen.";
         server.sendHeader("Cache-Control", "no-store");
         server.send(healthy ? 200 : 500, "text/html; charset=utf-8",
@@ -275,8 +275,8 @@ String WebManager::buildStatusPage() {
     page += requiredHardwareReady ? F("ok'>bereit") : F("warn'>Prüfung läuft");
     page += F("</td></tr><tr><td>BNO055</td><td>");
     page += bnoManager.isSelfTestPassed() && bnoManager.isFusionModeActive()
-                ? F("OK · IMUPLUS")
-                : F("Fehler");
+                ? String("OK · ") + ROADTEST_BNO_MODE_NAME
+                : String("Fehler");
     page += F("</td></tr><tr><td>OLED</td><td>");
     page += oledManager.isReady() ? F("OK") : F("Fehler");
     page += F("</td></tr><tr><td>GPS</td><td>");
@@ -424,8 +424,12 @@ String WebManager::buildCalibrationPage(const String& message) {
     }
 
     page += F("<table><tr><td>Betriebsmodus</td><td class='");
-    page += runtimeStatus.isExpectedModeActive() ? F("ok'>IMUPLUS (8)")
-                                                : F("warn'>");
+    if (runtimeStatus.isExpectedModeActive()) {
+        page += "ok'>";
+        page += ROADTEST_BNO_MODE_NAME;
+    } else {
+        page += F("warn'>");
+    }
     if (!runtimeStatus.isExpectedModeActive()) {
         page += String(runtimeStatus.operationMode);
     }
@@ -442,13 +446,21 @@ String WebManager::buildCalibrationPage(const String& message) {
     page += F(" / 3</td></tr><tr><td>Beschleunigung</td><td>");
     page += String(calibration.accel);
     page += F(" / 3</td></tr><tr><td>System</td><td>nicht erforderlich</td></tr>"
-              "<tr><td>Magnetometer</td><td>nicht verwendet</td></tr>"
+              "<tr><td>Magnetometer</td><td>");
+    if (ROADTEST_BNO_USES_MAG) {
+        page += String(calibration.mag);
+        page += F(" / 3");
+    } else {
+        page += F("nicht verwendet");
+    }
+    page += F("</td></tr>"
               "<tr><td>Dauerhaft gespeichert</td><td>");
     page += bnoManager.isCalibrationSaved() ? F("Ja") : F("Nein");
     page += F("</td></tr></table>");
 
     if (calibration.isFullyCalibrated()) {
-        page += F("<p class='ok'><strong>Für IMUPLUS ausreichend kalibriert.</strong></p>");
+        page += String("<p class='ok'><strong>Für ") + ROADTEST_BNO_MODE_NAME +
+                " ausreichend kalibriert.</strong></p>";
     } else {
         page += F(
             "<p class='warn'><strong>Gyro oder Beschleunigung noch nicht kalibriert.</strong></p>");
@@ -458,8 +470,7 @@ String WebManager::buildCalibrationPage(const String& message) {
         "<ol><li>Gyro: Gerät einige Sekunden völlig stillhalten.</li>"
         "<li>Beschleunigung: nacheinander auf alle sechs Seiten legen.</li>"
         "<li>Warten, bis Gyro und Beschleunigung 3 anzeigen.</li></ol>"
-        "<p>Das Magnetometer bleibt aus. Eine Achterbewegung ist nicht nötig; "
-        "die absolute Kompassrichtung steht damit nicht zur Verfügung.</p>"
+        "<li>Magnetometer: liegende Acht in der Luft beschreiben.</li>"
         "<form method='POST' action='/calibration/save'>"
         "<button type='submit'>Kalibrierung speichern</button></form>"
         "<form method='POST' action='/calibration/restart'>"

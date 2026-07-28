@@ -1,6 +1,7 @@
 #include "oled_manager.h"
 #include <Wire.h>
 
+#include "bno055_manager.h"
 #include "hardware_config.h"
 
 // Globale OLED-Manager Instanz
@@ -258,19 +259,26 @@ void OLEDManager::showTestResults(const String& testName, bool success, const St
 }
 
 void OLEDManager::showCalibrationStatus(uint8_t gyro, uint8_t accel,
-                                        bool saved) {
+                                        uint8_t mag, bool saved) {
     clearAndSetup();
     drawHeader("KALIBRIERUNG");
 
-    display->println("Modus:  IMUPLUS");
+    display->printf("Modus:  %s\n", ROADTEST_BNO_MODE_NAME);
     display->printf("Gyro:   %u / 3\n", gyro);
     display->printf("Accel:  %u / 3\n", accel);
-    display->println("Mag:    --");
+    if (ROADTEST_BNO_USES_MAG) {
+        display->printf("Mag:    %u / 3\n", mag);
+    } else {
+        display->println("Mag:    --");
+    }
     display->print("Gespeichert: ");
     display->println(saved ? "JA" : "NEIN");
 
-    if (gyro == 3 && accel == 3) {
+    const bool magOK = !ROADTEST_BNO_USES_MAG || mag == 3;
+    if (gyro == 3 && accel == 3 && magOK) {
         display->println("Bereit zum Speichern");
+    } else if (ROADTEST_BNO_USES_MAG && mag < 3) {
+        display->println("Liegende Acht");
     } else {
         display->println("Still / 6 Seiten");
     }

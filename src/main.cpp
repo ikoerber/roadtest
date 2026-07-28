@@ -1079,8 +1079,9 @@ void loop() {
             bnoManager.isFusionModeActive()) {
             cal = bnoManager.getCalibration();
             BNO055RuntimeStatus bnoStatus = bnoManager.getRuntimeStatus();
-            Serial.printf("BNO055 IMUPLUS/Sys:%d Kal:G%d/A%d",
-                         bnoStatus.systemStatus, cal.gyro, cal.accel);
+            Serial.printf("BNO055 %s/Sys:%d Kal:G%d/A%d/M%d",
+                         ROADTEST_BNO_MODE_NAME, bnoStatus.systemStatus,
+                         cal.gyro, cal.accel, cal.mag);
         } else {
             Serial.print("BNO055: Fusion nicht bereit");
         }
@@ -1146,7 +1147,8 @@ void loop() {
 
             if (calibrationChanged || calibrationReminder) {
                 oledManager.showCalibrationStatus(
-                    cal.gyro, cal.accel, bnoManager.isCalibrationSaved());
+                    cal.gyro, cal.accel, cal.mag,
+                    bnoManager.isCalibrationSaved());
                 lastDisplayedCalibration = cal;
                 lastDisplayedCalibrationSaved = bnoManager.isCalibrationSaved();
                 lastCalibrationDisplay = currentTime;

@@ -101,7 +101,7 @@ bool BNO055Manager::begin() {
     }
 
     if (!ensureFusionMode()) {
-        Serial.println("⚠️ BNO055 konnte nicht in den IMUPLUS-Modus wechseln");
+        Serial.println("⚠️ BNO055 konnte nicht in den Fusionsmodus wechseln");
         end();
         return false;
     }
@@ -156,12 +156,14 @@ bool BNO055Manager::runSelfTest() {
     
     Serial.printf("Self-Test: 0x%02X\n", self_test_results);
     
-    // IMUPLUS benötigt Accelerometer, Gyro und MCU. Ein Fehler des nicht
-    // verwendeten Magnetometers darf die Straßenmessung nicht blockieren.
-    constexpr uint8_t REQUIRED_SELF_TESTS = 0x0D;
+    // Bit 0 Accelerometer, Bit 1 Magnetometer, Bit 2 Gyroskop, Bit 3 MCU.
+    // IMUPLUS braucht Accel, Gyro und MCU; ein Fehler des dort ungenutzten
+    // Magnetometers darf die Messung nicht blockieren. In NDOF gehört das
+    // Magnetometer dagegen zur Fusion und muss mitgeprüft werden.
+    constexpr uint8_t REQUIRED_SELF_TESTS = ROADTEST_BNO_USES_MAG ? 0x0F : 0x0D;
     if ((self_test_results & REQUIRED_SELF_TESTS) == REQUIRED_SELF_TESTS) {
         selfTestPassed = true;
-        Serial.println("Alle für IMUPLUS benötigten Tests bestanden!");
+        Serial.println("Alle benötigten Selbsttests bestanden!");
         if (!(self_test_results & 0x02)) {
             Serial.println("Hinweis: Magnetometer-Test fehlgeschlagen (nicht benötigt)");
         }
@@ -184,8 +186,8 @@ bool BNO055Manager::ensureFusionMode() {
 
     adafruit_bno055_opmode_t currentMode = sensor->getMode();
     if (currentMode != ROADTEST_BNO_MODE) {
-        Serial.printf("⚠️ BNO055 Modus 0x%02X; schalte auf IMUPLUS\n",
-                      static_cast<uint8_t>(currentMode));
+        Serial.printf("⚠️ BNO055 Modus 0x%02X; schalte auf %s\n",
+                      static_cast<uint8_t>(currentMode), ROADTEST_BNO_MODE_NAME);
         sensor->setMode(ROADTEST_BNO_MODE);
     }
 
@@ -195,7 +197,7 @@ bool BNO055Manager::ensureFusionMode() {
     fusionModeFailureCount = 0;
     Serial.printf("BNO055 Betriebsmodus: 0x%02X (%s), System:%u, Fehler:%u\n",
                   runtimeStatus.operationMode,
-                  expectedMode ? "IMUPLUS" : "FEHLER",
+                  expectedMode ? ROADTEST_BNO_MODE_NAME : "FEHLER",
                   runtimeStatus.systemStatus, runtimeStatus.systemError);
     return expectedMode;
 }
@@ -241,16 +243,16 @@ bool BNO055Manager::verifyFusionMode() {
     // das führte bisher zur Dauerschleife aus Neustart und erneutem Ausfall.
     if (!runtimeStatus.isExpectedModeActive()) {
         Serial.printf("⚠️ BNO055 steht in Modus 0x%02X (System=%u, Fehler=%u); "
-                      "setze IMUPLUS erneut\n",
+                      "setze %s erneut\n",
                       runtimeStatus.operationMode, runtimeStatus.systemStatus,
-                      runtimeStatus.systemError);
+                      runtimeStatus.systemError, ROADTEST_BNO_MODE_NAME);
         sensor->setMode(ROADTEST_BNO_MODE);
         delay(30);
         runtimeStatus = readRuntimeStatus();
         if (runtimeStatus.isFusionRunning()) {
             fusionModeFailureCount = 0;
             fusionModeActive = true;
-            Serial.println("✅ BNO055 ohne Neustart wieder in IMUPLUS");
+            Serial.printf("✅ BNO055 ohne Neustart wieder in %s\n", ROADTEST_BNO_MODE_NAME);
             return true;
         }
     }
@@ -298,10 +300,10 @@ CalibrationData BNO055Manager::getCalibration() {
 bool BNO055Manager::saveCalibration() {
     if (!initialized) return false;
     
-    // Im IMUPLUS-Modus müssen Gyro und Beschleunigung kalibriert sein.
+    // Im gewaehlten Fusionsmodus muessen Gyro und Beschleunigung kalibriert sein.
     // Ohne gültige Offsets wird nichts als "gespeichert" markiert.
     if (!sensor->getSensorOffsets(calibrationOffsets)) {
-        Serial.println("❌ IMUPLUS-Kalibrierungswerte konnten nicht gelesen werden");
+        Serial.println("❌ Kalibrierungswerte konnten nicht gelesen werden");
         return false;
     }
     
@@ -319,7 +321,7 @@ bool BNO055Manager::saveCalibration() {
     preferences.end();
     
     calibrationSaved = true;
-    Serial.println("✅ IMUPLUS-Kalibrierung in NVS gespeichert!");
+    Serial.println("✅ Kalibrierung in NVS gespeichert!");
     Serial.printf("   Gyro=%d, Accel=%d\n", cal.gyro, cal.accel);
     
     return true;
@@ -352,7 +354,7 @@ bool BNO055Manager::loadCalibration() {
     sensor->setSensorOffsets(calibrationOffsets);
     
     calibrationSaved = true;
-    Serial.println("✅ IMUPLUS-Kalibrierung aus NVS geladen!");
+    Serial.println("✅ Kalibrierung aus NVS geladen!");
     Serial.printf("   Kalibrierungsstatus: Gyro=%d, Accel=%d\n",
                   savedGyro, savedAccel);
     
@@ -391,9 +393,12 @@ String BNO055Manager::getCalibrationInstructions() {
     if (cal.accel < 3) {
         instructions += "Accel: 6 Positionen (±X,±Y,±Z)\n";
     }
-    
+    if (ROADTEST_BNO_USES_MAG && cal.mag < 3) {
+        instructions += "Mag: liegende Acht in der Luft beschreiben\n";
+    }
+
     if (cal.isFullyCalibrated()) {
-        instructions = "Für IMUPLUS kalibriert!";
+        instructions = String("Für ") + ROADTEST_BNO_MODE_NAME + " kalibriert!";
     }
     
     return instructions;
