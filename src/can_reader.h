@@ -67,11 +67,56 @@ struct CANHardwareDiagnostics {
     bool transmitBusOff = false;
     bool receiveBuffer0Overflow = false;
     bool receiveBuffer1Overflow = false;
+    uint32_t receiveBuffer0OverflowCount = 0;
+    uint32_t receiveBuffer1OverflowCount = 0;
+    uint32_t controllerRecoveryCount = 0;
+};
+
+enum class OBDTraceEventType : uint8_t {
+    REQUEST_SENT,
+    TRANSMIT_ERROR,
+    RESPONSE,
+    TIMEOUT
+};
+
+struct OBDTraceEvent {
+    OBDTraceEventType type = OBDTraceEventType::REQUEST_SENT;
+    uint32_t sequence = 0;
+    uint32_t eventUptimeMs = 0;
+    uint32_t requestUptimeMs = 0;
+    uint32_t responseUptimeMs = 0;
+    uint32_t responseLatencyMs = 0;
+    uint32_t responseCanId = 0;
+    uint8_t pid = 0;
+    bool transmitOK = false;
+    bool matchedRequest = false;
+};
+
+struct OBDSessionStats {
+    bool active = false;
+    uint32_t startedAt = 0;
+    uint32_t requestCount = 0;
+    uint32_t responseCount = 0;
+    uint32_t requestErrors = 0;
+    uint32_t timeoutCount = 0;
+    uint32_t unmatchedResponseCount = 0;
+    uint32_t supportResponseCount = 0;
+    uint32_t traceDropped = 0;
+    uint32_t lastRequestSequence = 0;
+    uint32_t lastRequestMs = 0;
+    uint32_t lastResponseMs = 0;
+    uint32_t lastResponseLatencyMs = 0;
+    uint32_t lastResponseCanId = 0;
+    uint8_t lastRequestPid = 0;
+    uint8_t lastResponsePid = 0;
+    bool lastTransmitOK = false;
 };
 
 // CAN-Bus Reader Klasse
 class CANReader {
 private:
+    static constexpr uint8_t OBD_TRACE_QUEUE_SIZE = 16;
+
     bool initialized;
     unsigned long messageCount;
     unsigned long lastLogTime;
@@ -91,6 +136,9 @@ private:
     // Statistiken
     unsigned long totalMessages;
     unsigned long errorCount;
+    uint32_t receiveBuffer0OverflowCount;
+    uint32_t receiveBuffer1OverflowCount;
+    uint32_t controllerRecoveryCount;
     
     // Letzte empfangene Nachricht
     CANMessage lastMessage;
@@ -102,9 +150,20 @@ private:
     bool hasPendingMessage;
     OBDLiveData obdData;
     bool obdPollingEnabled;
+    OBDSessionStats obdSession;
+    bool obdRequestPending;
+    bool pendingOBDHadResponse;
+    uint32_t pendingOBDSequence;
+    uint32_t pendingOBDRequestMs;
+    uint8_t pendingOBDPid;
+    OBDTraceEvent obdTraceQueue[OBD_TRACE_QUEUE_SIZE];
+    uint8_t obdTraceReadIndex;
+    uint8_t obdTraceWriteIndex;
 
     // Holt höchstens einen Frame aus dem Controller in pendingMessage.
     bool fetchPacket();
+    void enqueueOBDTrace(const OBDTraceEvent& event);
+    void finishPendingOBDTimeout(uint32_t now);
 
 public:
     CANReader(int cs = CAN_CS_PIN, int interrupt = CAN_INT_PIN);
@@ -113,6 +172,8 @@ public:
     // Initialisierung und Konfiguration
     bool begin(long baudRate = CAN_BAUDRATE);
     void end();
+    bool restartController(
+        long baudRate = CAN_BAUDRATE, bool passiveMode = false);
     void setPins(int cs, int interrupt);
     void setClockFrequency(long clockFreq = CAN_CLOCK_16MHZ);
     
@@ -129,6 +190,12 @@ public:
     bool processOBDResponse(const CANMessage& msg);
     OBDLiveData getOBDData() const;
     void resetOBDDiscoveryData();
+    void beginOBDSession();
+    void endOBDSession();
+    void updateOBDDiagnostics();
+    OBDSessionStats getOBDSessionStats() const { return obdSession; }
+    bool popOBDTraceEvent(OBDTraceEvent& event);
+    bool isOBDSessionActive() const { return obdSession.active; }
     bool isOBDPidSupportKnown(uint8_t pid) const;
     bool isOBDPidSupported(uint8_t pid) const;
     void setOBDPollingEnabled(bool enabled) { obdPollingEnabled = enabled; }
@@ -174,5 +241,6 @@ extern CANReader canReader;
 String formatCANMessage(const CANMessage& msg);
 String getCANIdString(long id, bool extended);
 void printCANMessage(const CANMessage& msg);
+const char* obdTraceEventName(OBDTraceEventType type);
 
 #endif // CAN_READER_H

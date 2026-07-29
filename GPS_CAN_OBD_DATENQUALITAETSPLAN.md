@@ -181,6 +181,9 @@ Eine Sitzung soll mindestens dokumentieren:
 Ziel: Fehler und Datenalter müssen sichtbar sein, bevor Filter oder neue
 Messwerte ergänzt werden.
 
+Status: **seit Firmware 1.5.15 umgesetzt und durch die Hardware- und
+Fahrzeugtests bis `20260729_170946_05A4DB46` bestätigt.**
+
 #### Firmware
 
 - Beim Discovery-Start Startwerte aller OBD-Zähler erfassen oder echte
@@ -193,6 +196,14 @@ Messwerte ergänzt werden.
 - GPS-UART-Pufferüberläufe zählen.
 - Neue GPS-Fixes von wiederholten Ausgaben unterscheiden.
 - Firmwareversion und Qualitätsparameter in die Sitzung aufnehmen.
+
+Umgesetzt werden die erweiterten GPS-Felder in `road_gps_...csv`, die
+dekodierten Sitzungswerte in `road_obd_...csv`, einzelne Transaktionen in
+`road_obd_trace_...csv` und Start-/Abschlusswerte in `road_meta_...csv`.
+Die Metadatendatei enthält zusätzlich alle fünf Sekunden einen
+Zwischenzustand.
+`Rejected` und `RejectionReason` bleiben in 1.5.15 bewusst `0`; die
+Plausibilitätsfilter gehören zu Phase 3.
 
 #### Abnahme
 
@@ -207,13 +218,18 @@ Messwerte ergänzt werden.
 Ziel: Ein später Motorstart oder ein vorübergehend schlafendes Gateway darf die
 gesamte Messfahrt nicht ohne OBD-Daten lassen.
 
+Status: **in Firmware 1.5.20 umgesetzt. Der Abnahmetest
+`20260729_162734_92A51444` bestätigte die getrennte Erfassung von Zündung,
+Motorlauf, ECU-Ausfall und Wiederanlauf am Fahrzeug.**
+
 #### Firmware
 
 - ECU-Erreichbarkeit als eigenen Zustand führen.
 - Unterstützungsblockscan mit begrenztem Backoff wiederholen, solange keine
   ECU geantwortet hat.
-- Nach einer Motorstart-Markierung beziehungsweise der ersten erkannten
-  ECU-Antwort sofort neu scannen.
+- Zündung-Ein und Motorstart getrennt markieren: ECU-Erreichbarkeit anhand
+  einer Antwort, tatsächlichen Motorlauf anhand frischer OBD-Drehzahl erkennen.
+- Nach der ersten erkannten ECU-Antwort sofort neu scannen.
 - `unbekannt` und `nicht unterstützt` strikt unterscheiden.
 - Bei unbekannter Unterstützung die bereits am Fahrzeug bestätigten PIDs
   `0x0C`, `0x0D` und `0x11` in niedriger Rate als Rückfall testen.
@@ -237,15 +253,33 @@ gesamte Messfahrt nicht ohne OBD-Daten lassen.
 Ziel: Ein gespeicherter GPS-Datensatz darf nur zeitlich zusammengehörige und
 plausible Werte als gültig kennzeichnen.
 
+Status: **Filterstufe in Firmware 1.5.21 umgesetzt und mit der Vergleichsfahrt
+`20260729_170946_05A4DB46` im Einbau unter dem Vordersitz bestätigt.**
+Positionen benötigen höchstens 1,5 Sekunden Alter,
+mindestens fünf Satelliten und HDOP höchstens 3,5. GPS-Geschwindigkeit gilt
+zwischen 6 und 300 km/h als belastbar. Höhe, Kurs und ihre jeweiligen Alter
+werden getrennt geprüft. Ablehnungsgründe werden als Bitmaske protokolliert.
+Bei der Streckenbildung bestätigt eine frische OBD-Geschwindigkeit bis
+1 km/h den Fahrzeugstillstand; ohne OBD ist eine gültige GPS-Geschwindigkeit
+der Bewegungsnachweis.
+
+Firmware 1.5.23 reduziert `/acceptance` nach der bestandenen Vergleichsfahrt
+auf den noch offenen ECU-Recovery-Kontrolltest. Die Seite überträgt während
+der Messung nur kleine Statusantworten und protokolliert Laufzeit-, Web- und
+SD-Pausen in den Sitzungsmetadaten.
+
 #### Firmware
 
-- Positionsgültigkeit an Alter, Satellitenzahl und HDOP koppeln.
+- Positionsgültigkeit an Alter, Satellitenzahl und HDOP koppeln. **Umgesetzt
+  in 1.5.21.**
 - Geschwindigkeit, Höhe und Kurs nur übernehmen, wenn das jeweilige Feld
-  frisch ist.
+  frisch ist. **Umgesetzt in 1.5.21.**
 - Alte Felder nicht aus `lastValidData` als aktuelle Messung weiterreichen.
 - Letzten guten Wert nur als ausdrücklich historischen Referenzwert führen.
 - Physikalisch unplausible Höhe, Geschwindigkeit und Positionssprünge
-  zurückweisen und den Grund protokollieren.
+  zurückweisen und den Grund protokollieren. **Für Höhe, Geschwindigkeit und
+  die Streckenbildung in 1.5.21 umgesetzt; eine allgemeine
+  Positionssprungbewertung bleibt offen.**
 - GPS vorzugsweise bei einem neuen Fix speichern; Status-Heartbeat unabhängig
   davon höchstens einmal pro Sekunde.
 - UART kontinuierlich leeren oder nachweisen, dass der Ringpuffer unter

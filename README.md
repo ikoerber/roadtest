@@ -2,10 +2,8 @@
 
 Ein fortschrittliches Embedded-System zur Messung und Bewertung von Straßenqualität für kurvenreiche Motorradstrecken.
 
-[![Build Status](https://img.shields.io/badge/build-passing-brightgreen)]()
-[![Code Quality](https://img.shields.io/badge/quality-9.2%2F10-brightgreen)]()
-[![Test Coverage](https://img.shields.io/badge/tests-85%25-green)]()
-[![Buffer Security](https://img.shields.io/badge/security-protected-blue)]()
+Aktueller Firmwarestand: **1.5.23**. Der Stand ist ein Hardware- und
+Fahrzeugteststand; der kurze Recovery-Kontrolltest mit 1.5.23 steht noch aus.
 
 ## 📋 Überblick
 
@@ -25,8 +23,8 @@ Das System erfasst Bewegungsdaten, GPS-Position und CAN-Bus-Signale, um die Qual
 - **Eigenes ROADTEST-WLAN** mit Statusseite, Kalibrierassistent und Browser-OTA
 - **Kontrollierte Messfahrten** mit Start, sicherem Ende und Zusammenfassung
 - **Umfassende Hardware-Tests** und Diagnostik
-- **NEU: GPS Interrupt-Modus** für verlustfreien Datenempfang
-- **NEU: NVS-Kalibrierungsspeicher** für BNO055 (persistiert über Neustarts)
+- **Gepufferter GPS-Empfang** mit sichtbaren Überlauf- und Prüfsummenzählern
+- **NVS-Kalibrierungsspeicher** für BNO055 (persistiert über Neustarts)
 
 ### 🛡️ Sicherheitsfeatures
 - **Buffer-Overflow-Schutz** mit SafeStringFormatter
@@ -37,12 +35,12 @@ Das System erfasst Bewegungsdaten, GPS-Position und CAN-Bus-Signale, um die Qual
 - **NEU: Null-Pointer-Checks** für alle dynamischen Allokationen
 
 ### 📊 Datenerfassung
-- **Beschleunigungsdaten** (10Hz) mit Vibrations-Analyse
-- **GPS-Tracking** (5Hz) mit Fix-Detection und HDOP
+- **Beschleunigungsdaten** mit konfiguriertem 10-Hz-Messintervall
+- **GPS-Qualitätssnapshots** (5 Hz) mit neuen Fixes, Feldalter und HDOP
 - **Begrenzte OBD-II-Liveabfrage** über MCP2515 (nur lesender Service 01)
 - **Korrelierte Datenlogs** mit präzisen Zeitstempeln
-- **NEU: Interrupt-basiertes GPS** ohne Datenverlust bei hoher CPU-Last
-- **NEU: Optimierte String-Operationen** für bessere Performance
+- **Interrupt-basierter GPS-Ringpuffer** mit automatischer UART-Recovery
+- **Begrenzte String-Operationen** für bessere Robustheit
 
 ## 🔧 Hardware-Anforderungen
 
@@ -140,16 +138,21 @@ cd roadtest
 pio lib install
 ```
 
-### 2. Hardware-Konfiguration
+### 2. Verbindliche Hardware-Konfiguration
 ```cpp
-// In src/hardware_config.h - Pin-Definitionen anpassen falls nötig
-#define I2C_SDA          8
-#define I2C_SCL          9  
-#define GPS_RX_PIN       16
-#define GPS_TX_PIN       15
-#define SD_CS_PIN        4
-#define CAN_CS_PIN       1
+// Die Pins sind für den vorhandenen Aufbau in
+// src/hardware_config.cpp festgelegt.
+const int I2C_SDA = 8;
+const int I2C_SCL = 9;
+const int GPS_RX_PIN = 16;
+const int GPS_TX_PIN = 15;
+const int SD_CS_PIN = 4;
+const int CAN_CS_PIN = 1;
 ```
+
+Die Pinbelegung nicht ohne entsprechende Änderung der realen Verdrahtung
+ändern. Maßgeblich sind [HARDWARE.md](HARDWARE.md) und
+[schematic.md](schematic.md).
 
 ### 3. Firmware Upload
 ```bash
@@ -165,23 +168,30 @@ pio device monitor --baud 115200
 #### GPS Interrupt-Modus
 ```cpp
 // In main.cpp - automatisch aktiviert
-gpsManager.enableInterruptMode(true);  // Verlustfreier Datenempfang
+gpsManager.enableInterruptMode(true);  // Gepufferter UART-Empfang
 
 // Manuell umschalten (falls gewünscht)
 gpsManager.enableInterruptMode(false); // Zurück zu Polling
 ```
 
+Der Ringpuffer entkoppelt UART-Empfang und Auswertung, garantiert aber bei
+langen Programmpausen keine Verlustfreiheit. Überläufe und NMEA-
+Prüfsummenfehler werden deshalb pro Sitzung gezählt.
+
 #### WLAN, Messfahrten, Kalibrierung und OTA
 
 1. Mit dem WLAN `ROADTEST` verbinden, Passwort `roadtest123`.
 2. Im Browser `http://192.168.4.1/` öffnen.
-3. Einmalig unter **Kalibrierung** System, Gyro, Beschleunigung und
-   Magnetometer auf jeweils 3 bringen und speichern. Für das Magnetometer
-   eine liegende Acht in der Luft beschreiben.
+3. Unter **Kalibrierung** dem automatisch aktualisierten Assistenten folgen.
+   Er zeigt nacheinander Ruhigstellen, sechs Gerätelagen, die liegende Acht
+   und die abschließende Systemfusion an. Sobald alle erforderlichen Werte 3
+   erreichen, den aktuellen Stand speichern.
 4. Vor der Abfahrt **Aufzeichnung starten** auswählen.
 5. Am Fahrtende **Aufzeichnung beenden** auswählen. Erst dann sind alle
    Dateien garantiert geschlossen und die Zusammenfassung wird geschrieben.
-6. Unter **Firmware aktualisieren** kann eine neue Web-OTA-`.bin` eingespielt werden.
+6. Unter **Firmware aktualisieren** kann eine neue Web-OTA-`.bin` eingespielt
+   werden. Während Browser-OTA müssen CAN-H und CAN-L vom Fahrzeug getrennt
+   sein.
 
 Für Start, Ende, Speichern und Aktualisieren wird Benutzer `admin` mit
 Passwort `roadtest123` verwendet. Die Kalibrierung wird anschließend beim
@@ -215,8 +225,14 @@ Pause ausdrücklich an.
 
 ### Fahrzeugdaten für die spätere Auswertung erkennen
 
-Version 1.5.14 besitzt eine eigene Diagnoseaufzeichnung. Sie startet und
-beendet ihre SD-Sitzung selbst:
+Seit Version 1.5.14 besitzt die Firmware eine eigene Diagnoseaufzeichnung.
+Seit Version 1.5.16 ist die GPS-/OBD-Datenqualität messbar. Version 1.5.20
+ergänzt die automatische ECU- und Controller-Wiederherstellung sowie einen
+geführten Abnahmetest mit getrennten Schritten für Zündung und Motorstart.
+Version 1.5.21 aktiviert feldweise GPS-Alters- und Qualitätsgrenzen und
+verhindert, dass GPS-Drift bei bestätigtem Fahrzeugstillstand als Strecke
+gezählt wird.
+Die Discovery startet und beendet ihre SD-Sitzung selbst:
 
 ```text
 discover begin
@@ -245,7 +261,20 @@ Die Dateien mit demselben Sitzungsnamen gehören zusammen:
 - `road_gps_...csv`: Position, GPS-Geschwindigkeit, Kurs, Satelliten und HDOP
 - `road_can_...csv`: unveränderte CAN-Rohframes mit ECU-ID
 - `road_obd_...csv`: dekodierte Standardwerte und PID-Unterstützungsbitmaps
+- `road_obd_trace_...csv`: einzelne Anfragen, Antworten, Timeouts,
+  Zuordnung, Latenz und MCP2515-Diagnose
+- `road_meta_...csv`: Firmware-/Schemaversion, Konfiguration sowie Start-,
+  Fünf-Sekunden- und Abschlusszähler der Sitzung einschließlich maximaler
+  Hauptschleifen-, Web- und SD-Pausen
 - `road_event_...csv`: Phasenwechsel und manuelle `discover mark`-Zeitpunkte
+
+GPS-Zeichen-, Satz-, Prüfsummen-, Ringpuffer- und Fixsequenzzähler beginnen
+für jede Aufzeichnung bei null. Dadurch lassen sich Sitzungen direkt auswerten,
+ohne vor dem Start aufgelaufene Boot-Gesamtwerte abzuziehen.
+Die GPS-Rohwerte bleiben für die Diagnose sichtbar. Nur Felder mit gesetztem
+Gültigkeitsflag dürfen als Messwert verwendet werden. `RejectionReason`
+enthält eine Bitmaske, sodass mehrere gleichzeitig verletzte Alters- oder
+Qualitätsgrenzen nachvollziehbar bleiben.
 
 Wenn das Porsche-Gateway keine zyklischen Fahrzeugtelegramme an den
 OBD-Anschluss weiterleitet, bleibt die passive CAN-Datei in der ersten Phase
@@ -256,6 +285,35 @@ Porsche-UDS-Kennungen werden nicht durchprobiert.
 Während dieses Ablaufs sind `start`, `stop` und `obd on/off` absichtlich
 gesperrt. Das optionale OLED wird nicht benötigt. `discover end` stellt den
 vorherigen OBD-Zustand wieder her und schließt alle SD-Dateien.
+
+### Geführte Recovery-Kontrolle im Browser
+
+Die GPS-/OBD-Vergleichsfahrt aus 1.5.22 ist bestanden und deshalb nicht mehr
+Teil der Testseite. Firmware 1.5.23 führt unter `/acceptance` nur noch durch
+den kurzen ECU-Recovery-Kontrolltest:
+
+1. 60 Sekunden echte Listen-Only-Phase bei ausgeschalteter Zündung
+2. Zündung einschalten und erste ECU-Antwort abwarten
+3. Motor starten und eine Minute im Stillstand laufen lassen
+4. Motor und Zündung ausschalten und den erkannten ECU-Verlust abwarten
+5. Zündung und Motor erneut starten, zwei Minuten stabil laufen lassen
+6. Test abschließen
+
+Die großen Aktionsknöpfe erscheinen nur für den gerade zulässigen Schritt und
+verschwinden nach erfolgreicher Speicherung. Laufende Werte werden als kleine
+Statusantwort abgefragt; das vollständige HTML wird nur bei einem
+Schrittwechsel geladen. Während dieses Tests ist keine Fahrt und keine
+Bedienung während der Fahrt nötig.
+
+### Testberichte
+
+- [Erster ausführlicher Fahrzeugtest](testdata/20260728_2300/TESTBERICHT_2026-07-28.md)
+- [Geführte Abnahmeläufe](testdata/20260729_1800/TESTBERICHT_2026-07-29_ABNAHME.md)
+- [Zündungs-, Motorlauf- und Recovery-Abnahme](testdata/20260729_162734_92A51444/ABNAHME_AUSWERTUNG.md)
+- [GPS-/OBD-Vergleichsfahrt](testdata/20260729_170946_05A4DB46/ABNAHME_AUSWERTUNG.md)
+
+Die Berichte sind versioniert; die zugehörigen Roh-CSV-Dateien bleiben wegen
+Größe und Messdatencharakter bewusst außerhalb des Repositorys.
 
 ### Geführter Fahrzeug-Test
 
@@ -290,16 +348,9 @@ Die ausführlichen Hardware-, Integrations- und Belastungstests werden nicht
 bei jedem Start ausgeführt. Sie können bei Bedarf über den seriellen Monitor
 gestartet werden:
 
-### NEU: Integration-Test-Suite (90% Coverage)
-```
-✅ Multi-Modul Concurrent Tests
-✅ Sensor-Daten-Korrelation
-✅ Hardware Failure & Recovery Tests
-✅ Edge-Case Szenarien
-✅ Performance & Latenz Tests
-✅ Memory-Leak Detection
-✅ 24+ umfassende Test-Szenarien
-```
+Die Integration-Test-Suite enthält Mehrmodul-, Korrelations-, Recovery-,
+Belastungs- und Speichertests. Für sie existiert derzeit keine belastbare
+automatisierte Coverage-Zahl.
 
 ### Test-Kommandos (Serial Monitor)
 ```bash
@@ -311,27 +362,6 @@ recovery      # Hardware Failure & Recovery Tests
 quick         # Schnelle Integration-Tests (1 Min)
 memory        # Memory-Leak Detection (2 Min)
 diag          # System-Diagnose mit allen Metriken
-```
-
-### Test-Ausgabe Beispiel
-```
-=== INTEGRATION TEST SUITE ===
---- Test: Alle Module gleichzeitig ---
-✅ Test in 30000 ms
-Details: Sensor: 298 reads, GPS: 149 updates, CAN: 2980 msgs
-
---- Test: Sensor-Daten-Korrelation ---
-✅ Test in 10000 ms  
-Details: 100 Samples, 67 korreliert (67.0%), 0 Timing-Fehler
-
---- Test: Buffer-Overflow Recovery ---
-✅ Test in 5234 ms
-Details: SD: 10 overflows, Ring: 50 overflows, Recovery: 4/4 OK
-
-========== TEST SUITE ABGESCHLOSSEN ==========
-Gesamt-Tests: 24
-Bestanden: 23 (95.8%)
-Test-Coverage: 92.5%
 ```
 
 ## 📊 Datenformat & Ausgabe
@@ -470,11 +500,14 @@ gpsManager.printDiagnostics();   // Detaillierte NMEA-Diagnose
 ```
 
 Gesendet werden ausschließlich funktionale OBD-Anfragen auf `0x7DF` mit
-Service `01`. Antworten auf `0x7E8` bis `0x7EF` werden für die drei
-freigegebenen PIDs dekodiert. Ein MCP2515-Hardwarefilter verwirft andere
-Identifier. Die Webseite zeigt Anfragen, Antworten, Sendefehler und nur bis zu
-fünf Sekunden alte Werte. Der OLED-Zähler `CAN/OBD` steigt mit den empfangenen
-Antworten.
+Service `01`. Die feste Positivliste enthält die vier Unterstützungsblöcke
+`00/20/40/60` sowie Drehzahl (`0x0C`), Geschwindigkeit (`0x0D`),
+Luftmassenstrom (`0x10`), Drosselstellung (`0x11`), Außentemperatur (`0x46`),
+Öltemperatur (`0x5C`) und Kraftstoffrate (`0x5E`). In der Live-Phase werden
+nur zuvor bestätigte PIDs abgefragt. Antworten werden ausschließlich von
+`0x7E8` bis `0x7EF` verarbeitet; der MCP2515-Hardwarefilter verwirft andere
+Identifier. Die Webseite zeigt Anfragen, Antworten, Sendefehler und nur
+frische Werte. Der OLED-Zähler `CAN/OBD` steigt mit den empfangenen Antworten.
 
 ### SD-Logger Konfiguration
 ```cpp
@@ -494,7 +527,7 @@ sdLogger.setConfig(config);
 ```
 Lösung:
 1. I2C-Verkabelung prüfen (SDA=8, SCL=9)
-2. Pull-up Widerstände 4.7kΩ auf SDA/SCL
+2. I²C-Pull-ups und Leitungen gemäß `HARDWARE.md` prüfen
 3. ADR-Verbindung prüfen: im vorhandenen Aufbau 3,3 V, daher Adresse 0x29
 4. Serial Monitor: I2C-Scanner-Ausgabe prüfen
 ```
@@ -544,15 +577,15 @@ testSDWithSafePins();
 ## 📈 Performance-Charakteristika
 
 ### Real-Time Verhalten
-- **Sensor-Reading:** 10Hz (100ms Interval) ✓ Optimal
-- **GPS-Updates:** 5Hz (200ms Interval) ✓ Ausreichend  
+- **Sensor-Reading:** Ziel 10 Hz; zuletzt im Fahrzeug effektiv etwa 8,5 Hz
+- **GPS-Snapshots:** 5 Hz; neue NMEA-Fixes werden getrennt gekennzeichnet
 - **CAN-Processing:** 100Hz Check-Rate ✓ Hochperformant
 - **SD-Logging:** Gepuffert mit Auto-Flush ✓ Effizient
 
 ### Ressourcen-Verbrauch
 ```
-Flash:  ~1,16MB / 1,31MB App-Partition (88,7%)
-SRAM:   ~57KB / 320KB                  (17,5%)
+Flash:  1.232.962 Byte / 1.310.720 Byte App-Partition (94,1%)
+SRAM:   60.956 Byte / 327.680 Byte                    (18,6%)
 CPU:    ESP32-S3 mit 240MHz
 ```
 
@@ -586,8 +619,14 @@ plt.show()
 
 ### Firmware-Updates
 ```bash
-# Neue Version deployen
-git pull origin main
+# Projektstand aktualisieren
+git pull --ff-only
+
+# Neue Version bauen; die Versionsnummer stammt aus hardware_config.h
+pio run
+# Ergebnis: roadtest_<Version>.bin im Projektverzeichnis und Buildordner
+
+# Über USB deployen
 pio run --target upload
 
 # Backup der aktuellen Konfiguration
@@ -595,7 +634,8 @@ cp src/hardware_config.h hardware_config.backup
 ```
 
 ### Konfiguration anpassen
-- **Pin-Zuordnungen:** `src/hardware_config.h`
+- **Pin-Zuordnungen:** verbindlich in `src/hardware_config.cpp`; nur zusammen
+  mit der realen Verdrahtung ändern
 - **Sensor-Parameter:** `src/*_manager.h` 
 - **Logging-Einstellungen:** `SDLogger::LogConfig`
 - **Display-Modi:** `OLEDManager::DisplayConfig`
@@ -618,6 +658,69 @@ Der priorisierte Backlog für gleichmäßigere Sensorabtastung und geringere
 Buslast steht in [OPTIMIERUNGEN.md](OPTIMIERUNGEN.md).
 
 ## 📈 Version History
+
+### v1.5.23 - Kurzer Recovery-Kontrolltest
+- ✅ Nur noch der offene ECU-Ausfall-/Wiederanlauf-Test unter `/acceptance`
+- ✅ Kleine Statusabfrage statt vollständiger Seitenaktualisierung
+- ✅ ECU-Verlust erst nach drei tatsächlichen Anfragefehlern
+- ✅ Laufzeit-, Web- und SD-Pausen in den Sitzungsmetadaten
+- ✅ Alte `/test`-Webseite aus Navigation und Routing entfernt
+
+### v1.5.22 - Geführte GPS-/OBD-Datenabnahme
+- ✅ Große, eindeutige Smartphone-Knöpfe nur für den aktuellen Schritt
+- ✅ Erledigte Aktionsknöpfe verschwinden dauerhaft aus dem laufenden Test
+- ✅ Serverseitige Mindestzeiten und OBD-Stillstandsprüfung vor Fahrmarkern
+- ✅ Zwei Fahrphasen und drei Stillstandsabschnitte in einer Sitzung
+- ✅ GPS-, OBD- und Streckenwerte direkt auf der Testseite
+
+### v1.5.21 - GPS-Stillstands- und Feldqualitätsfilter
+- ✅ Position nur mit frischem Fix, mindestens fünf Satelliten und HDOP ≤ 3,5
+- ✅ Feldweise Alters- und Plausibilitätsgrenzen für Geschwindigkeit, Höhe und Kurs
+- ✅ OBD-Geschwindigkeit hat bei der Streckenbildung im Fahrzeug Vorrang
+- ✅ GPS-Drift im bestätigten Stillstand wird nicht mehr als Strecke summiert
+- ✅ Ablehnungsgründe werden als kombinierbare Bitmaske protokolliert
+
+### v1.5.20 - Zweistufige Porsche-Abnahme
+- ✅ Zündung-Ein und Motorstart werden getrennt markiert und ausgewertet
+- ✅ Motorlauf wird erst durch frische OBD-Drehzahl ab 300 U/min bestätigt
+- ✅ ECU- und Motorlauf-Recovery besitzen getrennte PASS/WARN/FAIL-Zeiten
+- ✅ Sitzungsdateien liegen gemeinsam unter `/sessions/<SessionId>/`
+- ✅ Dateivorbereitung durchsucht das volle FAT-Wurzelverzeichnis nur noch einmal
+
+### v1.5.19 - Stabile Messungs-Recovery
+- ✅ SD-Schreibfehler können nicht mehr als erfolgreiche Datensätze erscheinen
+- ✅ GPS-Sitzungszähler bleiben über UART-Neustarts hinweg monoton
+- ✅ Begrenzte MCP2515-Recovery mit eigenem Sitzungszähler
+- ✅ Empfang wird vor OBD-Timeouts ausgewertet
+- ✅ Abnahmemarker werden erst nach bestätigtem SD-Schreiben übernommen
+- ✅ OTA ist während laufender oder vorbereiteter Messungen gesperrt
+
+### v1.5.18 - ECU-Wiedererkennung und geführte Abnahme
+- ✅ Später Motorstart wird mit begrenztem Backoff ohne Firmware-Neustart erkannt
+- ✅ Sichere Rückfall-PIDs `0x0C`, `0x0D`, `0x11` und `0x00`
+- ✅ ECU-Ausfall nach fünf Sekunden und automatische Wiederaufnahme
+- ✅ Geführte Abnahmeseite unter `/acceptance`
+- ✅ Einzelzähler für MCP2515-RX0-/RX1-Überläufe
+- ✅ GPS-UART-Ringpuffer auf 2.048 Byte vergrößert
+
+### v1.5.17 - Mobile Fahrzeugtest-Steuerung
+- ✅ Große Schaltflächen für Discovery-Start, Status, Marker und Abschluss
+- ✅ Live-Anzeige von Phase, GPS, HDOP, OBD-Sitzung und SD-Fehlern
+- ✅ Bedienung verwendet ausschließlich die vorhandenen sicheren Discovery-Funktionen
+
+### v1.5.16 - Störungsfreier Start der Qualitätsaufzeichnung
+- ✅ CAN-, OBD-, Trace- und Korrelationsdateien vor Sitzungsbeginn geöffnet
+- ✅ Keine verzögerte Erstöffnung mehr während der GPS-Aufzeichnung
+- ✅ GPS-Sitzungszähler beginnen erst nach abgeschlossener Dateivorbereitung
+
+### v1.5.15 - Messbare GPS-/OBD-Datenqualität
+- ✅ OBD-Sitzungszähler getrennt von Boot-Gesamtzählern
+- ✅ Transaktions-CSV für Sendeversuche, Antworten, Timeouts und Latenz
+- ✅ GPS-Feldalter, Gültigkeit, Fixsequenz und UART-Überlaufzähler
+- ✅ Sitzungsmetadaten mit Firmware-, Schema- und Diagnosewerten
+- ✅ Fixverluste werden als ungültige Qualitäts-Snapshots aufgezeichnet
+- ✅ Geführter Web-Kalibrierassistent ohne manuellen Sensor-Neustart
+- ✅ Versionierter Firmwaredateiname sowie Versionsanzeige auf OLED und OTA-Seite
 
 ### v1.5.14 - Fahrzeugdaten-Erkennung
 - ✅ 60 Sekunden echter Listen-Only-Mitschnitt ohne Sendungen
@@ -736,14 +839,14 @@ Buslast steht in [OPTIMIERUNGEN.md](OPTIMIERUNGEN.md).
 - ✅ Eigenes WLAN und Browser-OTA
 
 ### v1.2.0 - Performance & Sicherheit
-- ✅ **GPS Interrupt-Modus** implementiert für verlustfreien Datenempfang
+- ✅ **GPS Interrupt-Modus** zur Entkopplung von UART-Empfang und Auswertung
 - ✅ **NVS-Speicher** für BNO055 Kalibrierung (persistiert über Neustarts)
 - ✅ **Null-Pointer-Schutz** für alle dynamischen Allokationen
 - ✅ **String-Sicherheit** verbessert (strncpy/strncat statt strcpy/strcat)
 - ✅ **Performance-Optimierung** durch statische Buffer statt String-Konkatenation
 - ✅ **Hardware-Konfiguration** zentralisiert in hardware_config.cpp
 
-### v1.1.0 - Production Ready
+### v1.1.0 - Grundlegende Robustheit
 - ✅ Multi-Layer Buffer-Overflow-Schutz
 - ✅ Umfassende Hardware-Test-Suite
 - ✅ Korrelierte Datenaufzeichnung (Sensor + CAN + GPS)
@@ -756,8 +859,7 @@ Buslast steht in [OPTIMIERUNGEN.md](OPTIMIERUNGEN.md).
 
 ## 📄 Lizenz
 
-ESP32-S3 Road Quality Measurement System
-© 2024 - Open Source Projekt für Motorrad-Enthusiasten
+Für dieses Repository ist derzeit keine separate Lizenzdatei hinterlegt.
 
 ## 🙏 Danksagungen
 

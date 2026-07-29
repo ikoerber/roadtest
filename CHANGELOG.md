@@ -41,6 +41,242 @@ und dieses Projekt hält sich an [Semantic Versioning](https://semver.org/spec/v
   dokumentiert
 - Unsichere pauschale Angaben zu CAN-Versorgung und Busterminierung entfernt
 
+## [1.5.23] - 2026-07-29
+
+### Behoben
+- Die ECU gilt nicht mehr allein wegen einer langen lokalen Programmpause als
+  verloren. Der Wechsel in die Wiedererkennung erfolgt erst nach drei
+  tatsächlich unbeantworteten oder fehlgeschlagenen OBD-Anfragen.
+- Die Abnahmeseite lädt nicht länger alle zwei Sekunden das vollständige
+  HTML-Dokument neu. Dadurch werden die in der Vergleichsfahrt beobachteten
+  systemweiten Messpausen und GPS-UART-Pufferverluste vermieden.
+
+### Geändert
+- Die bereits bestandene GPS-/OBD-Vergleichsfahrt wurde aus dem Webablauf
+  entfernt. Unter `/acceptance` bleibt nur der kurze, geführte
+  ECU-Recovery-Kontrolltest mit großen, schrittweise verschwindenden Knöpfen.
+- Zustandsänderungen antworten mit einer kleinen Weiterleitung; laufende
+  Werte kommen über eine kompakte JSON-Statusantwort. Die Seite wird nur bei
+  einem echten Schrittwechsel neu aufgebaut.
+- Die frühere allgemeine Fahrzeugtest-Webseite unter `/test` ist nicht mehr
+  registriert oder auf der Statusseite verlinkt.
+- Das CSV-Schema wurde auf `1.5.23-quality-v6` angehoben.
+
+### Diagnose
+- `road_meta_...csv` protokolliert jetzt letzte und maximale Dauer sowie
+  Stallzähler für Hauptschleife, Webbehandlung und SD-Flush. Eine Pause ab
+  einer Sekunde zählt als Stall.
+
+## [1.5.22] - 2026-07-29
+
+### Hinzugefügt
+- Die Abnahmeseite führt durch einen kombinierten Datenqualitätstest mit
+  fünf Minuten Anfangsstillstand, zwei mindestens fünfminütigen Fahrphasen,
+  einminütigem Zwischenstopp, ECU-Ausfall/Wiederanlauf und zweiminütiger
+  Abschlusskontrolle
+- Eigene SD-Marker für Beginn, Zwischenstopp, Weiterfahrt und Ende der
+  Vergleichsfahrt
+- Live-Anzeige von OBD-Geschwindigkeit, GPS-Roh- beziehungsweise
+  gültiger Geschwindigkeit und gefilterter Strecke
+
+### Geändert
+- Aktionsknöpfe sind auf mindestens 5,4 rem Höhe vergrößert,
+  erscheinen nur im jeweils zulässigen Schritt und werden nach erfolgreicher
+  Speicherung nicht mehr ausgegeben
+- Fahrmarker werden serverseitig erst nach der vorgesehenen Mindestdauer und
+  bei einer frischen OBD-Geschwindigkeit bis 1 km/h akzeptiert
+- Doppeltippen wird nach dem ersten Absenden im Browser gesperrt; ein
+  vorzeitiger Abbruch liegt getrennt hinter einer aufklappbaren Bestätigung
+
+## [1.5.21] - 2026-07-29
+
+### Behoben
+- GPS-Geschwindigkeiten unter 6 km/h gelten nicht mehr automatisch als
+  zuverlässiger Bewegungsnachweis; das verhindert die im stehenden Fahrzeug
+  beobachtete Scheingeschwindigkeit bis 5,2 km/h
+- Die Fahrstrecke wird nur noch aus neuen, qualitätsgeprüften Positionsfixes
+  gebildet. Eine frische OBD-Geschwindigkeit bis 1 km/h bestätigt Stillstand
+  und verhindert, dass GPS-Drift als Weg aufsummiert wird
+- Qualitätslücken und unplausibel große Positionssprünge werden nicht durch
+  Streckensegmente überbrückt
+
+### Geändert
+- Position, Geschwindigkeit, Höhe und Kurs besitzen aktive Alters- und
+  Plausibilitätsgrenzen; eine Position benötigt mindestens fünf Satelliten
+  und einen HDOP von höchstens 3,5
+- `RejectionReason` ist eine Bitmaske der abgelehnten GPS-Felder. Rohwerte
+  bleiben zur Diagnose im Qualitäts-Snapshot erhalten, Auswertungen müssen
+  die jeweiligen Gültigkeitsfelder beachten
+- CSV-Schema auf `1.5.21-quality-v5` angehoben
+
+## [1.5.20] - 2026-07-29
+
+### Behoben
+- Der Porsche-Abnahmetest trennt Zündung-Ein und Motorstart in zwei
+  eigenständige, quittierte Schritte; ein Motorlauf gilt erst ab einer
+  frischen OBD-Drehzahl von mindestens 300 U/min als erkannt
+- Doppelte Browserübermittlungen überschreiben die Zeitpunkte von
+  Zündungs-, Motorstart- und Motor-Aus-Markern nicht mehr
+- Das Anlegen von neun Sitzungsdateien blockiert nicht mehr wiederholt das mit
+  alten Messungen gefüllte FAT-Wurzelverzeichnis
+
+### Hinzugefügt
+- Getrennte PASS/WARN/FAIL-Zeitmessung für ECU-Erkennung nach Zündung-Ein und
+  Motorlauferkennung nach dem Start, jeweils auch beim Wiederanlauf
+- Ereignisse `IGNITION_STATE`, `ENGINE_STATE`, `ACCEPTANCE_RESULT` und
+  `PREPARATION_COMPLETE` für eine reproduzierbare Abnahmeauswertung
+
+### Geändert
+- Neue Messungen werden unter `/sessions/<SessionId>/` abgelegt; die
+  bisherigen versionierten Dateinamen bleiben innerhalb des Ordners erhalten
+- CSV-Schema auf `1.5.20-quality-v4` angehoben
+
+## [1.5.19] - 2026-07-29
+
+### Behoben
+- SD-Pufferfehler werden bis zum aufrufenden Messpfad weitergegeben; nach
+  einem fehlgeschlagenen Flush kann kein Datensatz mehr fälschlich als
+  gespeichert gezählt werden
+- Überlange oder intern beschädigte Sensorzeilen werden vollständig verworfen,
+  statt als abgeschnittene CSV-Zeile geschrieben zu werden
+- GPS-Fixsequenz und UART-Überlaufzähler bleiben über einen automatischen
+  UART-Neustart hinweg monoton; ein alter TinyGPS++-Stand wird dabei nicht
+  erneut als neuer Fix ausgegeben
+- OBD-Empfangspuffer werden vor der Timeoutbewertung geleert, sodass bereits
+  wartende Antworten nach einer langsamen Hauptschleife nicht als Timeout und
+  anschließend als unzugeordnet gelten
+- Motorstart-, Motor-Aus- und Neustartmarker werden erst nach erfolgreichem
+  SD-Schreiben in den Abnahmezustand übernommen
+- Eine fehlgeschlagene Fahrzusammenfassung führt nicht mehr zu einem
+  fälschlich erfolgreichen Sitzungsabschluss
+
+### Hinzugefügt
+- Begrenzte MCP2515-Controller-Recovery bei wiederholtem Bus-off oder falschem
+  Betriebsmodus; eine aktive Listen-Only-Phase wird sicher wiederhergestellt
+- `CANRecoveryCount` in OBD-, Trace- und Metadatendateien
+
+### Geändert
+- Browser-OTA ist während einer laufenden oder vorbereiteten Messung gesperrt,
+  damit keine Sitzung geteilt oder mit einem laufenden Discovery-Zustand
+  vermischt werden kann
+- CSV-Schema auf `1.5.19-quality-v3` angehoben
+
+### Sicherheit
+- Controller-Recovery verändert weder die Service-01-Positivliste noch das
+  Limit von höchstens zwei OBD-Anfragen pro Sekunde
+- Während der passiven 60-Sekunden-Phase startet auch eine Controller-Recovery
+  ausschließlich im echten Listen-Only-Modus
+
+## [1.5.18] - 2026-07-29
+
+### Hinzugefügt
+- Eigener ECU-Erreichbarkeitszustand `unbekannt`, `wird gesucht`,
+  `erreichbar` und `Verbindung verloren`
+- Begrenzte Wiedererkennung nach unbeantwortetem PID-Scan oder fünf Sekunden
+  ohne ECU-Antwort; sichere Rückfallrunde mit `0x0C`, `0x0D`, `0x11` und
+  `0x00`, anschließend erneuter Unterstützungsblockscan
+- Geführte mobile Abnahmeseite unter `/acceptance` für Motor aus, späten
+  Motorstart, erkannten ECU-Ausfall und Wiederstart einschließlich
+  PASS/WARN/FAIL-Zeitmessung
+- Einzelzähler für MCP2515-Empfangspufferüberläufe in OBD-, Trace- und
+  Metadatendateien
+
+### Geändert
+- GPS-UART-Ringpuffer von 512 auf 2.048 Byte vergrößert
+- CSV-Schema auf `1.5.18-quality-v2` angehoben
+
+### Sicherheit
+- Wiedererkennung verwendet nur die vorhandene Service-01-Positivliste,
+  sendet insgesamt höchstens zwei Frames pro Sekunde und bleibt während der
+  60-sekündigen Listen-Only-Phase vollständig passiv
+- MCP2515-Überlaufflags werden erst nach dem Zählen kontrolliert gelöscht;
+  Bus-off- oder andere Fehlerflags bleiben unverändert
+
+## [1.5.17] - 2026-07-29
+
+### Hinzugefügt
+- Mobile Fahrzeugtest-Seite unter `/test` mit großen Schaltflächen für
+  Discovery-Start, Statusaktualisierung, die sechs festgelegten
+  Fahrabschnittsmarker und den sicheren Abschluss
+- Live-Anzeige von Discovery-Phase und -Dauer, verbleibender Listen-Only-Zeit,
+  GPS-Fix, Satelliten, HDOP, OBD-Sitzungszählern und SD-Schreibfehlern
+- Direkter Link von der Systemstatusseite zur Fahrzeugtest-Steuerung
+
+### Sicherheit
+- Alle zustandsändernden Testaktionen bleiben mit den Admin-Zugangsdaten
+  geschützt und rufen ausschließlich die vorhandenen Discovery-Funktionen auf
+- Die Seite ergänzt keine frei wählbaren CAN-Frames oder schreibenden
+  Fahrzeugdienste; Listen-Only, Service-01-Positivliste und Senderatenlimit
+  bleiben unverändert
+- Das CSV-Schema bleibt `1.5.16-quality-v1`, da sich keine Spalten ändern
+
+## [1.5.16] - 2026-07-29
+
+### Geändert
+- CAN-, OBD-, OBD-Trace- und Korrelationsdateien werden bei verfügbarem
+  CAN-Adapter schrittweise während der Startvorbereitung geöffnet, bevor die
+  eigentliche Messsitzung und ihre GPS-Zähler beginnen
+- GPS-Verarbeitung und 200-ms-Snapshots werden dadurch nicht mehr von der
+  mehrsekündigen ersten FAT-Dateiöffnung innerhalb der Sitzung unterbrochen
+- Firmware- und CSV-Schemaversion wurden für das geänderte Binär- und
+  Datenformat gemeinsam auf 1.5.16 angehoben
+
+### Behoben
+- Der erste OBD-Sendeversuch erzeugt nicht länger einen GPS-Ringpufferüberlauf
+  durch das verzögerte Erstellen von `road_obd_trace_...csv`
+- Später eintreffende CAN- und OBD-Daten lösen während einer laufenden
+  Messsitzung keine bedarfsgesteuerte Erstöffnung ihrer Logdateien mehr aus
+
+## [1.5.15] - 2026-07-29
+
+### Hinzugefügt
+- Echte OBD-Sitzungszähler ab Beginn jeder SD-Aufzeichnung, getrennt von den
+  weiterhin sichtbaren Boot-Gesamtzählern
+- Transaktionsdatei `road_obd_trace_<Sitzung>.csv` für jeden Sendeversuch,
+  jede zugeordnete Antwort und jeden 400-ms-Antworttimeout einschließlich
+  Sequenz, PID, ECU-ID, Latenz, MCP2515-Modus, TEC, REC und EFLG
+- Metadatendatei `road_meta_<Sitzung>.csv` mit Start-, Fünf-Sekunden- und
+  Abschlusswerten, Firmware- und CSV-Schemaversion, Fahrzeugprofil,
+  CAN-Konfiguration sowie GPS-, OBD-, CAN- und SD-Diagnosezählern
+- Feldweise GPS-Gültigkeit und Alter für Position, Geschwindigkeit, Höhe,
+  Kurs, Satelliten und HDOP
+- GPS-Fixsequenz, Kennzeichnung neuer Fixes, exakte NMEA-Prüfsummenzähler und
+  sichtbarer UART-Ringpuffer-Überlaufzähler
+
+### Geändert
+- GPS-CSV-Dateien enthalten auch bei einem Fixverlust weiterhin
+  Qualitäts-Snapshots; alte gültige Datensätze werden nicht mehr als aktuelle
+  Messung zurückgegeben
+- GPS-Diagnosezähler und Fixsequenz beginnen in jeder Aufzeichnung bei null;
+  automatische GPS-Neustarts erzeugen dabei keinen Zählerunterlauf
+- Das SD-Dateilimit berücksichtigt alle Grund-, CAN-, OBD-, Trace- und
+  Korrelationsdateien sowie die Abschlusszusammenfassung; die erste
+  OBD-Trace-Datei blockiert dadurch nicht länger die GPS-Verarbeitung
+- Die Web-Kalibrierung führt auf Mobilgeräten automatisch durch den jeweils
+  nächsten notwendigen Gyro-, Beschleunigungs-, Magnetometer- und
+  Systemschritt; Fortschritt und aktuelle Rohstatuswerte bleiben sichtbar
+- Der manuelle BNO055-Neustart und seine Webroute wurden aus der
+  Kalibrierungsseite entfernt; die vorhandene automatische
+  Sensorwiederherstellung bleibt aktiv
+- PlatformIO übernimmt die zentrale Firmwareversion automatisch in den
+  Buildnamen und exportiert `roadtest_<Version>.bin` ins Projektverzeichnis
+- OLED-Start-, Live-, GPS-, Fahrbahn-, Kalibrierungs- und Diagnoseansichten
+  zeigen konsistent die zentrale Firmwareversion
+- Die OTA-Seite zeigt die installierte Version, den offiziellen
+  Firmwaredateinamen und nach dem Upload den tatsächlich gewählten Dateinamen
+- OBD-Antworten werden innerhalb eines Anfragefensters auch dann korrekt
+  derselben Sequenz zugeordnet, wenn mehrere Steuergeräte antworten
+- Serieller Fünf-Sekunden-Status, `diag`, OLED, Weboberfläche und
+  Bootmeldung verwenden konsistent Firmwareversion 1.5.15
+
+### Sicherheit
+- OBD-Positivliste, ausschließlich lesender Service 01, maximale Senderate
+  von zwei Anfragen pro Sekunde und echte Listen-Only-Phase bleiben
+  unverändert
+- 1.5.15 protokolliert Datenqualität, verändert aber noch nicht den
+  einmaligen PID-Scan oder die GPS-Plausibilitätsfilter; diese Schritte folgen
+  getrennt in späteren Versionen
+
 ## [1.5.14] - 2026-07-28
 
 ### Hinzugefügt
@@ -302,7 +538,7 @@ und dieses Projekt hält sich an [Semantic Versioning](https://semver.org/spec/v
   - Performance und Latenz-Messungen
   - Memory-Leak Detection
   - Edge-Case und Stress-Tests
-- **GPS Interrupt-Modus** für verlustfreien UART-Datenempfang
+- **GPS Interrupt-Modus** zur Entkopplung von UART-Empfang und Auswertung
   - Ring-Buffer mit 512 Bytes für NMEA-Daten
   - Automatische Aktivierung beim Start
   - Umschaltbar zwischen Interrupt und Polling-Modus

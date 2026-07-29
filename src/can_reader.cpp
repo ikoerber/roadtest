@@ -15,6 +15,8 @@ MCP2515Class canController;
 
 static_assert(CAN_OBD_REQUEST_INTERVAL_MS >= 500,
               "OBD-Abfragen duerfen insgesamt hoechstens mit 2 Hz laufen");
+static_assert(CAN_OBD_RESPONSE_TIMEOUT_MS < CAN_OBD_REQUEST_INTERVAL_MS,
+              "OBD-Timeout muss vor der naechsten Anfrage ablaufen");
 static_assert(CAN_OBD_VALUE_MAX_AGE_MS >= CAN_OBD_REQUEST_INTERVAL_MS * 3,
               "OBD-Livewerte muessen mindestens einen vollen PID-Zyklus gelten");
 static_assert(!CAN_OBD_POLLING_ENABLED || !CAN_LISTEN_ONLY,
@@ -25,8 +27,15 @@ CANReader::CANReader(int cs, int interrupt)
       loggingEnabled(false), csPin(cs), intPin(interrupt),
       clockFrequency(CAN_CLOCK_16MHZ),
       totalMessages(0), errorCount(0),
+      receiveBuffer0OverflowCount(0),
+      receiveBuffer1OverflowCount(0),
+      controllerRecoveryCount(0),
       lastMessage{}, pendingMessage{}, hasPendingMessage(false), obdData{},
-      obdPollingEnabled(CAN_OBD_POLLING_ENABLED) {
+      obdPollingEnabled(CAN_OBD_POLLING_ENABLED), obdSession{},
+      obdRequestPending(false), pendingOBDHadResponse(false),
+      pendingOBDSequence(0),
+      pendingOBDRequestMs(0), pendingOBDPid(0), obdTraceQueue{},
+      obdTraceReadIndex(0), obdTraceWriteIndex(0) {
 }
 
 CANReader::~CANReader() {
@@ -104,9 +113,12 @@ bool CANReader::begin(long baudRate) {
     }
     
     initialized = true;
-    messageCount = 0;
-    totalMessages = 0;
-    obdData = OBDLiveData{};
+    hasPendingMessage = false;
+    pendingMessage = CANMessage{};
+    // Boot- und Sitzungszähler gehören dem CANReader, nicht einer einzelnen
+    // Controller-Initialisierung. Nach einem fehlgeschlagenen Recovery-Versuch
+    // darf der spätere erfolgreiche begin()-Pfad deshalb weder OBD-Trace noch
+    // Überlauf-, Nachrichten- oder Recovery-Zähler zurücksetzen.
     
     Serial.println("✅ CAN-Bus Reader erfolgreich gestartet!");
     Serial.printf("Bereit für Nachrichten auf %ld bps\n", baudRate);
@@ -118,6 +130,56 @@ bool CANReader::begin(long baudRate) {
     return true;
 }
 
+bool CANReader::restartController(long baudRate, bool passiveMode) {
+    if (obdSession.active && obdRequestPending) {
+        finishPendingOBDTimeout(millis());
+    }
+
+    hasPendingMessage = false;
+    pendingMessage = CANMessage{};
+    initialized = false;
+    canController.end();
+
+    SPI.begin(CAN_SCK_PIN, CAN_MISO_PIN, CAN_MOSI_PIN);
+    SPI.setFrequency(1000000);
+    SPI.setDataMode(SPI_MODE0);
+    SPI.setBitOrder(MSBFIRST);
+    pinMode(intPin, INPUT_PULLUP);
+    pinMode(csPin, OUTPUT);
+    digitalWrite(csPin, HIGH);
+
+    canController.setPins(csPin, intPin);
+    canController.setClockFrequency(clockFrequency);
+    canController.setSPIFrequency(1E6);
+    canController.setListenOnly(passiveMode);
+    canController.setTransmitTimeout(CAN_TX_TIMEOUT_MS);
+
+    if (!canController.begin(baudRate)) {
+        errorCount++;
+        Serial.println("❌ MCP2515-Recovery: Initialisierung fehlgeschlagen");
+        return false;
+    }
+
+    const bool filterConfigured =
+        passiveMode
+            ? canController.filter(0x000, 0x000)
+            : canController.filter(0x7E8, 0x7F8);
+    if (!filterConfigured) {
+        canController.end();
+        errorCount++;
+        Serial.println("❌ MCP2515-Recovery: Filter konnte nicht gesetzt werden");
+        return false;
+    }
+
+    initialized = true;
+    controllerRecoveryCount++;
+    Serial.printf(
+        "✅ MCP2515-Recovery #%lu: %s\n",
+        static_cast<unsigned long>(controllerRecoveryCount),
+        passiveMode ? "Listen-Only" : "OBD-Antwortbetrieb");
+    return true;
+}
+
 void CANReader::end() {
     if (!initialized) return;
     
@@ -126,6 +188,8 @@ void CANReader::end() {
     initialized = false;
     hasPendingMessage = false;
     pendingMessage = CANMessage{};
+    obdRequestPending = false;
+    pendingOBDHadResponse = false;
 
     Serial.println("CAN-Bus Reader beendet");
 }
@@ -211,6 +275,98 @@ CANMessage CANReader::readMessage() {
     return pendingMessage;
 }
 
+void CANReader::enqueueOBDTrace(const OBDTraceEvent& event) {
+    const uint8_t nextIndex =
+        (obdTraceWriteIndex + 1) % OBD_TRACE_QUEUE_SIZE;
+    if (nextIndex == obdTraceReadIndex) {
+        obdSession.traceDropped++;
+        return;
+    }
+
+    obdTraceQueue[obdTraceWriteIndex] = event;
+    obdTraceWriteIndex = nextIndex;
+}
+
+bool CANReader::popOBDTraceEvent(OBDTraceEvent& event) {
+    if (obdTraceReadIndex == obdTraceWriteIndex) {
+        return false;
+    }
+
+    event = obdTraceQueue[obdTraceReadIndex];
+    obdTraceReadIndex =
+        (obdTraceReadIndex + 1) % OBD_TRACE_QUEUE_SIZE;
+    return true;
+}
+
+void CANReader::finishPendingOBDTimeout(uint32_t now) {
+    if (!obdSession.active || !obdRequestPending) {
+        return;
+    }
+
+    // Eine funktionale Anfrage kann Antworten mehrerer Steuergeräte
+    // auslösen. Das Fenster bleibt deshalb bis zum Timeout offen; sobald
+    // mindestens eine passende Antwort kam, wird es ohne Timeout-Zähler
+    // abgeschlossen.
+    if (pendingOBDHadResponse) {
+        obdRequestPending = false;
+        pendingOBDHadResponse = false;
+        return;
+    }
+
+    OBDTraceEvent event;
+    event.type = OBDTraceEventType::TIMEOUT;
+    event.sequence = pendingOBDSequence;
+    event.eventUptimeMs = now;
+    event.requestUptimeMs = pendingOBDRequestMs;
+    event.pid = pendingOBDPid;
+    event.transmitOK = true;
+    event.matchedRequest = true;
+    enqueueOBDTrace(event);
+
+    obdSession.timeoutCount++;
+    obdRequestPending = false;
+    pendingOBDHadResponse = false;
+}
+
+void CANReader::updateOBDDiagnostics() {
+    if (!obdSession.active || !obdRequestPending) {
+        return;
+    }
+
+    const uint32_t now = millis();
+    if (now - pendingOBDRequestMs >= CAN_OBD_RESPONSE_TIMEOUT_MS) {
+        finishPendingOBDTimeout(now);
+    }
+}
+
+void CANReader::beginOBDSession() {
+    const uint32_t bootRequests = obdData.requestCount;
+    const uint32_t bootResponses = obdData.responseCount;
+    const uint32_t bootRequestErrors = obdData.requestErrors;
+    obdData = OBDLiveData{};
+    obdData.requestCount = bootRequests;
+    obdData.responseCount = bootResponses;
+    obdData.requestErrors = bootRequestErrors;
+
+    obdSession = OBDSessionStats{};
+    obdSession.active = true;
+    obdSession.startedAt = millis();
+    obdRequestPending = false;
+    pendingOBDHadResponse = false;
+    pendingOBDSequence = 0;
+    pendingOBDRequestMs = 0;
+    pendingOBDPid = 0;
+    obdTraceReadIndex = 0;
+    obdTraceWriteIndex = 0;
+}
+
+void CANReader::endOBDSession() {
+    updateOBDDiagnostics();
+    obdRequestPending = false;
+    pendingOBDHadResponse = false;
+    obdSession.active = false;
+}
+
 bool CANReader::requestOBDPid(uint8_t pid) {
     if (!initialized || !CAN_OBD_POLLING_ENABLED || !obdPollingEnabled) {
         return false;
@@ -230,13 +386,50 @@ bool CANReader::requestOBDPid(uint8_t pid) {
     // Funktionale ISO-15765-4-Anfrage an alle OBD-Steuergeräte:
     // Single Frame, zwei Nutzbytes, Service 01 (aktuelle Messwerte).
     const uint8_t request[8] = {0x02, 0x01, pid, 0x00, 0x00, 0x00, 0x00, 0x00};
+    updateOBDDiagnostics();
+    const uint32_t requestMs = millis();
     obdData.requestCount++;
-    if (!canController.beginPacket(0x7DF, 8) ||
-        canController.write(request, sizeof(request)) != sizeof(request) ||
-        !canController.endPacket()) {
+    if (obdSession.active) {
+        obdSession.requestCount++;
+        obdSession.lastRequestSequence = obdSession.requestCount;
+        obdSession.lastRequestMs = requestMs;
+        obdSession.lastRequestPid = pid;
+    }
+
+    const bool transmitOK =
+        canController.beginPacket(0x7DF, 8) &&
+        canController.write(request, sizeof(request)) == sizeof(request) &&
+        canController.endPacket();
+
+    if (obdSession.active) {
+        OBDTraceEvent event;
+        event.type = transmitOK
+            ? OBDTraceEventType::REQUEST_SENT
+            : OBDTraceEventType::TRANSMIT_ERROR;
+        event.sequence = obdSession.lastRequestSequence;
+        event.eventUptimeMs = millis();
+        event.requestUptimeMs = requestMs;
+        event.pid = pid;
+        event.transmitOK = transmitOK;
+        enqueueOBDTrace(event);
+        obdSession.lastTransmitOK = transmitOK;
+    }
+
+    if (!transmitOK) {
         obdData.requestErrors++;
+        if (obdSession.active) {
+            obdSession.requestErrors++;
+        }
         errorCount++;
         return false;
+    }
+
+    if (obdSession.active) {
+        obdRequestPending = true;
+        pendingOBDHadResponse = false;
+        pendingOBDSequence = obdSession.lastRequestSequence;
+        pendingOBDRequestMs = requestMs;
+        pendingOBDPid = pid;
     }
 
     return true;
@@ -326,6 +519,49 @@ bool CANReader::processOBDResponse(const CANMessage& msg) {
         obdData.lastResponseMs = now;
         obdData.lastPid = pid;
         obdData.responseCount++;
+
+        if (obdSession.active) {
+            const bool matched =
+                obdRequestPending && pendingOBDPid == pid;
+            const uint32_t sequence =
+                matched ? pendingOBDSequence : 0;
+            const uint32_t requestMs =
+                matched ? pendingOBDRequestMs : 0;
+            const uint32_t latency =
+                matched ? now - pendingOBDRequestMs : 0;
+
+            obdSession.responseCount++;
+            if (pid == 0x00 || pid == 0x20 ||
+                pid == 0x40 || pid == 0x60) {
+                obdSession.supportResponseCount++;
+            }
+            if (!matched) {
+                obdSession.unmatchedResponseCount++;
+            }
+            obdSession.lastResponseMs = now;
+            obdSession.lastResponseLatencyMs = latency;
+            obdSession.lastResponseCanId =
+                static_cast<uint32_t>(msg.canId);
+            obdSession.lastResponsePid = pid;
+
+            OBDTraceEvent event;
+            event.type = OBDTraceEventType::RESPONSE;
+            event.sequence = sequence;
+            event.eventUptimeMs = now;
+            event.requestUptimeMs = requestMs;
+            event.responseUptimeMs = now;
+            event.responseLatencyMs = latency;
+            event.responseCanId =
+                static_cast<uint32_t>(msg.canId);
+            event.pid = pid;
+            event.transmitOK = matched;
+            event.matchedRequest = matched;
+            enqueueOBDTrace(event);
+
+            if (matched) {
+                pendingOBDHadResponse = true;
+            }
+        }
     }
     return decoded;
 }
@@ -372,6 +608,20 @@ void CANReader::resetOBDDiscoveryData() {
         obdData.supportBlockValid[block] = false;
         obdData.supportBitmap[block] = 0;
     }
+}
+
+const char* obdTraceEventName(OBDTraceEventType type) {
+    switch (type) {
+        case OBDTraceEventType::REQUEST_SENT:
+            return "REQUEST_SENT";
+        case OBDTraceEventType::TRANSMIT_ERROR:
+            return "TRANSMIT_ERROR";
+        case OBDTraceEventType::RESPONSE:
+            return "RESPONSE";
+        case OBDTraceEventType::TIMEOUT:
+            return "TIMEOUT";
+    }
+    return "UNKNOWN";
 }
 
 bool CANReader::isOBDPidSupportKnown(uint8_t pid) const {
@@ -596,6 +846,22 @@ CANHardwareDiagnostics CANReader::getHardwareDiagnostics() {
     result.transmitBusOff = raw.errorFlags & 0x20;
     result.receiveBuffer0Overflow = raw.errorFlags & 0x40;
     result.receiveBuffer1Overflow = raw.errorFlags & 0x80;
+    if (result.receiveBuffer0Overflow) {
+        receiveBuffer0OverflowCount++;
+    }
+    if (result.receiveBuffer1Overflow) {
+        receiveBuffer1OverflowCount++;
+    }
+    if (result.receiveBuffer0Overflow ||
+        result.receiveBuffer1Overflow) {
+        canController.clearReceiveOverflowFlags();
+    }
+    result.receiveBuffer0OverflowCount =
+        receiveBuffer0OverflowCount;
+    result.receiveBuffer1OverflowCount =
+        receiveBuffer1OverflowCount;
+    result.controllerRecoveryCount =
+        controllerRecoveryCount;
     return result;
 }
 

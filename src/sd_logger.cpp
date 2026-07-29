@@ -1,11 +1,20 @@
 #include "sd_logger.h"
 #include "road_quality.h"
 #include "gps_manager.h"
+#include "runtime_diagnostics.h"
 #include <esp_system.h>
 #include <time.h>
 
 // Forward-Deklaration
 float calculateOverallQuality(const RoadMetrics& metrics);
+
+namespace {
+uint32_t sessionCounterDelta(uint32_t current, uint32_t start) {
+    // Auch bei einem unerwarteten Zählerneustart oder 32-Bit-Überlauf niemals
+    // einen unsigned-Unterlauf als riesigen Sitzungswert protokollieren.
+    return current >= start ? current - start : current;
+}
+}
 
 // Globale Instanz
 SDLogger sdLogger;
@@ -15,8 +24,13 @@ SDLogger::SDLogger(int cs)
       cardAvailable(false), logging(false),
       loggingStartState(LoggingStartState::IDLE), bufferIndex(0),
       lastSensorLog(0), lastRoadLog(0), lastGPSLog(0), lastFlush(0),
-      sessionStartTime(0), qualitySum(0), hasLastRideGPS(false),
-      lastRideLatitude(0), lastRideLongitude(0), lastRideGPSTime(0) {
+      lastMetadataLog(0), sessionStartTime(0),
+      gpsSessionStartStatus{}, gpsSessionStartFixSequence(0),
+      gpsSessionLastLoggedFixSequence(0),
+      canSessionStartDiagnostics{}, qualitySum(0),
+      hasLastRideGPS(false),
+      lastRideLatitude(0), lastRideLongitude(0), lastRideGPSTime(0),
+      bufferedRecordCount(0) {
     
     // Standard-Konfiguration
     config = {
@@ -100,8 +114,20 @@ bool SDLogger::begin(SPIClass& spi) {
     // SD-Karte initialisieren. Der Takt wird bewusst explizit übergeben; ohne
     // Argument nimmt die Bibliothek 4 MHz, was auf dem vorhandenen Aufbau zu
     // wenig Signalreserve lässt.
-    if (!SD.begin(csPin, spi, SD_SPI_SPEED)) {
+    // Die neun Sitzungslogs werden vor Messbeginn geöffnet; Root-Prüfung und
+    // Abschlusszusammenfassung benötigen zusätzlich eigene Datei-Handles.
+    if (!SD.begin(
+            csPin, spi, SD_SPI_SPEED, "/sd", SD_MAX_OPEN_FILES, false)) {
         Serial.println("❌ SD-Karte nicht gefunden!");
+        return false;
+    }
+
+    // Neue Fahrten liegen jeweils in einem eigenen Unterverzeichnis. Dadurch
+    // muss FAT beim Anlegen einer Sitzung nicht für jede der neun Dateien das
+    // mit alten Messungen gefüllte Wurzelverzeichnis erneut durchsuchen.
+    if (!SD.exists("/sessions") && !SD.mkdir("/sessions")) {
+        Serial.println("❌ SD-Sitzungsverzeichnis konnte nicht angelegt werden");
+        SD.end();
         return false;
     }
 
@@ -202,6 +228,12 @@ void SDLogger::processLoggingStart() {
         case LoggingStartState::PREPARE:
             closeLogFiles();
             sessionId = generateSessionId();
+            sessionDirectory = "/sessions/" + sessionId;
+            if (!SD.mkdir(sessionDirectory)) {
+                failLoggingStart(
+                    "Sitzungsverzeichnis konnte nicht angelegt werden");
+                return;
+            }
             loggingStartState = LoggingStartState::OPEN_SENSOR;
             return;
 
@@ -237,6 +269,54 @@ void SDLogger::processLoggingStart() {
                 failLoggingStart("Ereignis-Log konnte nicht angelegt werden");
                 return;
             }
+            loggingStartState = LoggingStartState::OPEN_META;
+            return;
+
+        case LoggingStartState::OPEN_META:
+            if (!openLogFile(metaLogFile, metaFileName, LOG_TYPE_META)) {
+                failLoggingStart("Metadaten-Log konnte nicht angelegt werden");
+                return;
+            }
+            loggingStartState = LoggingStartState::OPEN_CAN;
+            return;
+
+        case LoggingStartState::OPEN_CAN:
+            if (config.enableCANLog && canReader.isReady() &&
+                !openLogFile(canLogFile, canFileName, LOG_TYPE_CAN)) {
+                failLoggingStart("CAN-Log konnte nicht angelegt werden");
+                return;
+            }
+            loggingStartState = LoggingStartState::OPEN_OBD;
+            return;
+
+        case LoggingStartState::OPEN_OBD:
+            if (config.enableCANLog && canReader.isReady() &&
+                !openLogFile(obdLogFile, obdFileName, LOG_TYPE_OBD)) {
+                failLoggingStart("OBD-Log konnte nicht angelegt werden");
+                return;
+            }
+            loggingStartState = LoggingStartState::OPEN_OBD_TRACE;
+            return;
+
+        case LoggingStartState::OPEN_OBD_TRACE:
+            if (config.enableCANLog && canReader.isReady() &&
+                !openLogFile(
+                    obdTraceLogFile, obdTraceFileName, LOG_TYPE_OBD_TRACE)) {
+                failLoggingStart("OBD-Trace konnte nicht angelegt werden");
+                return;
+            }
+            loggingStartState = LoggingStartState::OPEN_CORRELATED;
+            return;
+
+        case LoggingStartState::OPEN_CORRELATED:
+            if (config.enableCANLog && canReader.isReady() &&
+                !openLogFile(
+                    correlatedLogFile, correlatedFileName,
+                    LOG_TYPE_CORRELATED)) {
+                failLoggingStart(
+                    "Korrelations-Log konnte nicht angelegt werden");
+                return;
+            }
             loggingStartState = LoggingStartState::FINALIZE;
             return;
 
@@ -255,18 +335,61 @@ void SDLogger::processLoggingStart() {
     lastRideLongitude = 0;
     lastRideGPSTime = 0;
     bufferIndex = 0;
+    bufferedRecordCount = 0;
     lastSensorLog = 0;
     lastRoadLog = 0;
     lastGPSLog = 0;
+    lastMetadataLog = 0;
+    gpsSessionStartStatus = gpsManager.getStatus();
+    gpsSessionStartFixSequence = gpsManager.getFixSequence();
+    gpsSessionLastLoggedFixSequence = gpsSessionStartFixSequence;
+    if (canReader.isReady()) {
+        canSessionStartDiagnostics =
+            canReader.getHardwareDiagnostics();
+        canReader.beginOBDSession();
+    } else {
+        canSessionStartDiagnostics = CANHardwareDiagnostics{};
+    }
+    runtimeDiagnostics.resetSession();
     logging = true;
     loggingStartState = LoggingStartState::IDLE;
+    const bool startMetadataWritten = logSessionMetadata(
+        "START", gpsManager.getStatus(), canReader.getOBDSessionStats(),
+        canReader.getHardwareDiagnostics());
+    if (!startMetadataWritten) {
+        if (logging) {
+            failLoggingStart(
+                "START-Metadaten konnten nicht gespeichert werden");
+        }
+        return;
+    }
     Serial.printf("✅ Sensor-Log: %s\n", currentFileName.c_str());
     if (roadLogFile) Serial.printf("✅ Straßen-Log: %s\n", roadFileName.c_str());
     if (gpsLogFile) Serial.printf("✅ GPS-Log: %s\n", gpsFileName.c_str());
     if (eventLogFile) Serial.printf("✅ Ereignis-Log: %s\n", eventFileName.c_str());
+    if (metaLogFile) Serial.printf("✅ Metadaten-Log: %s\n", metaFileName.c_str());
+    if (canLogFile) Serial.printf("✅ CAN-Log: %s\n", canFileName.c_str());
+    if (obdLogFile) Serial.printf("✅ OBD-Log: %s\n", obdFileName.c_str());
+    if (obdTraceLogFile) {
+        Serial.printf("✅ OBD-Trace: %s\n", obdTraceFileName.c_str());
+    }
+    if (correlatedLogFile) {
+        Serial.printf("✅ Korrelations-Log: %s\n", correlatedFileName.c_str());
+    }
 }
 
 void SDLogger::failLoggingStart(const String& reason) {
+    if (logging) {
+        rideSummary.durationSeconds =
+            (millis() - sessionStartTime) / 1000;
+        rideSummary.endUTC = formatUTC();
+        rideSummary.active = false;
+        rideSummary.completed = false;
+        rideSummary.interrupted = true;
+        if (canReader.isOBDSessionActive()) {
+            canReader.endOBDSession();
+        }
+    }
     closeLogFiles();
     logging = false;
     loggingStartState = LoggingStartState::IDLE;
@@ -286,13 +409,24 @@ void SDLogger::stopLogging() {
     rideSummary.durationSeconds = (millis() - sessionStartTime) / 1000;
     rideSummary.endUTC = formatUTC();
     rideSummary.active = false;
-    rideSummary.completed = true;
+    rideSummary.completed = false;
     rideSummary.interrupted = false;
     if (rideSummary.qualitySamples > 0) {
         rideSummary.averageQuality =
             qualitySum / rideSummary.qualitySamples;
     }
 
+    canReader.updateOBDDiagnostics();
+    const CANHardwareDiagnostics finalCANDiagnostics =
+        canReader.getHardwareDiagnostics();
+    OBDTraceEvent finalTraceEvent;
+    while (canReader.popOBDTraceEvent(finalTraceEvent)) {
+        logOBDTraceEvent(finalTraceEvent, finalCANDiagnostics);
+    }
+    const bool endMetadataWritten = logSessionMetadata(
+        "END", gpsManager.getStatus(), canReader.getOBDSessionStats(),
+        finalCANDiagnostics);
+    canReader.endOBDSession();
     flush();
     if (!isReady()) {
         logging = false;
@@ -300,11 +434,32 @@ void SDLogger::stopLogging() {
         return;
     }
 
-    writeRideSummaryFile();
+    const bool summaryWritten = writeRideSummaryFile();
+    const bool sessionComplete = endMetadataWritten && summaryWritten;
+    rideSummary.completed = sessionComplete;
+    rideSummary.interrupted = !sessionComplete;
+    if (!sessionComplete && logging && eventLogFile) {
+        String incompleteReason;
+        if (!endMetadataWritten) {
+            incompleteReason = "END-Metadaten fehlen";
+        }
+        if (!summaryWritten) {
+            if (incompleteReason.length() > 0) {
+                incompleteReason += ";";
+            }
+            incompleteReason += "Fahrzusammenfassung fehlt";
+        }
+        logEvent(
+            "SESSION_INCOMPLETE",
+            incompleteReason);
+    }
     closeLogFiles();
     logging = false;
 
-    Serial.println("✅ Messfahrt beendet und alle Dateien geschlossen");
+    Serial.println(
+        sessionComplete
+            ? "✅ Messfahrt beendet und alle Dateien geschlossen"
+            : "⚠️ Messfahrt beendet, Abschlussdaten unvollständig");
     Serial.printf("   Dauer: %lu s, Strecke: %.2f km, Schlaglöcher: %lu, "
                   "Durchschnitt: %.1f\n",
                   rideSummary.durationSeconds, rideSummary.distanceKm,
@@ -333,10 +488,13 @@ String SDLogger::generateFileName(LogType type) {
         case LOG_TYPE_SYSTEM: typeStr = "system"; break;
         case LOG_TYPE_GPS: typeStr = "gps"; break;
         case LOG_TYPE_OBD: typeStr = "obd"; break;
+        case LOG_TYPE_OBD_TRACE: typeStr = "obd_trace"; break;
+        case LOG_TYPE_META: typeStr = "meta"; break;
         case LOG_TYPE_CORRELATED: typeStr = "correlated"; break;
     }
     
-    String fileName = "/" + config.filePrefix + "_" + typeStr;
+    String fileName = sessionDirectory + "/" +
+                      config.filePrefix + "_" + typeStr;
     
     if (config.useTimestamp) {
         fileName += "_" + sessionId;
@@ -412,6 +570,8 @@ void SDLogger::closeLogFiles() {
     if (gpsLogFile) gpsLogFile.close();
     if (canLogFile) canLogFile.close();
     if (obdLogFile) obdLogFile.close();
+    if (obdTraceLogFile) obdTraceLogFile.close();
+    if (metaLogFile) metaLogFile.close();
     if (eventLogFile) eventLogFile.close();
     if (correlatedLogFile) correlatedLogFile.close();
 }
@@ -430,7 +590,12 @@ void SDLogger::handleCardFailure(const char* reason, uint32_t droppedRecords) {
     }
 
     stats.errorCount++;
-    stats.droppedLogs += droppedRecords;
+    stats.droppedLogs += droppedRecords + bufferedRecordCount;
+    bufferIndex = 0;
+    bufferedRecordCount = 0;
+    if (canReader.isOBDSessionActive()) {
+        canReader.endOBDSession();
+    }
     closeLogFiles();
     logging = false;
     SD.end();
@@ -464,7 +629,15 @@ bool SDLogger::writeHeader(File& file, LogType type) {
             break;
 
         case LOG_TYPE_GPS:
-            header = "UTC,UptimeMs,Latitude,Longitude,AltitudeM,SpeedKmh,HeadingDeg,Satellites,ValidFix,HDOP";
+            header =
+                "UTC,UptimeMs,Latitude,Longitude,AltitudeM,SpeedKmh,"
+                "HeadingDeg,Satellites,ValidFix,HDOP,"
+                "LocationValid,LocationAgeMs,SpeedValid,SpeedAgeMs,"
+                "AltitudeValid,AltitudeAgeMs,CourseValid,CourseAgeMs,"
+                "SatellitesValid,SatellitesAgeMs,HDOPValid,HDOPAgeMs,"
+                "NewFix,FixSequence,NMEAChars,NMEASentencesValid,"
+                "NMEAChecksumFailures,RXBufferOverflows,"
+                "Rejected,RejectionReason";
             break;
 
         case LOG_TYPE_OBD:
@@ -477,7 +650,41 @@ bool SDLogger::writeHeader(File& file, LogType type) {
                 "FuelRateValid,FuelRateLitersPerHour,"
                 "Support00Valid,Support00,Support20Valid,Support20,"
                 "Support40Valid,Support40,Support60Valid,Support60,"
-                "Requests,Responses,SendErrors";
+                "Requests,Responses,SendErrors,"
+                "SessionActive,SessionRequests,SessionResponses,"
+                "SessionSendErrors,SessionTimeouts,UnmatchedResponses,"
+                "TraceDropped,RequestSequence,RequestPID,TransmitOK,"
+                "ResponsePID,ResponseECU,ResponseLatencyMs,"
+                "CANMode,TEC,REC,EFLG,"
+                "RX0OverflowCount,RX1OverflowCount,CANRecoveryCount";
+            break;
+
+        case LOG_TYPE_OBD_TRACE:
+            header =
+                "UTC,UptimeMs,Event,Sequence,PID,TransmitOK,"
+                "MatchedRequest,RequestUptimeMs,ResponseUptimeMs,"
+                "ResponseLatencyMs,ResponseECU,CANMode,TEC,REC,EFLG,"
+                "RX0OverflowCount,RX1OverflowCount,CANRecoveryCount";
+            break;
+
+        case LOG_TYPE_META:
+            header =
+                "Record,UTC,UptimeMs,FirmwareVersion,SchemaVersion,"
+                "SessionId,VehicleProfile,CANBitrate,CANClockHz,"
+                "OBDRequestIntervalMs,OBDResponseTimeoutMs,GPSLogIntervalMs,"
+                "GPSLocationMaxAgeMs,GPSSpeedMaxAgeMs,GPSQualityMaxAgeMs,"
+                "GPSMinSatellites,GPSMaxHDOP,GPSMinReliableSpeedKmh,"
+                "GPSOBDStationaryKmh,"
+                "GPSChars,GPSSentencesValid,GPSChecksumFailures,"
+                "GPSRXBufferOverflows,GPSBufferedBytes,"
+                "OBDSessionActive,OBDRequests,OBDResponses,OBDSendErrors,"
+                "OBDTimeouts,OBDUnmatchedResponses,OBDTraceDropped,"
+                "CANMode,TEC,REC,EFLG,RX0OverflowCount,RX1OverflowCount,"
+                "CANRecoveryCount,"
+                "SDWrites,SDErrors,SDDropped,"
+                "LoopLastMs,LoopMaxMs,LoopStalls,"
+                "WebLastMs,WebMaxMs,WebStalls,"
+                "SDLastMs,SDMaxMs,SDStalls";
             break;
 
         case LOG_TYPE_CORRELATED:
@@ -515,7 +722,8 @@ bool SDLogger::writeRideSummaryFile() {
     }
 
     String summaryFileName =
-        "/" + config.filePrefix + "_summary_" + sessionId + ".csv";
+        sessionDirectory + "/" + config.filePrefix +
+        "_summary_" + sessionId + ".csv";
     File summaryFile = SD.open(summaryFileName, FILE_WRITE);
     if (!summaryFile) {
         Serial.printf("❌ Fahrzusammenfassung konnte nicht erstellt werden: %s\n",
@@ -553,37 +761,50 @@ bool SDLogger::writeRideSummaryFile() {
     return true;
 }
 
-void SDLogger::flushBuffer() {
-    if (bufferIndex > 0 && currentLogFile) {
+bool SDLogger::flushBuffer() {
+    if (bufferIndex == 0) {
+        return true;
+    }
+
+    if (!currentLogFile) {
+        handleCardFailure(
+            "Sensorpuffer ohne geöffnete Sensordatei");
+        return false;
+    }
+
+    if (bufferIndex > 0) {
         // Sicherheits-Check vor Buffer-Zugriff
         if (bufferIndex <= BUFFER_SIZE) {
             size_t bytesToWrite = bufferIndex;
+            const unsigned long writeStartedAt = millis();
             size_t bytesWritten =
                 currentLogFile.write((const uint8_t*)writeBuffer, bytesToWrite);
+            runtimeDiagnostics.recordSDDuration(
+                millis() - writeStartedAt);
             if (bytesWritten != bytesToWrite) {
                 bufferIndex = 0;
                 handleCardFailure(
-                    "Sensorpuffer konnte nicht vollständig geschrieben werden", 1);
-                return;
+                    "Sensorpuffer konnte nicht vollständig geschrieben werden");
+                return false;
             }
+            stats.totalWrites += bufferedRecordCount;
+            stats.totalBytes += bytesWritten;
         } else {
-            // Kritischer Fehler: Buffer-Overflow erkannt
-            Serial.printf("❌ KRITISCH: Buffer-Overflow erkannt! Index: %d, Max: %d\n", 
-                         bufferIndex, BUFFER_SIZE);
-            stats.errorCount++;
-            
-            // Notfall-Flush nur bis zur sicheren Grenze
-            size_t emergencySize = BUFFER_SIZE - BUFFER_SAFETY_MARGIN;
-            if (currentLogFile.write(
-                    (const uint8_t*)writeBuffer, emergencySize) != emergencySize) {
-                bufferIndex = 0;
-                handleCardFailure(
-                    "Notfallpuffer konnte nicht geschrieben werden", 1);
-                return;
-            }
+            // Niemals einen abgeschnittenen CSV-Puffer schreiben. Die Sitzung
+            // wird sichtbar abgebrochen, damit keine scheinbar gültige,
+            // tatsächlich beschädigte letzte Zeile entsteht.
+            Serial.printf(
+                "❌ KRITISCH: Buffer-Grenze verletzt! Index: %d, Max: %d\n",
+                bufferIndex, BUFFER_SIZE);
+            stats.bufferOverflows++;
+            bufferIndex = 0;
+            handleCardFailure("Sensorpuffer-Grenze verletzt");
+            return false;
         }
         bufferIndex = 0;
+        bufferedRecordCount = 0;
     }
+    return true;
 }
 
 bool SDLogger::safeAppendToBuffer(const char* data, size_t dataLen) {
@@ -594,14 +815,19 @@ bool SDLogger::safeAppendToBuffer(const char* data, size_t dataLen) {
     
     if (dataLen > availableSpace) {
         // Nicht genug Platz - Buffer leeren und erneut versuchen
-        flushBuffer();
+        if (!flushBuffer()) {
+            return false;
+        }
         availableSpace = getAvailableBufferSpace();
         
-        // Wenn immer noch nicht genug Platz, Daten kürzen
+        // CSV-Zeilen niemals kürzen: Eine beschädigte Zeile wäre für die
+        // spätere Auswertung gefährlicher als ein sichtbar verworfener Satz.
         if (dataLen > availableSpace) {
-            Serial.printf("⚠️ Datenzeile zu lang (%zu Bytes), kürze auf %zu\n", 
-                         dataLen, availableSpace);
-            dataLen = availableSpace;
+            Serial.printf(
+                "⚠️ Datenzeile zu lang (%zu Bytes, verfügbar %zu)\n",
+                dataLen, availableSpace);
+            stats.bufferOverflows++;
+            return false;
         }
     }
     
@@ -612,7 +838,8 @@ bool SDLogger::safeAppendToBuffer(const char* data, size_t dataLen) {
     // Zusätzlicher Sicherheits-Check
     if (bufferIndex > BUFFER_SIZE) {
         Serial.println("❌ FATAL: Buffer-Index außerhalb der Grenzen!");
-        bufferIndex = BUFFER_SIZE - BUFFER_SAFETY_MARGIN; // Notfall-Korrektur
+        bufferIndex = 0;
+        handleCardFailure("Sensorpuffer-Index außerhalb der Grenzen");
         return false;
     }
     
@@ -669,22 +896,25 @@ bool SDLogger::logSensorData(const SensorData& data) {
         data.calibration.accel, data.calibration.mag);
     
     // Überprüfe auf Truncation
-    if (written >= sizeof(logBuffer)) {
-        Serial.println("⚠️ Sensor-Log-Zeile wurde gekürzt!");
+    if (written < 0 || written >= static_cast<int>(sizeof(logBuffer))) {
+        Serial.println("⚠️ Sensor-Log-Zeile wurde verworfen!");
         stats.errorCount++;
+        stats.droppedLogs++;
+        return false;
     }
     
     // Verwende sichere Buffer-Append-Funktion
     bool success = safeAppendToBuffer(logBuffer, strlen(logBuffer));
     
     if (success) {
-        stats.totalWrites++;
-        stats.totalBytes += strlen(logBuffer);
+        bufferedRecordCount++;
         lastSensorLog = now;
         
         // Auto-Flush bei 80% Buffer-Auslastung
         if (getAvailableBufferSpace() < BUFFER_SIZE * 0.2) {
-            flushBuffer();
+            if (!flushBuffer()) {
+                return false;
+            }
         }
         return true;
     }
@@ -764,9 +994,11 @@ bool SDLogger::logCANMessage(const CANMessage& msg) {
         msg.rtr ? 1 : 0, msg.dlc, dataBytes);
     
     // Überprüfe Truncation
-    if (written >= sizeof(logBuffer)) {
-        Serial.println("⚠️ CAN-Log-Zeile wurde gekürzt!");
+    if (written < 0 || written >= static_cast<int>(sizeof(logBuffer))) {
+        Serial.println("⚠️ CAN-Log-Zeile wurde verworfen!");
         stats.errorCount++;
+        stats.droppedLogs++;
+        return false;
     }
     
     size_t logLength = strlen(logBuffer);
@@ -780,7 +1012,9 @@ bool SDLogger::logCANMessage(const CANMessage& msg) {
     return false;
 }
 
-bool SDLogger::logOBDData(const OBDLiveData& obd) {
+bool SDLogger::logOBDData(
+    const OBDLiveData& obd, const OBDSessionStats& session,
+    const CANHardwareDiagnostics& diagnostics) {
     if (!logging || !config.enableCANLog) {
         return false;
     }
@@ -790,7 +1024,7 @@ bool SDLogger::logOBDData(const OBDLiveData& obd) {
         return false;
     }
 
-    char logBuffer[512];
+    char logBuffer[768];
     const int written = snprintf(
         logBuffer, sizeof(logBuffer),
         "%s,%02X,"
@@ -800,7 +1034,10 @@ bool SDLogger::logOBDData(const OBDLiveData& obd) {
         "%d,%.1f,%d,%.1f,"
         "%d,%.3f,"
         "%d,%08lX,%d,%08lX,%d,%08lX,%d,%08lX,"
-        "%lu,%lu,%lu\n",
+        "%lu,%lu,%lu,"
+        "%d,%lu,%lu,%lu,%lu,%lu,%lu,"
+        "%lu,%02X,%d,%02X,%03lX,%lu,"
+        "%02X,%u,%u,%02X,%lu,%lu,%lu\n",
         formatTimestamp().c_str(), obd.lastPid,
         obd.rpmValid ? 1 : 0, obd.rpm,
         obd.speedValid ? 1 : 0, obd.speedKmh,
@@ -817,7 +1054,33 @@ bool SDLogger::logOBDData(const OBDLiveData& obd) {
         static_cast<unsigned long>(obd.supportBitmap[2]),
         obd.supportBlockValid[3] ? 1 : 0,
         static_cast<unsigned long>(obd.supportBitmap[3]),
-        obd.requestCount, obd.responseCount, obd.requestErrors);
+        obd.requestCount, obd.responseCount, obd.requestErrors,
+        session.active ? 1 : 0,
+        static_cast<unsigned long>(session.requestCount),
+        static_cast<unsigned long>(session.responseCount),
+        static_cast<unsigned long>(session.requestErrors),
+        static_cast<unsigned long>(session.timeoutCount),
+        static_cast<unsigned long>(session.unmatchedResponseCount),
+        static_cast<unsigned long>(session.traceDropped),
+        static_cast<unsigned long>(session.lastRequestSequence),
+        session.lastRequestPid,
+        session.lastTransmitOK ? 1 : 0,
+        session.lastResponsePid,
+        static_cast<unsigned long>(session.lastResponseCanId),
+        static_cast<unsigned long>(session.lastResponseLatencyMs),
+        diagnostics.operatingMode,
+        diagnostics.transmitErrorCount,
+        diagnostics.receiveErrorCount,
+        diagnostics.errorFlags,
+        static_cast<unsigned long>(sessionCounterDelta(
+            diagnostics.receiveBuffer0OverflowCount,
+            canSessionStartDiagnostics.receiveBuffer0OverflowCount)),
+        static_cast<unsigned long>(sessionCounterDelta(
+            diagnostics.receiveBuffer1OverflowCount,
+            canSessionStartDiagnostics.receiveBuffer1OverflowCount)),
+        static_cast<unsigned long>(sessionCounterDelta(
+            diagnostics.controllerRecoveryCount,
+            canSessionStartDiagnostics.controllerRecoveryCount)));
 
     if (written < 0 || written >= static_cast<int>(sizeof(logBuffer))) {
         Serial.println("⚠️ OBD-Log-Zeile konnte nicht vollständig formatiert werden");
@@ -840,6 +1103,183 @@ bool SDLogger::logOBDData(const OBDLiveData& obd) {
     return false;
 }
 
+bool SDLogger::logOBDTraceEvent(
+    const OBDTraceEvent& event,
+    const CANHardwareDiagnostics& diagnostics) {
+    if (!logging || !config.enableCANLog) {
+        return false;
+    }
+
+    if (!obdTraceLogFile &&
+        !openLogFile(
+            obdTraceLogFile, obdTraceFileName, LOG_TYPE_OBD_TRACE)) {
+        return false;
+    }
+
+    const uint32_t eventSessionMs =
+        event.eventUptimeMs >= sessionStartTime
+            ? event.eventUptimeMs - sessionStartTime
+            : 0;
+    const uint32_t requestSessionMs =
+        event.requestUptimeMs >= sessionStartTime
+            ? event.requestUptimeMs - sessionStartTime
+            : 0;
+    const uint32_t responseSessionMs =
+        event.responseUptimeMs >= sessionStartTime
+            ? event.responseUptimeMs - sessionStartTime
+            : 0;
+
+    char logBuffer[256];
+    const int written = snprintf(
+        logBuffer, sizeof(logBuffer),
+        "%s,%lu,%s,%lu,%02X,%d,%d,%lu,%lu,%lu,%03lX,"
+        "%02X,%u,%u,%02X,%lu,%lu,%lu\n",
+        formatUTC().c_str(),
+        static_cast<unsigned long>(eventSessionMs),
+        obdTraceEventName(event.type),
+        static_cast<unsigned long>(event.sequence),
+        event.pid,
+        event.transmitOK ? 1 : 0,
+        event.matchedRequest ? 1 : 0,
+        static_cast<unsigned long>(requestSessionMs),
+        static_cast<unsigned long>(responseSessionMs),
+        static_cast<unsigned long>(event.responseLatencyMs),
+        static_cast<unsigned long>(event.responseCanId),
+        diagnostics.operatingMode,
+        diagnostics.transmitErrorCount,
+        diagnostics.receiveErrorCount,
+        diagnostics.errorFlags,
+        static_cast<unsigned long>(sessionCounterDelta(
+            diagnostics.receiveBuffer0OverflowCount,
+            canSessionStartDiagnostics.receiveBuffer0OverflowCount)),
+        static_cast<unsigned long>(sessionCounterDelta(
+            diagnostics.receiveBuffer1OverflowCount,
+            canSessionStartDiagnostics.receiveBuffer1OverflowCount)),
+        static_cast<unsigned long>(sessionCounterDelta(
+            diagnostics.controllerRecoveryCount,
+            canSessionStartDiagnostics.controllerRecoveryCount)));
+
+    if (written < 0 || written >= static_cast<int>(sizeof(logBuffer))) {
+        stats.errorCount++;
+        stats.droppedLogs++;
+        return false;
+    }
+
+    const size_t length = static_cast<size_t>(written);
+    if (obdTraceLogFile.write(
+            reinterpret_cast<const uint8_t*>(logBuffer), length) == length) {
+        stats.totalWrites++;
+        stats.totalBytes += length;
+        return true;
+    }
+
+    handleCardFailure("OBD-Trace konnte nicht geschrieben werden", 1);
+    return false;
+}
+
+bool SDLogger::logSessionMetadata(
+    const char* record, const GPSStatus& gpsStatus,
+    const OBDSessionStats& obdStatus,
+    const CANHardwareDiagnostics& canStatus) {
+    if (!logging || !metaLogFile || record == nullptr) {
+        return false;
+    }
+
+    const RuntimeTimingDiagnostics timing =
+        runtimeDiagnostics.getTiming();
+    char logBuffer[1024];
+    const int written = snprintf(
+        logBuffer, sizeof(logBuffer),
+        "%s,%s,%lu,%s,%s,%s,%s,%ld,%ld,%d,%d,%lu,"
+        "%lu,%lu,%lu,%u,%.1f,%.1f,%.1f,"
+        "%lu,%lu,%lu,%lu,%u,"
+        "%d,%lu,%lu,%lu,%lu,%lu,%lu,"
+        "%02X,%u,%u,%02X,%lu,%lu,%lu,%lu,%lu,%lu,"
+        "%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu\n",
+        record,
+        formatUTC().c_str(),
+        static_cast<unsigned long>(millis() - sessionStartTime),
+        ROADTEST_FIRMWARE_VERSION,
+        ROADTEST_CSV_SCHEMA_VERSION,
+        sessionId.c_str(),
+        ROADTEST_VEHICLE_PROFILE,
+        static_cast<long>(CAN_BAUDRATE),
+        static_cast<long>(CAN_CLOCK_16MHZ),
+        CAN_OBD_REQUEST_INTERVAL_MS,
+        CAN_OBD_RESPONSE_TIMEOUT_MS,
+        static_cast<unsigned long>(config.gpsLogInterval),
+        static_cast<unsigned long>(GPS_LOCATION_MAX_AGE_MS),
+        static_cast<unsigned long>(GPS_SPEED_MAX_AGE_MS),
+        static_cast<unsigned long>(GPS_QUALITY_MAX_AGE_MS),
+        static_cast<unsigned>(GPS_MIN_SATELLITES),
+        static_cast<double>(GPS_MAX_HDOP),
+        static_cast<double>(GPS_MIN_RELIABLE_SPEED_KMH),
+        static_cast<double>(GPS_DISTANCE_OBD_STATIONARY_KMH),
+        static_cast<unsigned long>(sessionCounterDelta(
+            gpsStatus.chars_processed,
+            gpsSessionStartStatus.chars_processed)),
+        static_cast<unsigned long>(sessionCounterDelta(
+            gpsStatus.sentences_received,
+            gpsSessionStartStatus.sentences_received)),
+        static_cast<unsigned long>(sessionCounterDelta(
+            gpsStatus.sentences_failed,
+            gpsSessionStartStatus.sentences_failed)),
+        static_cast<unsigned long>(sessionCounterDelta(
+            gpsStatus.rx_buffer_overflows,
+            gpsSessionStartStatus.rx_buffer_overflows)),
+        gpsStatus.buffered_bytes,
+        obdStatus.active ? 1 : 0,
+        static_cast<unsigned long>(obdStatus.requestCount),
+        static_cast<unsigned long>(obdStatus.responseCount),
+        static_cast<unsigned long>(obdStatus.requestErrors),
+        static_cast<unsigned long>(obdStatus.timeoutCount),
+        static_cast<unsigned long>(obdStatus.unmatchedResponseCount),
+        static_cast<unsigned long>(obdStatus.traceDropped),
+        canStatus.operatingMode,
+        canStatus.transmitErrorCount,
+        canStatus.receiveErrorCount,
+        canStatus.errorFlags,
+        static_cast<unsigned long>(sessionCounterDelta(
+            canStatus.receiveBuffer0OverflowCount,
+            canSessionStartDiagnostics.receiveBuffer0OverflowCount)),
+        static_cast<unsigned long>(sessionCounterDelta(
+            canStatus.receiveBuffer1OverflowCount,
+            canSessionStartDiagnostics.receiveBuffer1OverflowCount)),
+        static_cast<unsigned long>(sessionCounterDelta(
+            canStatus.controllerRecoveryCount,
+            canSessionStartDiagnostics.controllerRecoveryCount)),
+        static_cast<unsigned long>(stats.totalWrites),
+        static_cast<unsigned long>(stats.errorCount),
+        static_cast<unsigned long>(stats.droppedLogs),
+        static_cast<unsigned long>(timing.lastLoopIntervalMs),
+        static_cast<unsigned long>(timing.maxLoopIntervalMs),
+        static_cast<unsigned long>(timing.loopStallCount),
+        static_cast<unsigned long>(timing.lastWebDurationMs),
+        static_cast<unsigned long>(timing.maxWebDurationMs),
+        static_cast<unsigned long>(timing.webStallCount),
+        static_cast<unsigned long>(timing.lastSDDurationMs),
+        static_cast<unsigned long>(timing.maxSDDurationMs),
+        static_cast<unsigned long>(timing.sdStallCount));
+
+    if (written < 0 || written >= static_cast<int>(sizeof(logBuffer))) {
+        stats.errorCount++;
+        stats.droppedLogs++;
+        return false;
+    }
+
+    const size_t length = static_cast<size_t>(written);
+    if (metaLogFile.write(
+            reinterpret_cast<const uint8_t*>(logBuffer), length) == length) {
+        stats.totalWrites++;
+        stats.totalBytes += length;
+        lastMetadataLog = millis();
+        return true;
+    }
+
+    handleCardFailure("Sitzungsmetadaten konnten nicht geschrieben werden", 1);
+    return false;
+}
+
 bool SDLogger::logGPSData(const GPSData& gps) {
     if (!logging || !config.enableGPSLog) return false;
     
@@ -849,19 +1289,54 @@ bool SDLogger::logGPSData(const GPSData& gps) {
     }
     
     // Sichere GPS-Daten-Formatierung
-    char logBuffer[256];
+    char logBuffer[640];
     String utc = gps.datetime_valid ? formatGPSDateTimeUTC(gps) : formatUTC();
+    const bool newFixInSession =
+        gps.fix_sequence > 0 &&
+        gps.fix_sequence != gpsSessionLastLoggedFixSequence;
     int written = snprintf(logBuffer, sizeof(logBuffer),
-        "%s,%lu,%.6f,%.6f,%.2f,%.1f,%.1f,%d,%d,%.2f\n",
+        "%s,%lu,%.6f,%.6f,%.2f,%.1f,%.1f,%d,%d,%.2f,"
+        "%d,%lu,%d,%lu,%d,%lu,%d,%lu,%d,%lu,%d,%lu,"
+        "%d,%lu,%lu,%lu,%lu,%lu,%d,%u\n",
         utc.c_str(), now - sessionStartTime,
         gps.latitude, gps.longitude, gps.altitude,
         gps.speed_kmh, gps.heading_deg, gps.satellites, 
-        gps.valid_fix ? 1 : 0, gps.hdop);
+        gps.valid_fix ? 1 : 0, gps.hdop,
+        gps.location_valid ? 1 : 0,
+        static_cast<unsigned long>(gps.location_age_ms),
+        gps.speed_valid ? 1 : 0,
+        static_cast<unsigned long>(gps.speed_age_ms),
+        gps.altitude_valid ? 1 : 0,
+        static_cast<unsigned long>(gps.altitude_age_ms),
+        gps.course_valid ? 1 : 0,
+        static_cast<unsigned long>(gps.course_age_ms),
+        gps.satellites_valid ? 1 : 0,
+        static_cast<unsigned long>(gps.satellites_age_ms),
+        gps.hdop_valid ? 1 : 0,
+        static_cast<unsigned long>(gps.hdop_age_ms),
+        newFixInSession ? 1 : 0,
+        static_cast<unsigned long>(sessionCounterDelta(
+            gps.fix_sequence, gpsSessionStartFixSequence)),
+        static_cast<unsigned long>(sessionCounterDelta(
+            gps.nmea_chars, gpsSessionStartStatus.chars_processed)),
+        static_cast<unsigned long>(sessionCounterDelta(
+            gps.nmea_sentences_valid,
+            gpsSessionStartStatus.sentences_received)),
+        static_cast<unsigned long>(sessionCounterDelta(
+            gps.nmea_checksum_failures,
+            gpsSessionStartStatus.sentences_failed)),
+        static_cast<unsigned long>(sessionCounterDelta(
+            gps.rx_buffer_overflows,
+            gpsSessionStartStatus.rx_buffer_overflows)),
+        gps.rejected ? 1 : 0,
+        gps.rejection_reason);
     
     // Überprüfe Truncation
-    if (written >= sizeof(logBuffer)) {
-        Serial.println("⚠️ GPS-Log-Zeile wurde gekürzt!");
+    if (written < 0 || written >= static_cast<int>(sizeof(logBuffer))) {
+        Serial.println("⚠️ GPS-Log-Zeile wurde verworfen!");
         stats.errorCount++;
+        stats.droppedLogs++;
+        return false;
     }
     
     size_t logLength = strlen(logBuffer);
@@ -869,34 +1344,74 @@ bool SDLogger::logGPSData(const GPSData& gps) {
         stats.totalWrites++;
         stats.totalBytes += logLength;
         lastGPSLog = now;
+        gpsSessionLastLoggedFixSequence = gps.fix_sequence;
 
-        // Strecke nur aus plausiblen, bewegten GPS-Punkten bilden. Das
-        // verhindert, dass Positionsrauschen im Stand als Weg gezählt wird.
-        if (gps.valid_fix && gps.location_valid &&
-            (gps.hdop <= 10.0f || gps.hdop == 0.0f)) {
-            if (!hasLastRideGPS) {
+        // Strecke nur einmal pro neuem Positionsfix bilden. Im Fahrzeug hat
+        // eine frische OBD-Geschwindigkeit Vorrang: meldet das Steuergerät
+        // Stillstand, darf GPS-Rauschen keine Strecke erzeugen. Ohne OBD wird
+        // Bewegung erst ab der zentral definierten, zuverlässigen
+        // GPS-Geschwindigkeit akzeptiert.
+        if (newFixInSession) {
+            const OBDLiveData obd = canReader.getOBDData();
+            const bool obdSpeedAvailable = obd.speedValid;
+            const bool obdStationary =
+                obdSpeedAvailable &&
+                obd.speedKmh <= GPS_DISTANCE_OBD_STATIONARY_KMH;
+            const bool movementConfirmed =
+                obdSpeedAvailable
+                    ? !obdStationary
+                    : gps.speed_valid;
+
+            if (!gps.valid_fix || !gps.location_valid) {
+                // Keine Segmente über eine Qualitätslücke hinweg verbinden.
+                hasLastRideGPS = false;
+            } else if (!movementConfirmed) {
+                // Der aktuelle Standpunkt bleibt der Anker. Langsam wanderndes
+                // Positionsrauschen kann sich dadurch nicht aufsummieren.
                 lastRideLatitude = gps.latitude;
                 lastRideLongitude = gps.longitude;
                 lastRideGPSTime = now;
                 hasLastRideGPS = true;
-            } else if (gps.speed_valid && gps.speed_kmh < 1.5f) {
+            } else if (!hasLastRideGPS) {
                 lastRideLatitude = gps.latitude;
                 lastRideLongitude = gps.longitude;
                 lastRideGPSTime = now;
+                hasLastRideGPS = true;
             } else {
-                float segmentMeters = calculateDistance(
+                const float segmentMeters = calculateDistance(
                     lastRideLatitude, lastRideLongitude,
                     gps.latitude, gps.longitude);
-                float elapsedSeconds =
+                const float elapsedSeconds =
                     max((now - lastRideGPSTime) / 1000.0f, 0.2f);
-                float speedMetersPerSecond =
-                    max(gps.speed_kmh, 5.0f) / 3.6f;
-                float maxPlausibleSegment =
-                    max(30.0f, speedMetersPerSecond * elapsedSeconds * 3.0f + 10.0f);
+                const float referenceSpeedKmh =
+                    obdSpeedAvailable
+                        ? static_cast<float>(obd.speedKmh)
+                        : gps.speed_kmh;
+                const float speedMetersPerSecond =
+                    max(
+                        referenceSpeedKmh,
+                        GPS_MIN_RELIABLE_SPEED_KMH) /
+                    3.6f;
+                const float maxPlausibleSegment =
+                    max(
+                        30.0f,
+                        speedMetersPerSecond * elapsedSeconds * 3.0f +
+                            10.0f);
+                const float minPlausibleSegment =
+                    obdSpeedAvailable
+                        ? GPS_DISTANCE_MIN_SEGMENT_OBD_M
+                        : GPS_DISTANCE_MIN_SEGMENT_GPS_M;
 
-                if (segmentMeters >= 1.0f &&
+                if (segmentMeters >= minPlausibleSegment &&
                     segmentMeters <= maxPlausibleSegment) {
-                    rideSummary.distanceKm += segmentMeters / 1000.0f;
+                    rideSummary.distanceKm +=
+                        segmentMeters / 1000.0f;
+                    lastRideLatitude = gps.latitude;
+                    lastRideLongitude = gps.longitude;
+                    lastRideGPSTime = now;
+                } else if (segmentMeters > maxPlausibleSegment) {
+                    // Nach einem Sprung mit dem aktuellen Fix neu ankern,
+                    // statt denselben Sprung in jeder Folgemessung zu prüfen.
                     lastRideLatitude = gps.latitude;
                     lastRideLongitude = gps.longitude;
                     lastRideGPSTime = now;
@@ -1020,8 +1535,21 @@ bool SDLogger::logDebug(const String& message) {
 }
 
 void SDLogger::flush() {
-    flushBuffer();
-    
+    const unsigned long flushStartedAt = millis();
+    if (logging && metaLogFile &&
+        millis() - lastMetadataLog >= 5000) {
+        logSessionMetadata(
+            "STATUS", gpsManager.getStatus(),
+            canReader.getOBDSessionStats(),
+            canReader.getHardwareDiagnostics());
+    }
+
+    if (!isReady() || !flushBuffer()) {
+        runtimeDiagnostics.recordSDDuration(
+            millis() - flushStartedAt);
+        return;
+    }
+
     if (currentLogFile) {
         currentLogFile.flush();
     }
@@ -1029,8 +1557,12 @@ void SDLogger::flush() {
     if (gpsLogFile) gpsLogFile.flush();
     if (canLogFile) canLogFile.flush();
     if (obdLogFile) obdLogFile.flush();
+    if (obdTraceLogFile) obdTraceLogFile.flush();
+    if (metaLogFile) metaLogFile.flush();
     if (eventLogFile) eventLogFile.flush();
     if (correlatedLogFile) correlatedLogFile.flush();
+    runtimeDiagnostics.recordSDDuration(
+        millis() - flushStartedAt);
     
     lastFlush = millis();
 }

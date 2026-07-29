@@ -1,4 +1,5 @@
 #include "gps_manager.h"
+#include "hardware_config.h"
 #include <math.h>
 #include <time.h>
 #include <sys/time.h>
@@ -9,14 +10,30 @@ GPSManager* GPSManager::instance = nullptr;
 // Globale GPS-Manager Instanz
 GPSManager gpsManager;
 
+static_assert(
+    GPS_MIN_SATELLITES >= 4,
+    "GPS-Positionsfreigabe benötigt mindestens vier Satelliten");
+static_assert(
+    GPS_LOCATION_MAX_AGE_MS <= 5000,
+    "GPS-Positionsalter darf die bisherige Fixgrenze nicht überschreiten");
+static_assert(
+    GPS_MIN_RELIABLE_SPEED_KMH > GPS_DISTANCE_OBD_STATIONARY_KMH,
+    "GPS-Bewegungsschwelle muss oberhalb der OBD-Stillstandsgrenze liegen");
+
 GPSManager::GPSManager() : 
     serial(nullptr), initialized(false), rxPin(16), txPin(15), 
     baudRate(9600), lastDataUpdate(0), lastCharacterUpdate(0),
     lastNMEAStartUpdate(0), dataReady(false),
-    interruptEnabled(false), rxIndex(0), rxProcessIndex(0) {
+    interruptEnabled(false), rxIndex(0), rxProcessIndex(0),
+    rxBufferOverflows(0), hasObservedLocationCommit(false),
+    lastLocationCommitMs(0), fixSequence(0),
+    lastDeliveredFixSequence(0) {
     
     // Status initialisieren
-    status = {false, false, 0, 0, 0, 0};
+    status.initialized = false;
+    status.communicating = false;
+    status.buffered_bytes = 0;
+    status.last_update = 0;
     
     // Leere GPS-Daten
     lastValidData = {};
@@ -40,6 +57,7 @@ bool GPSManager::begin(int rx, int tx, uint32_t baud) {
     baudRate = baud;
     status.initialized = false;
     status.communicating = false;
+    status.buffered_bytes = 0;
     status.last_update = 0;
     lastDataUpdate = 0;
     lastCharacterUpdate = 0;
@@ -48,6 +66,7 @@ bool GPSManager::begin(int rx, int tx, uint32_t baud) {
     dataReady = false;
     rxIndex = 0;
     rxProcessIndex = 0;
+    status.rx_buffer_overflows = rxBufferOverflows;
     
     Serial.println("=== GPS-Manager Initialisierung ===");
     Serial.printf("UART2: RX=%d, TX=%d, Baud=%lu\n", rxPin, txPin, baudRate);
@@ -77,6 +96,7 @@ void GPSManager::end() {
     initialized = false;
     status.initialized = false;
     status.communicating = false;
+    status.buffered_bytes = 0;
     status.last_update = 0;
     lastDataUpdate = 0;
     lastCharacterUpdate = 0;
@@ -85,6 +105,7 @@ void GPSManager::end() {
     dataReady = false;
     rxIndex = 0;
     rxProcessIndex = 0;
+    status.rx_buffer_overflows = rxBufferOverflows;
     
     Serial.println("GPS-Manager beendet");
 }
@@ -138,8 +159,12 @@ void IRAM_ATTR GPSManager::onReceiveInterrupt() {
             instance->rxBuffer[instance->rxIndex] = byte;
             instance->rxIndex = nextIndex;
             instance->dataReady = true;
+        } else {
+            instance->rxBufferOverflows =
+                instance->rxBufferOverflows + 1;
         }
-        // Bei Überlauf wird das älteste Byte überschrieben
+        // Der neue Byte wird bei vollem Puffer verworfen. Der Zähler macht
+        // diesen Datenverlust ab 1.5.15 sichtbar.
     }
 }
 
@@ -192,7 +217,6 @@ void GPSManager::enableInterruptMode(bool enable) {
         rxIndex = 0;
         rxProcessIndex = 0;
         dataReady = false;
-        
         // Interrupt-Handler registrieren
         serial->onReceive(onReceiveInterrupt);
         
@@ -213,40 +237,94 @@ bool GPSManager::available() {
     return isDataFresh() && hasValidFix();
 }
 
-GPSData GPSManager::getCurrentData() {
-    GPSData data = lastValidData;
-    
-    if (!initialized || !isDataFresh()) {
+GPSData GPSManager::getCurrentData(bool consumeNewFix) {
+    GPSData data;
+    if (!initialized) {
         return data;
     }
-    
-    // Aktuelle GPS-Daten von TinyGPS++ holen
+
+    const uint32_t now = millis();
+
+    uint8_t rejectionReason = GPS_REJECT_NONE;
+
+    // Qualitätsfelder zuerst lesen, weil die Positionsfreigabe sowohl eine
+    // frische Satellitenzahl als auch einen frischen HDOP benötigt.
+    if (gps.satellites.isValid()) {
+        data.satellites_age_ms = gps.satellites.age();
+        data.satellites = gps.satellites.value();
+        data.satellites_valid =
+            data.satellites_age_ms <= GPS_QUALITY_MAX_AGE_MS;
+    }
+    if (!data.satellites_valid ||
+        data.satellites < GPS_MIN_SATELLITES) {
+        rejectionReason |= GPS_REJECT_SATELLITE_QUALITY;
+    }
+
+    if (gps.hdop.isValid()) {
+        data.hdop_age_ms = gps.hdop.age();
+        data.hdop = gps.hdop.hdop();
+        data.hdop_valid =
+            data.hdop_age_ms <= GPS_QUALITY_MAX_AGE_MS;
+    }
+    if (!data.hdop_valid || data.hdop > GPS_MAX_HDOP) {
+        rejectionReason |= GPS_REJECT_HDOP_QUALITY;
+    }
+
+    // Aktuelle GPS-Daten von TinyGPS++ holen. Die Rohwerte bleiben für die
+    // Diagnose erhalten, aber nur nachgewiesen frische und plausible Felder
+    // bekommen ihr Valid-Flag.
     if (gps.location.isValid()) {
+        data.location_age_ms = gps.location.age();
         data.latitude = gps.location.lat();
         data.longitude = gps.location.lng();
-        data.location_valid = true;
+        data.location_valid =
+            data.location_age_ms <= GPS_LOCATION_MAX_AGE_MS;
+    }
+    if (!data.location_valid) {
+        rejectionReason |= GPS_REJECT_LOCATION_AGE;
+    }
+    if ((rejectionReason &
+         (GPS_REJECT_SATELLITE_QUALITY | GPS_REJECT_HDOP_QUALITY)) != 0) {
+        data.location_valid = false;
     }
     
     if (gps.altitude.isValid()) {
+        data.altitude_age_ms = gps.altitude.age();
         data.altitude = gps.altitude.meters();
+        data.altitude_valid =
+            data.altitude_age_ms <= GPS_ALTITUDE_MAX_AGE_MS &&
+            data.altitude >= GPS_MIN_ALTITUDE_M &&
+            data.altitude <= GPS_MAX_ALTITUDE_M;
+    }
+    if (!data.altitude_valid) {
+        rejectionReason |= GPS_REJECT_ALTITUDE;
     }
     
     if (gps.speed.isValid()) {
+        data.speed_age_ms = gps.speed.age();
         data.speed_kmh = gps.speed.kmph();
-        data.speed_valid = true;
+        if (data.speed_age_ms > GPS_SPEED_MAX_AGE_MS) {
+            rejectionReason |= GPS_REJECT_SPEED_AGE;
+        } else if (
+            data.speed_kmh < GPS_MIN_RELIABLE_SPEED_KMH ||
+            data.speed_kmh > GPS_MAX_PLAUSIBLE_SPEED_KMH) {
+            rejectionReason |= GPS_REJECT_SPEED_PLAUSIBILITY;
+        } else {
+            data.speed_valid = true;
+        }
+    } else {
+        rejectionReason |= GPS_REJECT_SPEED_AGE;
     }
     
     if (gps.course.isValid()) {
+        data.course_age_ms = gps.course.age();
         data.heading_deg = normalizeHeading(gps.course.deg());
-        data.course_valid = true;
+        data.course_valid =
+            data.course_age_ms <= GPS_COURSE_MAX_AGE_MS &&
+            data.speed_valid;
     }
-    
-    if (gps.satellites.isValid()) {
-        data.satellites = gps.satellites.value();
-    }
-    
-    if (gps.hdop.isValid()) {
-        data.hdop = gps.hdop.hdop();
+    if (!data.course_valid) {
+        rejectionReason |= GPS_REJECT_COURSE;
     }
 
     if (hasValidDateTime()) {
@@ -260,8 +338,20 @@ GPSData GPSManager::getCurrentData() {
         data.datetime_valid = true;
     }
     
-    data.valid_fix = hasValidFix();
-    data.timestamp = millis();
+    data.valid_fix = data.location_valid;
+    data.timestamp = now;
+    data.fix_sequence = fixSequence;
+    data.new_fix =
+        fixSequence > 0 && fixSequence != lastDeliveredFixSequence;
+    if (consumeNewFix) {
+        lastDeliveredFixSequence = fixSequence;
+    }
+    data.nmea_chars = status.chars_processed;
+    data.nmea_sentences_valid = status.sentences_received;
+    data.nmea_checksum_failures = status.sentences_failed;
+    data.rx_buffer_overflows = status.rx_buffer_overflows;
+    data.rejection_reason = rejectionReason;
+    data.rejected = rejectionReason != GPS_REJECT_NONE;
     
     // Gültige Daten für Backup speichern
     if (data.valid_fix) {
@@ -272,15 +362,33 @@ GPSData GPSManager::getCurrentData() {
 }
 
 bool GPSManager::hasValidFix() const {
-    return initialized && gps.location.isValid() && gps.location.age() < 5000;
+    if (!initialized ||
+        !gps.location.isValid() ||
+        !gps.satellites.isValid() ||
+        !gps.hdop.isValid()) {
+        return false;
+    }
+    TinyGPSPlus& current = const_cast<TinyGPSPlus&>(gps);
+    return current.location.age() <= GPS_LOCATION_MAX_AGE_MS &&
+           current.satellites.age() <= GPS_QUALITY_MAX_AGE_MS &&
+           current.satellites.value() >= GPS_MIN_SATELLITES &&
+           current.hdop.age() <= GPS_QUALITY_MAX_AGE_MS &&
+           current.hdop.hdop() <= GPS_MAX_HDOP;
 }
 
 bool GPSManager::hasValidLocation() const {
-    return initialized && gps.location.isValid();
+    return hasValidFix();
 }
 
 bool GPSManager::hasValidSpeed() const {
-    return initialized && gps.speed.isValid();
+    if (!initialized || !gps.speed.isValid()) {
+        return false;
+    }
+    TinyGPSPlus& current = const_cast<TinyGPSPlus&>(gps);
+    const float speedKmh = current.speed.kmph();
+    return current.speed.age() <= GPS_SPEED_MAX_AGE_MS &&
+           speedKmh >= GPS_MIN_RELIABLE_SPEED_KMH &&
+           speedKmh <= GPS_MAX_PLAUSIBLE_SPEED_KMH;
 }
 
 bool GPSManager::hasValidDateTime() const {
@@ -378,40 +486,61 @@ String GPSManager::getStatusString() const {
 }
 
 String GPSManager::getDiagnosticString() const {
-    static char diagBuffer[512];
+    static char diagBuffer[1024];
     char* ptr = diagBuffer;
     size_t remaining = sizeof(diagBuffer);
     
+    const uint32_t lastDataAge =
+        status.last_update > 0 ? millis() - status.last_update : UINT32_MAX;
     int written = snprintf(ptr, remaining,
         "GPS-Diagnose:\n"
         "Initialisiert: %s\n"
         "Kommunikation: %s\n"
         "NMEA-Sätze: %lu OK, %lu Fehler\n"
         "Zeichen: %lu\n"
-        "Letzte Daten: vor %lus\n",
+        "UART-Ringpuffer: %u/%u Bytes, Überläufe: %lu\n"
+        "Letzte gültige NMEA-Daten: vor %lu ms\n",
         initialized ? "Ja" : "Nein",
         status.communicating ? "Aktiv" : "Inaktiv",
         status.sentences_received,
         status.sentences_failed,
         status.chars_processed,
-        (millis() - status.last_update) / 1000
+        status.buffered_bytes,
+        static_cast<unsigned>(RX_BUFFER_SIZE),
+        status.rx_buffer_overflows,
+        static_cast<unsigned long>(lastDataAge)
     );
     
     if (written > 0 && written < (int)remaining) {
         ptr += written;
         remaining -= written;
         
-        if (hasValidFix()) {
-            GPSData data = const_cast<GPSManager*>(this)->getCurrentData();
-            snprintf(ptr, remaining,
-                "Position: %.6f°N, %.6f°E\n"
-                "Geschwindigkeit: %.1f km/h\n"
-                "Satelliten: %d, HDOP: %.1f",
-                data.latitude, data.longitude,
-                data.speed_kmh,
-                data.satellites, data.hdop
-            );
-        }
+        GPSData data = const_cast<GPSManager*>(this)->getCurrentData();
+        snprintf(
+            ptr, remaining,
+            "Fix: %s, Sequenz: %lu, neuer Fix: %s\n"
+            "Position: %.6f/%.6f, gültig=%d, Alter=%lu ms\n"
+            "Geschwindigkeit: %.1f km/h, gültig=%d, Alter=%lu ms\n"
+            "Höhe: %.1f m, gültig=%d, Alter=%lu ms\n"
+            "Kurs: %.1f Grad, gültig=%d, Alter=%lu ms\n"
+            "Satelliten: %d, gültig=%d, Alter=%lu ms\n"
+            "HDOP: %.1f, gültig=%d, Alter=%lu ms",
+            data.valid_fix ? "gültig" : "ungültig",
+            static_cast<unsigned long>(data.fix_sequence),
+            data.new_fix ? "ja" : "nein",
+            data.latitude, data.longitude,
+            data.location_valid ? 1 : 0,
+            static_cast<unsigned long>(data.location_age_ms),
+            data.speed_kmh, data.speed_valid ? 1 : 0,
+            static_cast<unsigned long>(data.speed_age_ms),
+            data.altitude, data.altitude_valid ? 1 : 0,
+            static_cast<unsigned long>(data.altitude_age_ms),
+            data.heading_deg, data.course_valid ? 1 : 0,
+            static_cast<unsigned long>(data.course_age_ms),
+            data.satellites, data.satellites_valid ? 1 : 0,
+            static_cast<unsigned long>(data.satellites_age_ms),
+            data.hdop, data.hdop_valid ? 1 : 0,
+            static_cast<unsigned long>(data.hdop_age_ms));
     }
     
     return String(diagBuffer);
@@ -505,13 +634,36 @@ void GPSManager::printDiagnostics() {
 // Private Hilfsfunktionen
 
 void GPSManager::updateStatus() {
+    status.chars_processed = gps.charsProcessed();
+    status.sentences_received = gps.passedChecksum();
+    status.sentences_failed = gps.failedChecksum();
+
+    noInterrupts();
+    const size_t writeIndex = rxIndex;
+    const size_t readIndex = rxProcessIndex;
+    status.rx_buffer_overflows = rxBufferOverflows;
+    interrupts();
+    status.buffered_bytes = static_cast<uint16_t>(
+        writeIndex >= readIndex
+            ? writeIndex - readIndex
+            : RX_BUFFER_SIZE - readIndex + writeIndex);
+
+    if (gps.location.isValid()) {
+        const uint32_t now = millis();
+        const uint32_t locationCommitMs =
+            now - gps.location.age();
+        if (!hasObservedLocationCommit ||
+            locationCommitMs != lastLocationCommitMs) {
+            hasObservedLocationCommit = true;
+            lastLocationCommitMs = locationCommitMs;
+            fixSequence++;
+        }
+    }
+
     // Kommunikations-Status basierend auf letzten Daten
     if (millis() - status.last_update > 10000) {
         status.communicating = false;
     }
-    
-    // Fehlgeschlagene Checksums zählen
-    status.sentences_failed = gps.failedChecksum();
 }
 
 bool GPSManager::isDataFresh(unsigned long maxAge) {
@@ -540,11 +692,14 @@ String formatGPSData(const GPSData& data) {
         return "GPS: Kein Fix (" + String(data.satellites) + " Satelliten)";
     }
     
-    return "GPS: " + 
-           formatGPSCoordinate(data.latitude, true) + ", " +
-           formatGPSCoordinate(data.longitude, false) + 
-           " | " + String(data.speed_kmh, 1) + " km/h" +
-           " | " + String(data.satellites) + " Sat";
+    String result =
+        "GPS: " + formatGPSCoordinate(data.latitude, true) + ", " +
+        formatGPSCoordinate(data.longitude, false) + " | ";
+    result += data.speed_valid
+        ? String(data.speed_kmh, 1) + " km/h"
+        : String("Geschwindigkeit unbestätigt");
+    result += " | " + String(data.satellites) + " Sat";
+    return result;
 }
 
 String formatGPSDateTimeUTC(const GPSData& data) {

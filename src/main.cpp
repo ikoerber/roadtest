@@ -16,6 +16,7 @@
 #include "road_quality.h"
 #include "gps_manager.h"
 #include "integration_tests.h"
+#include "runtime_diagnostics.h"
 #include "web_manager.h"
 #include "vehicle_data_discovery.h"
 
@@ -35,7 +36,6 @@ bool sdCardWasAvailable = false;
 bool gpsAvailable = false;
 bool gpsClockSynced = false;
 bool webAvailable = false;
-bool canInitializationAttempted = false;
 constexpr bool ENABLE_OPTIONAL_CAN = true;
 unsigned long lastSDCheck = 0;
 String currentLogFileName = "";
@@ -47,16 +47,20 @@ int totalCANMessages = 0;
 // Nicht blockierende Hardware-Überwachung
 constexpr unsigned long HARDWARE_CHECK_INTERVAL = 5000;
 constexpr unsigned long GPS_RESTART_INTERVAL = 30000;
+constexpr unsigned long CAN_RECOVERY_RETRY_INTERVAL = 10000;
+constexpr uint8_t CAN_MODE_FAILURE_LIMIT = 2;
 constexpr unsigned long BOOT_STATUS_INTERVAL = 1000;
 constexpr unsigned long BOOT_READY_HOLD_TIME = 2500;
 unsigned long lastHardwareCheck = 0;
 unsigned long lastGPSRestart = 0;
+unsigned long lastCANRecoveryAttempt = 0;
 unsigned long lastBootStatusDisplay = 0;
 unsigned long requiredHardwareReadySince = 0;
 uint8_t bnoMissingChecks = 0;
 uint8_t oledMissingChecks = 0;
 uint32_t bnoProbeFailureCount = 0;
 uint32_t oledProbeFailureCount = 0;
+uint8_t canModeFailureCount = 0;
 bool oledDetectedAtLeastOnce = false;
 bool bootStatusActive = true;
 
@@ -489,7 +493,8 @@ void testOLED() {
     
     // 6. System-Info Test
     Serial.print("6. System-Info: ");
-    oledManager.showSystemInfo("v1.1", millis(), ESP.getFreeHeap());
+    oledManager.showSystemInfo(
+        ROADTEST_FIRMWARE_VERSION, millis(), ESP.getFreeHeap());
     delay(2000);
     Serial.println("OK");
     
@@ -1092,11 +1097,59 @@ void handleHardwareRecovery(unsigned long now) {
         webAvailable = webManager.begin();
     }
 
-    // CAN ist optional und wird erst nach dem vollständigen Systemstart
-    // genau einmal geprüft. So kann es den WLAN-Start niemals verzögern.
-    if (ENABLE_OPTIONAL_CAN && !canInitializationAttempted) {
-        canInitializationAttempted = true;
-        canBusAvailable = initializeOptionalCAN();
+    // CAN bleibt für die allgemeine Bereitschaft optional, wird nach einem
+    // Startfehler oder einem dauerhaft falschen Controllerzustand aber mit
+    // begrenztem Abstand erneut initialisiert. Eine laufende Listen-Only-Phase
+    // wird dabei ausdrücklich wieder als Listen-Only hergestellt.
+    if (ENABLE_OPTIONAL_CAN && !canReader.isReady()) {
+        canBusAvailable = false;
+        if (now - lastCANRecoveryAttempt >= CAN_RECOVERY_RETRY_INTERVAL) {
+            lastCANRecoveryAttempt = now;
+            canBusAvailable = initializeOptionalCAN();
+            if (canBusAvailable && sdLogger.isLogging()) {
+                sdLogger.logEvent(
+                    "CAN_RECOVERY",
+                    "MCP2515 nach Nichtverfügbarkeit initialisiert");
+            }
+        }
+    } else if (ENABLE_OPTIONAL_CAN) {
+        canBusAvailable = true;
+        const CANHardwareDiagnostics diagnostics =
+            canReader.getHardwareDiagnostics();
+        const uint8_t expectedMode =
+            vehicleDataDiscovery.isPassiveCaptureActive() ? 3 : 0;
+        const bool controllerFault =
+            !diagnostics.valid || diagnostics.transmitBusOff ||
+            diagnostics.operatingMode != expectedMode;
+        canModeFailureCount =
+            controllerFault
+                ? (canModeFailureCount < CAN_MODE_FAILURE_LIMIT
+                       ? canModeFailureCount + 1
+                       : CAN_MODE_FAILURE_LIMIT)
+                : 0;
+
+        if (canModeFailureCount >= CAN_MODE_FAILURE_LIMIT &&
+            now - lastCANRecoveryAttempt >=
+                CAN_RECOVERY_RETRY_INTERVAL) {
+            lastCANRecoveryAttempt = now;
+            const bool passiveMode =
+                vehicleDataDiscovery.isPassiveCaptureActive();
+            if (sdLogger.isLogging()) {
+                sdLogger.logEvent(
+                    "CAN_RECOVERY",
+                    String("START;MODE_") +
+                        String(diagnostics.operatingMode) +
+                        ";EFLG_" + String(diagnostics.errorFlags, HEX));
+            }
+            canBusAvailable =
+                canReader.restartController(CAN_BAUDRATE, passiveMode);
+            canModeFailureCount = 0;
+            if (sdLogger.isLogging()) {
+                sdLogger.logEvent(
+                    "CAN_RECOVERY",
+                    canBusAvailable ? "SUCCESS" : "FAILED");
+            }
+        }
     }
 }
 
@@ -1115,8 +1168,9 @@ void setup() {
 
     Serial.println("\n=== Straßenqualitäts-Messsystem ===");
     Serial.println("Für kurvenreiche Genießer-Strecken");
-    Serial.printf("Version 1.5.14 mit Fahrzeugdaten-Erkennung und BNO055-%s\n\n",
-                  ROADTEST_BNO_MODE_NAME);
+    Serial.printf(
+        "Version %s mit Datenqualitätsdiagnose und BNO055-%s\n\n",
+        ROADTEST_FIRMWARE_VERSION, ROADTEST_BNO_MODE_NAME);
 
     // Task-Watchdog aktivieren. Bleibt loop() hängen - etwa durch einen
     // abgebrochenen OTA-Upload oder einen blockierenden Peripheriezugriff -
@@ -1204,12 +1258,15 @@ void setup() {
     updateBootStatusDisplay(millis(), true);
 
     lastHardwareCheck = millis();
+    lastCANRecoveryAttempt =
+        millis() - CAN_RECOVERY_RETRY_INTERVAL;
     lastUpdate = millis();
     Serial.println("\nBootprüfung läuft nicht blockierend weiter.");
     Serial.println("Webseite bleibt erreichbar; CAN ist für Messfahrten nicht erforderlich.");
 }
 
 void loop() {
+    static unsigned long previousLoopStartedAt = 0;
     static unsigned long lastCANCheck = 0;
     static unsigned long lastOBDRequest = 0;
     static uint8_t obdPidIndex = 0;
@@ -1224,6 +1281,13 @@ void loop() {
     static bool lastDisplayedCalibrationSaved = false;
     static unsigned long lastCalibrationDisplay = 0;
     static unsigned long lastCalibrationSaveAttempt = 0;
+
+    const unsigned long loopStartedAt = millis();
+    if (previousLoopStartedAt > 0) {
+        runtimeDiagnostics.recordLoopInterval(
+            loopStartedAt - previousLoopStartedAt);
+    }
+    previousLoopStartedAt = loopStartedAt;
 
     esp_task_wdt_reset();
 
@@ -1240,7 +1304,6 @@ void loop() {
     sdLogger.processLoggingStart();
     
     unsigned long currentTime = millis();
-    vehicleDataDiscovery.update();
     handleHardwareRecovery(currentTime);
     gpsAvailable = gpsManager.isReady();
     
@@ -1255,7 +1318,8 @@ void loop() {
 
         // Alle Auswertungen verwenden exakt denselben 10-Hz-Sensorwert.
         VibrationMetrics vibMetrics = bnoManager.analyzeVibration();
-        float speedKmh = lastGPSData.valid_fix ? lastGPSData.speed_kmh : -1.0f;
+        float speedKmh =
+            lastGPSData.speed_valid ? lastGPSData.speed_kmh : -1.0f;
         float roadQuality = bnoManager.calculateRoadQuality(speedKmh);
         bool potholeDetected = bnoManager.detectPothole(sensorData);
         bool curveCompleted = bnoManager.detectCurve(sensorData);
@@ -1309,14 +1373,13 @@ void loop() {
             }
         }
         
-        if (gpsManager.available()) {
-            GPSData gpsData = gpsManager.getCurrentData();
-            lastGPSData = gpsData; // Für Zeitkorrelation speichern
-            
-            // GPS-Daten loggen falls SD verfügbar
-            if (sdLogger.isLogging()) {
-                sdLogger.logGPSData(gpsData);
-            }
+        // Auch ein Fixverlust ist ein Messwert. Daher wird bei aktiver
+        // Aufzeichnung alle 200 ms ein Qualitäts-Snapshot gespeichert und
+        // nicht nur dann, wenn TinyGPS++ gerade einen gültigen Fix meldet.
+        GPSData gpsData = gpsManager.getCurrentData(true);
+        lastGPSData = gpsData;
+        if (sdLogger.isLogging()) {
+            sdLogger.logGPSData(gpsData);
         }
         
         lastGPSUpdate = currentTime;
@@ -1333,19 +1396,6 @@ void loop() {
     // automatisch erneut.
     updateBootStatusDisplay(currentTime);
 
-    // Drei standardisierte Live-PIDs zyklisch abfragen. Das gemeinsame
-    // Intervall begrenzt die gesamte Senderate auf höchstens zwei Frames pro
-    // Sekunde; ein fehlendes ACK endet zusätzlich im MCP2515-Treiber nach
-    // CAN_TX_TIMEOUT_MS.
-    if (canBusAvailable && canReader.isOBDPollingEnabled() &&
-        !vehicleDataDiscovery.controlsOBDPolling() &&
-        currentTime - lastOBDRequest >= CAN_OBD_REQUEST_INTERVAL_MS) {
-        static const uint8_t obdPids[] = {0x0C, 0x0D, 0x11};
-        canReader.requestOBDPid(obdPids[obdPidIndex]);
-        obdPidIndex = (obdPidIndex + 1) % (sizeof(obdPids) / sizeof(obdPids[0]));
-        lastOBDRequest = currentTime;
-    }
-    
     // Im normalen OBD-Betrieb genügt ein Frame pro 10-ms-Zyklus. Während
     // des passiven Erkennungsmitschnitts wird der MCP2515 dagegen in jeder
     // loop()-Runde bis zu 32-mal geleert, damit zyklischer Fahrzeugverkehr
@@ -1374,7 +1424,10 @@ void loop() {
             if (sdLogger.isLogging()) {
                 sdLogger.logCANMessage(msg);
                 if (obdDecoded) {
-                    sdLogger.logOBDData(canReader.getOBDData());
+                    sdLogger.logOBDData(
+                        canReader.getOBDData(),
+                        canReader.getOBDSessionStats(),
+                        canReader.getHardwareDiagnostics());
                 }
 
                 // Zeitkorrelation: Wenn aktuelle Sensor-Daten vorhanden
@@ -1393,6 +1446,41 @@ void loop() {
             receivedThisCycle++;
         }
         lastCANCheck = currentTime;
+    }
+
+    // Empfang immer vor der Timeoutbewertung abarbeiten. So wird eine bereits
+    // im MCP2515 wartende Antwort nach einem langsamen SD-Flush nicht zuerst
+    // fälschlich als Timeout und anschließend als unzugeordnet verbucht.
+    if (canBusAvailable) {
+        canReader.updateOBDDiagnostics();
+    }
+
+    // Die Discovery darf erst nach dem Empfang entscheiden, ob eine ECU
+    // erreichbar ist oder ob die nächste sichere Anfrage gesendet werden muss.
+    vehicleDataDiscovery.update();
+
+    // Drei standardisierte Live-PIDs zyklisch abfragen. Das gemeinsame
+    // Intervall begrenzt die gesamte Senderate auf höchstens zwei Frames pro
+    // Sekunde; ein fehlendes ACK endet zusätzlich im MCP2515-Treiber nach
+    // CAN_TX_TIMEOUT_MS.
+    if (canBusAvailable && canReader.isOBDPollingEnabled() &&
+        !vehicleDataDiscovery.controlsOBDPolling() &&
+        currentTime - lastOBDRequest >= CAN_OBD_REQUEST_INTERVAL_MS) {
+        static const uint8_t obdPids[] = {0x0C, 0x0D, 0x11};
+        canReader.requestOBDPid(obdPids[obdPidIndex]);
+        obdPidIndex =
+            (obdPidIndex + 1) % (sizeof(obdPids) / sizeof(obdPids[0]));
+        lastOBDRequest = currentTime;
+    }
+
+    // Anfragen, Sendeprobleme, Antworten und Timeouts werden unabhängig von
+    // der dekodierten Livewert-Datei als einzelne Transaktionen festgehalten.
+    if (canBusAvailable && sdLogger.isLogging()) {
+        OBDTraceEvent traceEvent;
+        while (canReader.popOBDTraceEvent(traceEvent)) {
+            sdLogger.logOBDTraceEvent(
+                traceEvent, canReader.getHardwareDiagnostics());
+        }
     }
     
     // Status-Report alle 5 Sekunden
@@ -1430,14 +1518,22 @@ void loop() {
 
         // GPS Status
         if (gpsAvailable && gpsManager.isReceivingNMEA()) {
-            if (gpsManager.hasValidFix()) {
-                GPSData gps = gpsManager.getCurrentData();
+            const GPSStatus gpsStatus = gpsManager.getStatus();
+            if (lastGPSData.valid_fix) {
                 Serial.printf(", GPS: %.6f°N %.6f°E (%d sat)", 
-                             gps.latitude, gps.longitude, gps.satellites);
+                             lastGPSData.latitude, lastGPSData.longitude,
+                             lastGPSData.satellites);
             } else {
                 uint8_t sats = gpsManager.getSatelliteCount();
                 Serial.printf(", GPS: Kein Fix (%d sat)", sats);
             }
+            Serial.printf(
+                " [Fix #%lu, Alter %lu ms, NMEA %lu/%lu, RX-Overflow %lu]",
+                static_cast<unsigned long>(lastGPSData.fix_sequence),
+                static_cast<unsigned long>(lastGPSData.location_age_ms),
+                static_cast<unsigned long>(gpsStatus.sentences_received),
+                static_cast<unsigned long>(gpsStatus.sentences_failed),
+                static_cast<unsigned long>(gpsStatus.rx_buffer_overflows));
         } else {
             Serial.print(", GPS: keine NMEA-Daten");
         }
@@ -1459,6 +1555,8 @@ void loop() {
 
         if (canBusAvailable && CAN_OBD_POLLING_ENABLED) {
             OBDLiveData obd = canReader.getOBDData();
+            const OBDSessionStats obdSession =
+                canReader.getOBDSessionStats();
             const unsigned long obdResponseAge =
                 obd.lastResponseMs > 0 ? currentTime - obd.lastResponseMs : 0;
             const bool ecuResponding =
@@ -1468,10 +1566,35 @@ void loop() {
                 !canReader.isOBDPollingEnabled()
                     ? "Abfrage pausiert"
                     : (ecuResponding ? "verbunden" : "warte auf Antwort");
-            Serial.printf("   OBD/ECU: %s, %lu Anfrage(n), %lu Antwort(en), %lu Sendefehler",
-                          obdConnectionStatus,
-                          obd.requestCount, obd.responseCount,
-                          obd.requestErrors);
+            if (obdSession.active) {
+                Serial.printf(
+                    "   OBD/ECU: %s, Sitzung %lu Anfrage(n), %lu "
+                    "Antwort(en), %lu Sendefehler, %lu Timeouts",
+                    obdConnectionStatus,
+                    static_cast<unsigned long>(obdSession.requestCount),
+                    static_cast<unsigned long>(obdSession.responseCount),
+                    static_cast<unsigned long>(obdSession.requestErrors),
+                    static_cast<unsigned long>(obdSession.timeoutCount));
+                if (obdSession.lastResponseMs > 0) {
+                    Serial.printf(
+                        ", Antwort %03lX/PID %02X in %lu ms",
+                        static_cast<unsigned long>(
+                            obdSession.lastResponseCanId),
+                        obdSession.lastResponsePid,
+                        static_cast<unsigned long>(
+                            obdSession.lastResponseLatencyMs));
+                }
+                Serial.printf(
+                    " [Boot %lu/%lu/%lu]",
+                    obd.requestCount, obd.responseCount, obd.requestErrors);
+            } else {
+                Serial.printf(
+                    "   OBD/ECU: %s, Boot %lu Anfrage(n), %lu "
+                    "Antwort(en), %lu Sendefehler",
+                    obdConnectionStatus,
+                    obd.requestCount, obd.responseCount,
+                    obd.requestErrors);
+            }
             if (obd.lastResponseMs > 0) {
                 Serial.printf(", letzte Antwort vor %lu ms", obdResponseAge);
             }
@@ -1784,11 +1907,14 @@ void loop() {
                           bnoManager.getAddress());
             Serial.printf("GPS: %s\n", gpsManager.isReady() ? "OK" : "Fehler");
             OBDLiveData diagnosticOBD = canReader.getOBDData();
+            const OBDSessionStats diagnosticOBDSession =
+                canReader.getOBDSessionStats();
             const unsigned long diagnosticOBDAge =
                 diagnosticOBD.lastResponseMs > 0
                     ? millis() - diagnosticOBD.lastResponseMs
                     : 0;
-            Serial.printf("CAN: %s, OBD-Anfragen=%lu Antworten=%lu Sendefehler=%lu",
+            Serial.printf("CAN: %s, OBD seit Boot: Anfragen=%lu "
+                          "Antworten=%lu Sendefehler=%lu",
                           canReader.isReady() ? "OK" : "Fehler",
                           static_cast<unsigned long>(diagnosticOBD.requestCount),
                           static_cast<unsigned long>(diagnosticOBD.responseCount),
@@ -1798,6 +1924,38 @@ void loop() {
                               diagnosticOBDAge);
             }
             Serial.println();
+            if (diagnosticOBDSession.active) {
+                Serial.printf(
+                    "OBD-Sitzung: Anfragen=%lu Antworten=%lu "
+                    "Sendefehler=%lu Timeouts=%lu Nichtzugeordnet=%lu "
+                    "Trace-Verworfen=%lu\n",
+                    static_cast<unsigned long>(
+                        diagnosticOBDSession.requestCount),
+                    static_cast<unsigned long>(
+                        diagnosticOBDSession.responseCount),
+                    static_cast<unsigned long>(
+                        diagnosticOBDSession.requestErrors),
+                    static_cast<unsigned long>(
+                        diagnosticOBDSession.timeoutCount),
+                    static_cast<unsigned long>(
+                        diagnosticOBDSession.unmatchedResponseCount),
+                    static_cast<unsigned long>(
+                        diagnosticOBDSession.traceDropped));
+                Serial.printf(
+                    "Letzte OBD-Transaktion: Anfrage #%lu PID %02X TX=%s, "
+                    "Antwort %03lX/PID %02X in %lu ms\n",
+                    static_cast<unsigned long>(
+                        diagnosticOBDSession.lastRequestSequence),
+                    diagnosticOBDSession.lastRequestPid,
+                    diagnosticOBDSession.lastTransmitOK ? "OK" : "Fehler",
+                    static_cast<unsigned long>(
+                        diagnosticOBDSession.lastResponseCanId),
+                    diagnosticOBDSession.lastResponsePid,
+                    static_cast<unsigned long>(
+                        diagnosticOBDSession.lastResponseLatencyMs));
+            } else {
+                Serial.println("OBD-Sitzung: keine aktive SD-Aufzeichnung");
+            }
             CANHardwareDiagnostics diagnosticCANHardware =
                 canReader.getHardwareDiagnostics();
             if (diagnosticCANHardware.valid) {

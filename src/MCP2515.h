@@ -60,6 +60,7 @@ public:
   void setTransmitTimeout(uint32_t timeoutMs);
 
   MCP2515Diagnostics readDiagnostics();
+  void clearReceiveOverflowFlags();
   void dumpRegisters(Stream& out);
 
 private:

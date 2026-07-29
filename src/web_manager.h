@@ -10,14 +10,22 @@ private:
     bool initialized;
     bool otaAuthorized;
     bool otaInProgress;
-    bool loggingWasActive;
+    bool otaUploadRejected;
+    bool otaBlockedByMeasurement;
+    String otaUploadFileName;
 
     String buildStatusPage();
+    String buildAcceptanceTestPage(const String& message = "");
+    String buildAcceptanceStatusJSON();
     String buildCalibrationPage(const String& message = "");
     String buildUpdatePage();
+    String buildUpdateResultPage(bool success);
     bool authenticateOTA();
     void handleUpdateUpload();
-    void resumeLoggingAfterFailedUpdate();
+    void resetOTAState();
+    void redirectAcceptance(bool blocked = false, bool ended = false);
+    uint8_t getAcceptanceStage() const;
+    uint32_t getAcceptanceCountdownSeconds(uint8_t stage) const;
 
 public:
     WebManager();

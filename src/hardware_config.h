@@ -7,6 +7,12 @@
 // Zentrale Pin-Konfiguration für das Straßenqualitäts-Messsystem
 // Alle Hardware-spezifischen Pin-Zuordnungen sind hier definiert
 
+#define ROADTEST_FIRMWARE_VERSION "1.5.23"
+#define ROADTEST_FIRMWARE_FILE_NAME \
+    "roadtest_" ROADTEST_FIRMWARE_VERSION ".bin"
+#define ROADTEST_CSV_SCHEMA_VERSION "1.5.23-quality-v6"
+#define ROADTEST_VEHICLE_PROFILE "Porsche Carrera S 2012 PDK"
+
 // -----------------------------------------------------------------------------
 // I2C-Bus Konfiguration 
 // -----------------------------------------------------------------------------
@@ -71,6 +77,7 @@ extern const int GPS_BAUD_RATE;    // 9600    - GPS Baudrate
 // Serienterminierung ist das die Schwelle, ab der sporadische Aussetzer
 // beginnen. Bei 10 Hz Logging kostet 1 MHz keine nutzbare Bandbreite.
 #define SD_SPI_SPEED       1000000  // Betriebstakt der SD-Karte
+#define SD_MAX_OPEN_FILES       12  // 9 Logs plus Root-/Summary-Reserve
 
 #define CAN_BAUDRATE        500000  // 500kbps CAN-Bus
 #define CAN_CLOCK_8MHZ      8000000 // 8MHz MCP2515 Oszillator
@@ -78,9 +85,41 @@ extern const int GPS_BAUD_RATE;    // 9600    - GPS Baudrate
 #define CAN_OBD_POLLING_ENABLED true // Nur Standard-OBD Service 01 aktiv abfragen
 #define CAN_LISTEN_ONLY        false // Aktive OBD-Anfragen benötigen den Normalmodus
 #define CAN_OBD_REQUEST_INTERVAL_MS 500 // Insgesamt höchstens zwei Anfragen pro Sekunde
+#define CAN_OBD_RESPONSE_TIMEOUT_MS 400 // Antwort vor der nächsten Anfrage abschließen
 #define CAN_OBD_VALUE_MAX_AGE_MS   5000 // Alte Livewerte nicht weiter anzeigen
 #define CAN_OBD_SLOW_VALUE_MAX_AGE_MS 30000 // Langsame Temperatur-/Verbrauchswerte
 #define CAN_TX_TIMEOUT_MS         25 // Fehlendes ACK darf die Hauptschleife nicht blockieren
+
+// GPS-Feldqualität. Position und abgeleitete Werte dürfen nicht allein auf
+// dem globalen TinyGPS++-Gültigkeitsbit beruhen, weil die NMEA-Felder
+// unabhängig voneinander aktualisiert werden.
+#define GPS_LOCATION_MAX_AGE_MS       1500
+#define GPS_SPEED_MAX_AGE_MS          1500
+#define GPS_ALTITUDE_MAX_AGE_MS       3000
+#define GPS_COURSE_MAX_AGE_MS         1500
+#define GPS_QUALITY_MAX_AGE_MS        3000
+#define GPS_MIN_SATELLITES               5
+#define GPS_MAX_HDOP                   3.5f
+#define GPS_MIN_RELIABLE_SPEED_KMH     6.0f
+#define GPS_MAX_PLAUSIBLE_SPEED_KMH  300.0f
+#define GPS_MIN_ALTITUDE_M           -500.0f
+#define GPS_MAX_ALTITUDE_M          10000.0f
+
+// Streckenbildung: Eine frische OBD-Geschwindigkeit hat im Fahrzeug Vorrang
+// vor GPS-Rauschen. Ohne OBD wird nur eine bereits als zuverlässig gefilterte
+// GPS-Geschwindigkeit als Bewegungsnachweis akzeptiert.
+#define GPS_DISTANCE_OBD_STATIONARY_KMH  1.0f
+#define GPS_DISTANCE_MIN_SEGMENT_OBD_M   0.5f
+#define GPS_DISTANCE_MIN_SEGMENT_GPS_M   3.0f
+
+// Verbleibender kurzer Recovery-Kontrolltest. Die lange GPS-/OBD-Fahrt ist
+// abgenommen und wird nicht mehr als Webablauf in der Firmware mitgeführt.
+#define ACCEPTANCE_INITIAL_STAND_MS         60000UL
+#define ACCEPTANCE_FINAL_STAND_MS          120000UL
+
+// Laufzeitdiagnose: Ab einer Sekunde ist eine Pause für GPS, Sensorabtastung
+// und OBD-Frische relevant und wird als Sitzungs-Stall gezählt.
+#define RUNTIME_STALL_THRESHOLD_MS           1000UL
 
 // Task-Watchdog: Ein hängender loop() führt zum Neustart statt zu einem
 // stummen Gerät auf der Strecke. Grosszügig bemessen, damit langsame

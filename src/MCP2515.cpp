@@ -473,6 +473,13 @@ MCP2515Diagnostics MCP2515Class::readDiagnostics()
   return diagnostics;
 }
 
+void MCP2515Class::clearReceiveOverflowFlags()
+{
+  // RX0OVR/RX1OVR sind latched Diagnosebits. Nach dem Zählen löschen, damit
+  // ein späteres Ereignis als eigener Überlauf erkennbar wird.
+  modifyRegister(REG_EFLG, 0xc0, 0x00);
+}
+
 void MCP2515Class::dumpRegisters(Stream& out)
 {
   for (int i = 0; i < 128; i++) {

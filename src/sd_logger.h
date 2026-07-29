@@ -6,11 +6,9 @@
 #include <SPI.h>
 #include "bno055_manager.h"
 #include "can_reader.h"
+#include "gps_manager.h"
 #include "hardware_config.h"
 #include "road_quality.h"
-
-// Forward declaration für GPS-Daten
-struct GPSData;
 
 // Log-Typen
 enum LogType {
@@ -21,6 +19,8 @@ enum LogType {
     LOG_TYPE_SYSTEM,    // System-Status
     LOG_TYPE_GPS,       // GPS-Daten
     LOG_TYPE_OBD,       // Dekodierte OBD-II-Service-01-Daten
+    LOG_TYPE_OBD_TRACE, // Einzelne OBD-Anfragen, Antworten und Timeouts
+    LOG_TYPE_META,      // Sitzungsmetadaten und Abschlusszähler
     LOG_TYPE_CORRELATED // Zeitlich korrelierte Sensor-/CAN-Daten
 };
 
@@ -103,6 +103,11 @@ private:
         OPEN_ROAD,
         OPEN_GPS,
         OPEN_EVENT,
+        OPEN_META,
+        OPEN_CAN,
+        OPEN_OBD,
+        OPEN_OBD_TRACE,
+        OPEN_CORRELATED,
         FINALIZE
     };
 
@@ -128,11 +133,16 @@ private:
     String canFileName;
     File obdLogFile;
     String obdFileName;
+    File obdTraceLogFile;
+    String obdTraceFileName;
+    File metaLogFile;
+    String metaFileName;
     File eventLogFile;
     String eventFileName;
     File correlatedLogFile;
     String correlatedFileName;
     String sessionId;
+    String sessionDirectory;
     
     // Konfiguration
     LogConfig config;
@@ -143,7 +153,12 @@ private:
     unsigned long lastRoadLog;
     unsigned long lastGPSLog;
     unsigned long lastFlush;
+    unsigned long lastMetadataLog;
     unsigned long sessionStartTime;
+    GPSStatus gpsSessionStartStatus;
+    uint32_t gpsSessionStartFixSequence;
+    uint32_t gpsSessionLastLoggedFixSequence;
+    CANHardwareDiagnostics canSessionStartDiagnostics;
 
     // Messfahrts-Zusammenfassung
     RideSummary rideSummary;
@@ -158,6 +173,7 @@ private:
     static const int BUFFER_SAFETY_MARGIN = 32;  // Sicherheitspuffer
     char writeBuffer[BUFFER_SIZE];
     int bufferIndex;
+    uint32_t bufferedRecordCount;
     
     // Buffer-Overflow Schutz Funktionen
     size_t getAvailableBufferSpace() const;
@@ -171,7 +187,7 @@ private:
     void handleCardFailure(const char* reason, uint32_t droppedRecords = 0);
     bool writeHeader(File& file, LogType type);
     bool writeRideSummaryFile();
-    void flushBuffer();
+    bool flushBuffer();
     void failLoggingStart(const String& reason);
     String formatTimestamp();
     String formatUTC();
@@ -213,7 +229,15 @@ public:
     // CAN-Daten loggen
     bool logCANMessage(const CANMessage& msg);
     bool logCANStatistics(uint32_t received, uint32_t errors);
-    bool logOBDData(const OBDLiveData& obd);
+    bool logOBDData(const OBDLiveData& obd,
+                    const OBDSessionStats& session,
+                    const CANHardwareDiagnostics& diagnostics);
+    bool logOBDTraceEvent(const OBDTraceEvent& event,
+                          const CANHardwareDiagnostics& diagnostics);
+    bool logSessionMetadata(const char* record,
+                            const GPSStatus& gpsStatus,
+                            const OBDSessionStats& obdStatus,
+                            const CANHardwareDiagnostics& canStatus);
     
     // GPS-Daten loggen
     bool logGPSData(const GPSData& gps);

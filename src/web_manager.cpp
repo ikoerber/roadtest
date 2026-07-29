@@ -8,14 +8,21 @@
 #include "gps_manager.h"
 #include "hardware_config.h"
 #include "oled_manager.h"
+#include "runtime_diagnostics.h"
 #include "sd_logger.h"
+#include "vehicle_data_discovery.h"
 
 namespace {
 constexpr const char* WIFI_SSID = "ROADTEST";
 constexpr const char* WIFI_PASSWORD = "roadtest123";
 constexpr const char* OTA_USERNAME = "admin";
 constexpr const char* OTA_PASSWORD = "roadtest123";
-constexpr const char* FIRMWARE_VERSION = "1.5.14";
+
+enum class CalibrationStepState : uint8_t {
+    DONE,
+    CURRENT,
+    WAITING
+};
 
 String formatDuration(uint32_t totalSeconds) {
     char duration[16];
@@ -24,6 +31,57 @@ String formatDuration(uint32_t totalSeconds) {
              static_cast<unsigned long>((totalSeconds / 60) % 60),
              static_cast<unsigned long>(totalSeconds % 60));
     return String(duration);
+}
+
+String escapeHTML(String value) {
+    value.replace("&", "&amp;");
+    value.replace("<", "&lt;");
+    value.replace(">", "&gt;");
+    value.replace("\"", "&quot;");
+    value.replace("'", "&#39;");
+    return value;
+}
+
+String escapeJSON(String value) {
+    value.replace("\\", "\\\\");
+    value.replace("\"", "\\\"");
+    value.replace("\n", "\\n");
+    value.replace("\r", "");
+    return value;
+}
+
+void appendCalibrationStep(
+    String& page, uint8_t number, const char* title, const char* scoreLabel,
+    uint8_t score, CalibrationStepState state, const char* instruction) {
+    page += F("<section class='step ");
+    switch (state) {
+        case CalibrationStepState::DONE:
+            page += F("done'><div class='step-number'>✓</div>");
+            break;
+        case CalibrationStepState::CURRENT:
+            page += F("current'><div class='step-number'>");
+            page += String(number);
+            page += F("</div>");
+            break;
+        case CalibrationStepState::WAITING:
+            page += F("waiting'><div class='step-number'>");
+            page += String(number);
+            page += F("</div>");
+            break;
+    }
+    page += F("<div class='step-copy'><div class='eyebrow'>");
+    page += state == CalibrationStepState::DONE
+        ? F("ERLEDIGT")
+        : (state == CalibrationStepState::CURRENT ? F("JETZT") : F("DANACH"));
+    page += F("</div><h2>");
+    page += title;
+    page += F("</h2><p>");
+    page += instruction;
+    page += F("</p></div><div class='score'>");
+    page += scoreLabel;
+    page += F("<strong>");
+    page += String(score);
+    page += F("</strong><span>/3</span></div></section>");
 }
 
 }
@@ -35,7 +93,9 @@ WebManager::WebManager()
       initialized(false),
       otaAuthorized(false),
       otaInProgress(false),
-      loggingWasActive(false) {}
+      otaUploadRejected(false),
+      otaBlockedByMeasurement(false),
+      otaUploadFileName("") {}
 
 bool WebManager::begin() {
     if (initialized) {
@@ -95,6 +155,75 @@ bool WebManager::begin() {
         server.send(200, "text/html; charset=utf-8", buildCalibrationPage());
     });
 
+    server.on("/acceptance", HTTP_GET, [this]() {
+        String message;
+        if (server.arg("blocked") == "1") {
+            message =
+                "Schritt nicht gespeichert. Bitte die angezeigte "
+                "Voraussetzung prüfen.";
+        } else if (server.arg("ended") == "1") {
+            message = "Kontrolltest beendet und Dateien geschlossen.";
+        }
+        server.sendHeader("Cache-Control", "no-store");
+        server.send(
+            200, "text/html; charset=utf-8",
+            buildAcceptanceTestPage(message));
+    });
+
+    server.on("/acceptance/status", HTTP_GET, [this]() {
+        server.sendHeader("Cache-Control", "no-store");
+        server.send(
+            200, "application/json; charset=utf-8",
+            buildAcceptanceStatusJSON());
+    });
+
+    server.on("/acceptance/start", HTTP_POST, [this]() {
+        if (!authenticateOTA()) {
+            return;
+        }
+        const bool started = vehicleDataDiscovery.begin();
+        redirectAcceptance(!started);
+    });
+
+    server.on("/acceptance/engine-start", HTTP_POST, [this]() {
+        if (!authenticateOTA()) {
+            return;
+        }
+        const bool marked =
+            vehicleDataDiscovery.markEngineStarted();
+        redirectAcceptance(!marked);
+    });
+
+    server.on("/acceptance/ignition-on", HTTP_POST, [this]() {
+        if (!authenticateOTA()) {
+            return;
+        }
+        const bool marked =
+            vehicleDataDiscovery.markIgnitionOn();
+        redirectAcceptance(!marked);
+    });
+
+    server.on("/acceptance/engine-stop", HTTP_POST, [this]() {
+        if (!authenticateOTA()) {
+            return;
+        }
+        const bool marked =
+            vehicleDataDiscovery.markEngineStopped();
+        redirectAcceptance(!marked);
+    });
+
+    server.on("/acceptance/end", HTTP_POST, [this]() {
+        if (!authenticateOTA()) {
+            return;
+        }
+        if (!vehicleDataDiscovery.isActive()) {
+            redirectAcceptance(true);
+            return;
+        }
+        vehicleDataDiscovery.end();
+        redirectAcceptance(false, true);
+    });
+
     server.on("/calibration/save", HTTP_POST, [this]() {
         if (!authenticateOTA()) {
             return;
@@ -121,33 +250,16 @@ bool WebManager::begin() {
                       : "Kalibrierung konnte nicht gespeichert werden."));
     });
 
-    server.on("/calibration/restart", HTTP_POST, [this]() {
-        if (!authenticateOTA()) {
-            return;
-        }
-        if (sdLogger.isLogging()) {
-            server.sendHeader("Cache-Control", "no-store");
-            server.send(
-                409, "text/html; charset=utf-8",
-                buildCalibrationPage(
-                    "BNO055-Neustart nicht möglich: Aufzeichnung zuerst stoppen."));
-            return;
-        }
-
-        const bool restarted = bnoManager.restartFusion();
-        BNO055RuntimeStatus status = bnoManager.getRuntimeStatus();
-        const bool healthy = restarted && status.isFusionRunning();
-        String message =
-            healthy
-                ? String("BNO055 neu gestartet: ") + ROADTEST_BNO_MODE_NAME + "-Sensorfusion läuft."
-                : "BNO055-Neustart ohne Erfolg. Modus und Fehlercode prüfen.";
-        server.sendHeader("Cache-Control", "no-store");
-        server.send(healthy ? 200 : 500, "text/html; charset=utf-8",
-                    buildCalibrationPage(message));
-    });
-
     server.on("/ride/start", HTTP_POST, [this]() {
         if (!authenticateOTA()) {
+            return;
+        }
+        if (vehicleDataDiscovery.isActive()) {
+            server.send(
+                409, "text/html; charset=utf-8",
+                "<!doctype html><meta charset='utf-8'><h1>Start nicht möglich</h1>"
+                "<p>Der Fahrzeug- oder Abnahmetest verwaltet die laufende "
+                "Aufzeichnung bereits.</p><p><a href='/'>Zurück</a></p>");
             return;
         }
         if (!sdLogger.isReady()) {
@@ -182,7 +294,11 @@ bool WebManager::begin() {
         if (!authenticateOTA()) {
             return;
         }
-        sdLogger.stopLogging();
+        if (vehicleDataDiscovery.isActive()) {
+            vehicleDataDiscovery.end();
+        } else {
+            sdLogger.stopLogging();
+        }
         server.sendHeader("Location", "/", true);
         server.send(303, "text/plain; charset=utf-8", "");
     });
@@ -195,22 +311,19 @@ bool WebManager::begin() {
                 return;
             }
 
-            const bool success = !Update.hasError();
+            const bool success =
+                !otaUploadRejected && !Update.hasError();
             server.sendHeader("Connection", "close");
             server.send(
                 success ? 200 : 500,
                 "text/html; charset=utf-8",
-                success
-                    ? "<!doctype html><meta charset='utf-8'><h1>Update erfolgreich</h1>"
-                      "<p>ROADTEST startet neu. Danach wieder mit dem WLAN verbinden.</p>"
-                    : "<!doctype html><meta charset='utf-8'><h1>Update fehlgeschlagen</h1>"
-                      "<p>Die bisherige Firmware bleibt aktiv.</p><p><a href='/update'>Zurück</a></p>");
+                buildUpdateResultPage(success));
 
             if (success) {
                 delay(500);
                 ESP.restart();
             } else {
-                resumeLoggingAfterFailedUpdate();
+                resetOTAState();
             }
         },
         [this]() { handleUpdateUpload(); });
@@ -232,7 +345,9 @@ bool WebManager::begin() {
 
 void WebManager::handleClient() {
     if (initialized) {
+        const unsigned long startedAt = millis();
         server.handleClient();
+        runtimeDiagnostics.recordWebDuration(millis() - startedAt);
     }
 }
 
@@ -287,7 +402,7 @@ String WebManager::buildStatusPage() {
               "</head><body><h1>ROADTEST</h1><table>");
 
     page += F("<tr><td>Firmware</td><td>");
-    page += FIRMWARE_VERSION;
+    page += ROADTEST_FIRMWARE_VERSION;
     page += F("</td></tr><tr><td>Laufzeit</td><td>");
     page += String(millis() / 1000);
     page += F(" s</td></tr><tr><td>System</td><td class='");
@@ -514,131 +629,753 @@ String WebManager::buildStatusPage() {
     }
 
     page += F("<p class='hint'>Start und Ende sind mit den Admin-Zugangsdaten geschützt.</p>"
-              "<a href='/calibration'>Kalibrierung</a>"
+              "<a href='/acceptance'>Recovery-Kontrolltest</a>"
+              " &nbsp; <a href='/calibration'>Kalibrierung</a>"
               " &nbsp; <a href='/update'>Firmware aktualisieren</a>"
               "</body></html>");
     return page;
 }
 
+
+uint8_t WebManager::getAcceptanceStage() const {
+    if (!vehicleDataDiscovery.isActive()) {
+        return 0;
+    }
+    if (!sdLogger.isLogging() ||
+        vehicleDataDiscovery.isPassiveCaptureActive()) {
+        return 1;
+    }
+
+    const unsigned long ignitionOn =
+        vehicleDataDiscovery.getIgnitionOnMarkedAt();
+    if (ignitionOn == 0) {
+        return 2;
+    }
+    const unsigned long ignitionDetection =
+        vehicleDataDiscovery.getDetectionAfterIgnitionOnMs();
+    if (ignitionDetection == UINT32_MAX) {
+        return 3;
+    }
+
+    const unsigned long engineStart =
+        vehicleDataDiscovery.getEngineStartMarkedAt();
+    if (engineStart == 0) {
+        return 4;
+    }
+    const unsigned long engineDetection =
+        vehicleDataDiscovery.getDetectionAfterEngineStartMs();
+    if (engineDetection == UINT32_MAX) {
+        return 5;
+    }
+    const unsigned long engineDetectedAt =
+        engineStart + engineDetection;
+    if (millis() - engineDetectedAt <
+        ACCEPTANCE_INITIAL_STAND_MS) {
+        return 6;
+    }
+
+    if (vehicleDataDiscovery.getEngineStopMarkedAt() == 0) {
+        const OBDLiveData obd = canReader.getOBDData();
+        return obd.speedValid &&
+                       obd.speedKmh <=
+                           GPS_DISTANCE_OBD_STATIONARY_KMH
+                   ? 8
+                   : 7;
+    }
+    if (vehicleDataDiscovery.getECUState() !=
+        ECUReachabilityState::LOST) {
+        return 9;
+    }
+
+    const unsigned long ignitionRestart =
+        vehicleDataDiscovery.getIgnitionRestartMarkedAt();
+    if (ignitionRestart == 0) {
+        return 10;
+    }
+    const unsigned long restartIgnitionDetection =
+        vehicleDataDiscovery.getDetectionAfterIgnitionRestartMs();
+    if (restartIgnitionDetection == UINT32_MAX) {
+        return 11;
+    }
+
+    const unsigned long engineRestart =
+        vehicleDataDiscovery.getEngineRestartMarkedAt();
+    if (engineRestart == 0) {
+        return 12;
+    }
+    const unsigned long restartEngineDetection =
+        vehicleDataDiscovery.getDetectionAfterEngineRestartMs();
+    if (restartEngineDetection == UINT32_MAX) {
+        return 13;
+    }
+    const unsigned long restartDetectedAt =
+        engineRestart + restartEngineDetection;
+    return millis() - restartDetectedAt <
+                   ACCEPTANCE_FINAL_STAND_MS
+               ? 14
+               : 15;
+}
+
+uint32_t WebManager::getAcceptanceCountdownSeconds(
+    uint8_t stage) const {
+    if (stage == 1) {
+        return vehicleDataDiscovery.getPassiveRemainingSeconds();
+    }
+    if (stage == 6) {
+        const unsigned long detectedAt =
+            vehicleDataDiscovery.getEngineStartMarkedAt() +
+            vehicleDataDiscovery.getDetectionAfterEngineStartMs();
+        const unsigned long elapsed = millis() - detectedAt;
+        return elapsed >= ACCEPTANCE_INITIAL_STAND_MS
+                   ? 0
+                   : (ACCEPTANCE_INITIAL_STAND_MS - elapsed + 999) /
+                         1000;
+    }
+    if (stage == 14) {
+        const unsigned long detectedAt =
+            vehicleDataDiscovery.getEngineRestartMarkedAt() +
+            vehicleDataDiscovery.getDetectionAfterEngineRestartMs();
+        const unsigned long elapsed = millis() - detectedAt;
+        return elapsed >= ACCEPTANCE_FINAL_STAND_MS
+                   ? 0
+                   : (ACCEPTANCE_FINAL_STAND_MS - elapsed + 999) /
+                         1000;
+    }
+    return 0;
+}
+
+void WebManager::redirectAcceptance(bool blocked, bool ended) {
+    String location = "/acceptance";
+    if (blocked) {
+        location += "?blocked=1";
+    } else if (ended) {
+        location += "?ended=1";
+    }
+    server.sendHeader("Location", location, true);
+    server.sendHeader("Cache-Control", "no-store");
+    server.send(303, "text/plain; charset=utf-8", "");
+}
+
+String WebManager::buildAcceptanceStatusJSON() {
+    const uint8_t stage = getAcceptanceStage();
+    const OBDLiveData obd = canReader.getOBDData();
+    const GPSData gps = gpsManager.getCurrentData(false);
+    const RideSummary ride = sdLogger.getRideSummary();
+    const LogStats sd = sdLogger.getStatistics();
+    const RuntimeTimingDiagnostics timing =
+        runtimeDiagnostics.getTiming();
+
+    String json;
+    json.reserve(420);
+    json += F("{\"stage\":");
+    json += String(stage);
+    json += F(",\"countdown\":");
+    json += String(getAcceptanceCountdownSeconds(stage));
+    json += F(",\"phase\":\"");
+    json += escapeJSON(
+        vehicleDataDiscovery.isActive()
+            ? String(vehicleDataDiscovery.getPhaseName())
+            : String("bereit"));
+    json += F("\",\"ecu\":\"");
+    json += escapeJSON(
+        String(vehicleDataDiscovery.getECUStateName()));
+    json += F("\",\"obdSpeed\":");
+    json += obd.speedValid ? String(obd.speedKmh) : String(-1);
+    json += F(",\"gpsSpeed\":");
+    json += String(gps.speed_kmh, 1);
+    json += F(",\"gpsSpeedValid\":");
+    json += gps.speed_valid ? F("true") : F("false");
+    json += F(",\"distanceKm\":");
+    json += String(ride.distanceKm, 3);
+    json += F(",\"sdErrors\":");
+    json += String(sd.errorCount);
+    json += F(",\"maxPauseMs\":");
+    json += String(timing.maxLoopIntervalMs);
+    json += F("}");
+    return json;
+}
+
+String WebManager::buildAcceptanceTestPage(
+    const String& message) {
+    const uint8_t stage = getAcceptanceStage();
+    const bool active = vehicleDataDiscovery.isActive();
+    const OBDLiveData obd = canReader.getOBDData();
+    const GPSData gps = gpsManager.getCurrentData(false);
+    const RideSummary ride = sdLogger.getRideSummary();
+    const RuntimeTimingDiagnostics timing =
+        runtimeDiagnostics.getTiming();
+
+    const char* eyebrow = "BEREIT";
+    const char* title = "Recovery-Kontrolle starten";
+    const char* instruction =
+        "Zündung und Motor ausgeschaltet lassen. Der Test beginnt mit "
+        "60 Sekunden echtem Listen-Only.";
+    const char* action = "/acceptance/start";
+    const char* button = "Kontrolltest starten";
+    bool showAction = true;
+
+    switch (stage) {
+        case 1:
+            eyebrow = "VORBEREITUNG";
+            title = "Passive Phase abwarten";
+            instruction =
+                "Die Firmware bereitet die Dateien vor und sendet 60 "
+                "Sekunden lang keine CAN-Anfrage.";
+            showAction = false;
+            break;
+        case 2:
+            eyebrow = "ZÜNDUNG";
+            title = "Zündung einschalten";
+            instruction =
+                "Knopf zuerst drücken. Danach nur die Zündung "
+                "einschalten, den Motor noch nicht starten.";
+            action = "/acceptance/ignition-on";
+            button = "Markieren · dann Zündung an";
+            break;
+        case 3:
+            eyebrow = "ECU";
+            title = "Erste ECU-Antwort abwarten";
+            instruction =
+                "Die Seite wechselt automatisch weiter, sobald eine "
+                "Antwort nach dem Marker vorliegt.";
+            showAction = false;
+            break;
+        case 4:
+            eyebrow = "MOTORSTART";
+            title = "Motor starten";
+            instruction =
+                "Knopf zuerst drücken und den Motor unmittelbar danach "
+                "starten.";
+            action = "/acceptance/engine-start";
+            button = "Markieren · dann Motor starten";
+            break;
+        case 5:
+            eyebrow = "MOTORLAUF";
+            title = "Drehzahlbestätigung abwarten";
+            instruction =
+                "Mindestens 300 U/min müssen als frischer OBD-Wert "
+                "erkannt werden.";
+            showAction = false;
+            break;
+        case 6:
+            eyebrow = "STABILITÄT";
+            title = "Eine Minute laufen lassen";
+            instruction =
+                "Fahrzeug bleibt vollständig stehen. Die kleine "
+                "Statusabfrage bleibt währenddessen aktiv.";
+            showAction = false;
+            break;
+        case 7:
+            eyebrow = "STILLSTAND";
+            title = "Auf OBD 0 km/h warten";
+            instruction =
+                "Der Ausschaltknopf erscheint erst bei einer frischen "
+                "Stillstandsbestätigung.";
+            showAction = false;
+            break;
+        case 8:
+            eyebrow = "AUSSCHALTEN";
+            title = "Motor und Zündung ausschalten";
+            instruction =
+                "Knopf zuerst drücken und das Fahrzeug unmittelbar "
+                "danach vollständig ausschalten.";
+            action = "/acceptance/engine-stop";
+            button = "Markieren · dann Motor und Zündung aus";
+            break;
+        case 9:
+            eyebrow = "RECOVERY";
+            title = "ECU-Verlust abwarten";
+            instruction =
+                "Der Zustand wechselt erst nach drei tatsächlich "
+                "fehlgeschlagenen OBD-Anfragen.";
+            showAction = false;
+            break;
+        case 10:
+            eyebrow = "WIEDERANLAUF";
+            title = "Zündung erneut einschalten";
+            instruction =
+                "Knopf zuerst drücken. Danach nur die Zündung "
+                "einschalten.";
+            action = "/acceptance/ignition-on";
+            button = "Markieren · dann Zündung erneut an";
+            break;
+        case 11:
+            eyebrow = "WIEDERVERBINDUNG";
+            title = "ECU-Antwort abwarten";
+            instruction =
+                "Die Wiedererkennung läuft ohne Firmware-Neustart.";
+            showAction = false;
+            break;
+        case 12:
+            eyebrow = "NEUSTART";
+            title = "Motor erneut starten";
+            instruction =
+                "Knopf zuerst drücken und den Motor unmittelbar danach "
+                "starten.";
+            action = "/acceptance/engine-start";
+            button = "Markieren · dann Motor neu starten";
+            break;
+        case 13:
+            eyebrow = "MOTORLAUF";
+            title = "Neue Drehzahlbestätigung abwarten";
+            instruction =
+                "Die Firmware wartet auf eine frische Drehzahl von "
+                "mindestens 300 U/min.";
+            showAction = false;
+            break;
+        case 14:
+            eyebrow = "ABSCHLUSSKONTROLLE";
+            title = "Zwei Minuten stabil laufen lassen";
+            instruction =
+                "Die Statusabfrage bleibt aktiv. Es dürfen keine langen "
+                "Messpausen oder GPS-Pufferverluste entstehen.";
+            showAction = false;
+            break;
+        case 15:
+            eyebrow = "FERTIG";
+            title = "Kontrolltest abschließen";
+            instruction =
+                "Alle vorgesehenen Recovery-Schritte sind vollständig.";
+            action = "/acceptance/end";
+            button = "Test abschließen und Dateien schließen";
+            break;
+    }
+
+    String page;
+    page.reserve(7200);
+    page += F(
+        "<!doctype html><html lang='de'><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width,initial-scale=1,"
+        "viewport-fit=cover'><title>ROADTEST · Recovery</title><style>"
+        ":root{--paper:#f1efe7;--ink:#17201b;--muted:#657069;"
+        "--lime:#d9ed58;--green:#087a46;--amber:#d88716;--red:#b93830}"
+        "*{box-sizing:border-box}body{margin:0;background:var(--paper);"
+        "color:var(--ink);font-family:'Avenir Next','Trebuchet MS',sans-serif}"
+        "main{width:min(42rem,100%);margin:auto;padding:1rem 1rem 3rem}"
+        "header{border-bottom:4px solid var(--ink);padding:.8rem 0 1rem}"
+        ".brand{font-size:.68rem;font-weight:900;letter-spacing:.18em}"
+        ".brand span{background:var(--lime);padding:.2rem .45rem}"
+        "h1{font-size:clamp(2.4rem,11vw,4.5rem);line-height:.88;"
+        "letter-spacing:-.06em;margin:1rem 0 .5rem}.lead{color:var(--muted);"
+        "line-height:1.45;margin:0}.notice{margin:1rem 0;padding:.8rem 1rem;"
+        "border-left:5px solid var(--amber);background:#fff5d9}"
+        ".metrics{display:grid;grid-template-columns:repeat(2,1fr);gap:.55rem;"
+        "margin:1rem 0}.metric{background:var(--ink);color:white;padding:.75rem}"
+        ".metric span{display:block;color:#aeb8b1;font-size:.62rem;"
+        "font-weight:900;letter-spacing:.12em;text-transform:uppercase}"
+        ".metric b{display:block;margin-top:.25rem;font-size:1.05rem}"
+        ".task{background:var(--ink);color:white;padding:1.15rem;"
+        "box-shadow:0 7px 0 var(--lime);margin:1.4rem 0}"
+        ".eyebrow{color:var(--lime);font-size:.68rem;font-weight:900;"
+        "letter-spacing:.16em}.task h2{font-size:1.55rem;margin:.3rem 0 .45rem}"
+        ".task p{margin:0;color:#cbd3cd;line-height:1.48}.timer{font:900 2rem "
+        "ui-monospace,monospace;color:var(--lime);margin-top:1rem}"
+        "form{margin:0}button{width:100%;min-height:5.4rem;margin-top:1.1rem;"
+        "border:3px solid var(--ink);background:var(--lime);color:var(--ink);"
+        "font:900 1.15rem 'Avenir Next','Trebuchet MS',sans-serif;"
+        "box-shadow:0 6px 0 #000;touch-action:manipulation;padding:1rem}"
+        "button:active{transform:translateY(4px);box-shadow:0 2px 0 #000}"
+        "button:disabled{background:#aaa;color:#666}.finish{background:var(--green);"
+        "color:white}.connection{font-size:.78rem;color:var(--muted);margin-top:1rem}"
+        ".connection.bad{color:var(--red);font-weight:900}details{margin-top:1.5rem;"
+        "border-top:1px solid #c9cbc4;padding-top:1rem}summary{color:var(--muted);"
+        "font-weight:800}.abort{background:var(--red);color:white;min-height:4.5rem}"
+        ".foot{border-top:1px solid #c9cbc4;margin-top:1.5rem;padding-top:1rem;"
+        "color:var(--muted);font-size:.84rem;line-height:1.45}a{color:#2468a2;"
+        "font-weight:800}@media(min-width:38rem){.metrics{grid-template-columns:"
+        "repeat(3,1fr)}}</style></head><body><main><header><div class='brand'>"
+        "<span>ROADTEST</span> / RECOVERY</div><h1>Kurz&shy;kontrolle</h1>"
+        "<p class='lead'>Kleine Statuspakete statt vollständiger "
+        "Seitenaktualisierung. Keine Bedienung während der Fahrt erforderlich."
+        "</p></header>");
+    if (message.length() > 0) {
+        page += F("<div class='notice'>");
+        page += escapeHTML(message);
+        page += F("</div>");
+    }
+    page += F("<section class='metrics'><div class='metric'><span>Phase</span>"
+              "<b id='phase'>");
+    page += active ? vehicleDataDiscovery.getPhaseName() : "bereit";
+    page += F("</b></div><div class='metric'><span>ECU</span><b id='ecu'>");
+    page += vehicleDataDiscovery.getECUStateName();
+    page += F("</b></div><div class='metric'><span>OBD-Speed</span><b id='obd'>");
+    page += obd.speedValid ? String(obd.speedKmh) + " km/h" : String("–");
+    page += F("</b></div><div class='metric'><span>GPS-Speed</span><b id='gps'>");
+    page += gps.speed_valid
+        ? String(gps.speed_kmh, 1) + " km/h"
+        : String(gps.speed_kmh, 1) + " roh";
+    page += F("</b></div><div class='metric'><span>Strecke</span><b id='distance'>");
+    page += String(ride.distanceKm, 3);
+    page += F(" km</b></div><div class='metric'><span>Max. Pause</span><b id='pause'>");
+    page += String(timing.maxLoopIntervalMs);
+    page += F(" ms</b></div></section><section class='task'><div class='eyebrow'>");
+    page += eyebrow;
+    page += F("</div><h2>");
+    page += title;
+    page += F("</h2><p>");
+    page += instruction;
+    page += F("</p>");
+    const uint32_t countdown =
+        getAcceptanceCountdownSeconds(stage);
+    if (stage == 1 || stage == 6 || stage == 14) {
+        page += F("<div class='timer' id='timer'>");
+        page += String(countdown / 60);
+        page += F(":");
+        if (countdown % 60 < 10) {
+            page += F("0");
+        }
+        page += String(countdown % 60);
+        page += F("</div>");
+    }
+    if (showAction) {
+        page += F("<form method='POST' action='");
+        page += action;
+        page += F("'><button class='");
+        page += stage == 15 ? F("finish") : F("action");
+        page += F("' type='submit'>");
+        page += button;
+        page += F("</button></form>");
+    }
+    page += F("</section><div id='connection' class='connection'>"
+              "Statusverbindung aktiv</div>");
+    if (active && stage != 15) {
+        page += F("<details><summary>Test vorzeitig abbrechen</summary>"
+                  "<form method='POST' action='/acceptance/end'><button "
+                  "class='abort' type='submit'>Abbruch bestätigen und Dateien "
+                  "schließen</button></form></details>");
+    }
+    page += F("<p class='foot'>Die Seite überträgt im Hintergrund nur eine "
+              "kleine Statusantwort. ECU-Recovery verwendet weiterhin "
+              "ausschließlich freigegebene OBD-Service-01-Leseanfragen bei "
+              "maximal zwei Frames pro Sekunde.<br><br><a href='/'>← "
+              "Systemstatus</a></p></main><script>const initialStage=");
+    page += String(stage);
+    page += F(";function text(id,v){const e=document.getElementById(id);if(e)e."
+              "textContent=v}function clock(s){return Math.floor(s/60)+':'"
+              "+String(s%60).padStart(2,'0')}async function poll(){try{const r="
+              "await fetch('/acceptance/status',{cache:'no-store'});if(!r.ok)"
+              "throw 0;const s=await r.json();text('phase',s.phase);text('ecu',"
+              "s.ecu);text('obd',s.obdSpeed<0?'–':s.obdSpeed+' km/h');text('gps',"
+              "s.gpsSpeed+(s.gpsSpeedValid?' km/h':' roh'));text('distance',"
+              "s.distanceKm.toFixed(3)+' km');text('pause',s.maxPauseMs+' ms');"
+              "text('timer',clock(s.countdown));const c=document.getElementById("
+              "'connection');if(c){c.textContent='Statusverbindung aktiv';c.className="
+              "'connection'}if(s.stage!==initialStage)location.replace('/acceptance')"
+              "}catch(e){const c=document.getElementById('connection');if(c){"
+              "c.textContent='Statusverbindung unterbrochen';c.className='connection "
+              "bad'}}}poll();setInterval(poll,2000);document.querySelectorAll('form')."
+              "forEach(f=>f.addEventListener('submit',()=>{const b=f.querySelector("
+              "'button');if(b){b.disabled=true;b.textContent='Wird gespeichert …'}}));"
+              "</script></body></html>");
+    return page;
+}
+
 String WebManager::buildCalibrationPage(const String& message) {
     CalibrationData calibration = bnoManager.getCalibration();
-    bool bnoReady = bnoManager.isSelfTestPassed();
-    BNO055RuntimeStatus runtimeStatus = bnoManager.getRuntimeStatus();
+    const bool bnoReady = bnoManager.isSelfTestPassed();
+    const BNO055RuntimeStatus runtimeStatus = bnoManager.getRuntimeStatus();
+    const bool complete = calibration.isFullyCalibrated();
+    const bool saved = bnoManager.isCalibrationSaved();
+    const uint8_t activeStep =
+        calibration.gyro < 3
+            ? 1
+            : (calibration.accel < 3
+                   ? 2
+                   : (ROADTEST_BNO_USES_MAG && calibration.mag < 3
+                          ? 3
+                          : (ROADTEST_BNO_USES_MAG &&
+                                     calibration.system < 3
+                                 ? 4
+                                 : 5)));
+    const uint8_t calibrationSum =
+        calibration.gyro + calibration.accel +
+        (ROADTEST_BNO_USES_MAG
+             ? calibration.mag + calibration.system
+             : 0);
+    const uint8_t calibrationMaximum =
+        ROADTEST_BNO_USES_MAG ? 12 : 6;
+    const uint8_t progress =
+        calibrationMaximum > 0
+            ? calibrationSum * 100 / calibrationMaximum
+            : 0;
+
     String page;
-    page.reserve(2800);
+    page.reserve(6500);
     page += F(
         "<!doctype html><html lang='de'><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
         "<meta http-equiv='refresh' content='2;url=/calibration'>"
         "<title>ROADTEST Kalibrierung</title>"
-        "<style>body{font-family:system-ui;max-width:34rem;margin:2rem auto;padding:0 1rem}"
-        "table{border-collapse:collapse;width:100%;font-size:1.15rem}"
-        "td{padding:.5rem;border-bottom:1px solid #ddd}td:last-child{text-align:right}"
-        "button{font:inherit;padding:.6rem 1rem}.ok{color:#087a30}.warn{color:#a33}"
-        "li{margin:.5rem 0}</style></head><body><h1>BNO055-Kalibrierung</h1>");
+        "<style>"
+        ":root{--ink:#15221c;--muted:#66736c;--paper:#f4f1e8;"
+        "--panel:#fffdf7;--line:#d8d5ca;--green:#17724a;--lime:#cce34d;"
+        "--red:#a83d32}"
+        "*{box-sizing:border-box}body{margin:0;background:var(--paper);"
+        "color:var(--ink);font-family:'Avenir Next','Trebuchet MS',sans-serif}"
+        "main{max-width:42rem;margin:auto;padding:1.2rem 1rem 2.5rem}"
+        "header{border-bottom:3px solid var(--ink);padding:.6rem 0 1rem;"
+        "margin-bottom:1rem}.brand{font-size:.72rem;font-weight:800;"
+        "letter-spacing:.18em}.brand span{background:var(--lime);padding:.22rem .42rem}"
+        "h1{font-size:clamp(2rem,9vw,3.6rem);line-height:.92;margin:1rem 0 .45rem;"
+        "letter-spacing:-.055em}.lead{color:var(--muted);margin:0;max-width:34rem}"
+        ".notice{border:1px solid var(--line);background:var(--panel);"
+        "padding:.85rem 1rem;margin:1rem 0}.notice.ok{border-left:5px solid var(--green)}"
+        ".notice.warn{border-left:5px solid var(--red)}"
+        ".progress-head{display:flex;justify-content:space-between;align-items:end;"
+        "margin:1.4rem 0 .45rem}.progress-head strong{font-size:1.6rem}"
+        ".progress-track{height:.7rem;background:#dedbd0;overflow:hidden}"
+        ".progress-bar{height:100%;background:var(--green)}"
+        ".step{display:grid;grid-template-columns:2.7rem 1fr auto;gap:.8rem;"
+        "align-items:start;border-top:1px solid var(--line);padding:1.05rem .2rem}"
+        ".step.current{background:var(--ink);color:#fff;border:0;padding:1.15rem;"
+        "margin:.55rem -.2rem;box-shadow:0 8px 0 var(--lime)}"
+        ".step.waiting{color:#818a85}.step-number{width:2.35rem;height:2.35rem;"
+        "border:2px solid currentColor;border-radius:50%;display:grid;place-items:center;"
+        "font-weight:900}.step.done .step-number{background:var(--green);"
+        "border-color:var(--green);color:#fff}.eyebrow{font-size:.65rem;font-weight:900;"
+        "letter-spacing:.16em;color:var(--green)}.current .eyebrow{color:var(--lime)}"
+        ".step h2{font-size:1.12rem;margin:.08rem 0 .25rem}.step p{font-size:.9rem;"
+        "line-height:1.42;margin:0;max-width:28rem}.score{display:flex;align-items:baseline;"
+        "gap:.16rem;font-size:.72rem;font-weight:800}.score strong{font-size:1.7rem}"
+        ".score span{color:var(--muted)}.current .score span{color:#b7c0bb}"
+        ".finish{background:var(--green);color:#fff;padding:1.25rem;margin:1.2rem 0}"
+        ".finish h2{margin:0 0 .35rem}.finish p{margin:.25rem 0}"
+        "button{width:100%;border:0;background:var(--ink);color:#fff;font:inherit;"
+        "font-weight:800;padding:.9rem 1rem;margin:.6rem 0;cursor:pointer}"
+        "button:active{transform:translateY(1px)}details{border-top:1px solid var(--line);"
+        "border-bottom:1px solid var(--line);padding:.8rem 0;margin:1.2rem 0}"
+        "summary{font-weight:800;cursor:pointer}.diagnostics{display:grid;"
+        "grid-template-columns:1fr auto;gap:.45rem 1rem;font-size:.88rem;margin-top:.8rem}"
+        ".diagnostics span:nth-child(even){font-weight:800;text-align:right}"
+        "a{color:var(--ink);font-weight:800}.footer{margin-top:1.5rem;color:var(--muted);"
+        "font-size:.85rem}@media(max-width:28rem){.step{grid-template-columns:2.4rem 1fr}"
+        ".score{grid-column:2}.step.current{margin:.55rem 0}}"
+        "</style></head><body><main><header><div class='brand'>"
+        "<span>ROADTEST</span> · SENSOR-ASSISTENT</div>"
+        "<h1>Kalibrierung</h1><p class='lead'>Die Anzeige aktualisiert sich "
+        "alle zwei Sekunden und führt automatisch zum nächsten Schritt.</p></header>");
 
     if (message.length() > 0) {
-        page += F("<p><strong>");
+        const bool messageIsWarning =
+            message.startsWith("Noch nicht") ||
+            message.indexOf("konnte nicht") >= 0;
+        page += messageIsWarning
+            ? F("<div class='notice warn'><strong>")
+            : F("<div class='notice ok'><strong>");
         page += message;
-        page += F("</strong></p>");
+        page += F("</strong></div>");
     }
 
     if (!bnoReady) {
         page += F(
-            "<p class='warn'><strong>BNO055 ist nicht verbunden.</strong></p>"
-            "<p>Die Firmware prüft den Sensor automatisch erneut. Diese Seite "
-            "aktualisiert sich alle zwei Sekunden.</p>"
-            "<p><a href='/'>Zur Statusseite</a></p></body></html>");
+            "<div class='notice warn'><strong>BNO055 ist nicht verbunden.</strong>"
+            "<p>Die Firmware sucht den Sensor automatisch erneut. Sobald er "
+            "antwortet, erscheint hier der erste Kalibrierungsschritt.</p></div>"
+            "<p class='footer'><a href='/'>← Zur Statusseite</a></p>"
+            "</main></body></html>");
         return page;
     }
 
-    page += F("<table><tr><td>Betriebsmodus</td><td class='");
-    if (runtimeStatus.isExpectedModeActive()) {
-        page += "ok'>";
-        page += ROADTEST_BNO_MODE_NAME;
-    } else {
-        page += F("warn'>");
-    }
-    if (!runtimeStatus.isExpectedModeActive()) {
-        page += String(runtimeStatus.operationMode);
-    }
-    page += F("</td></tr><tr><td>Taktquelle</td><td>intern</td></tr>"
-              "<tr><td>Sensorfusion</td><td class='");
-    page += runtimeStatus.isFusionRunning() ? F("ok'>läuft")
-                                            : F("warn'>läuft nicht");
-    page += F("</td></tr><tr><td>Systemstatus</td><td>");
-    page += String(runtimeStatus.systemStatus);
-    page += F(" (erwartet: 5)</td></tr><tr><td>Fehlercode</td><td>");
-    page += String(runtimeStatus.systemError);
-    page += F(" (erwartet: 0)</td></tr><tr><td>Gyro</td><td>");
-    page += String(calibration.gyro);
-    page += F(" / 3</td></tr><tr><td>Beschleunigung</td><td>");
-    page += String(calibration.accel);
-    page += F(" / 3</td></tr><tr><td>System</td><td>");
-    if (ROADTEST_BNO_USES_MAG) {
-        page += String(calibration.system);
-        page += F(" / 3");
-    } else {
-        page += F("nicht erforderlich");
-    }
-    page += F("</td></tr><tr><td>Magnetometer</td><td>");
-    if (ROADTEST_BNO_USES_MAG) {
-        page += String(calibration.mag);
-        page += F(" / 3");
-    } else {
-        page += F("nicht verwendet");
-    }
-    page += F("</td></tr>"
-              "<tr><td>Dauerhaft gespeichert</td><td>");
-    page += bnoManager.isCalibrationSaved() ? F("Ja") : F("Nein");
-    page += F("</td></tr></table>");
-
-    if (calibration.isFullyCalibrated()) {
-        page += String("<p class='ok'><strong>Für ") + ROADTEST_BNO_MODE_NAME +
-                " ausreichend kalibriert.</strong></p>";
-    } else {
-        page += String("<p class='warn'><strong>Die für ") +
-                ROADTEST_BNO_MODE_NAME +
-                " benötigte Kalibrierung ist noch nicht vollständig.</strong></p>";
-    }
-
-    page += F(
-        "<ol><li>Gyro: Gerät einige Sekunden völlig stillhalten.</li>"
-        "<li>Beschleunigung: nacheinander auf alle sechs Seiten legen.</li>");
-    if (ROADTEST_BNO_USES_MAG) {
+    if (sdLogger.isLogging()) {
         page += F(
-            "<li>Magnetometer: liegende Acht in der Luft beschreiben.</li>"
-            "<li>Bewegungen wiederholen, bis System, Gyro, Beschleunigung "
-            "und Magnetometer jeweils 3 anzeigen.</li>");
-    } else {
-        page += F("<li>Warten, bis Gyro und Beschleunigung 3 anzeigen.</li>");
+            "<div class='notice warn'><strong>Aufzeichnung läuft.</strong>"
+            "<p>Bitte zuerst auf der Statusseite beenden. Die Bewegungen zur "
+            "Kalibrierung würden sonst als Fahrbahndaten gespeichert.</p></div>");
     }
+
+    if (!runtimeStatus.isFusionRunning()) {
+        page += F(
+            "<div class='notice warn'><strong>Sensorfusion noch nicht bereit.</strong>"
+            "<p>Bitte das Gerät ruhig liegen lassen. Die Firmware stellt den "
+            "korrekten Modus automatisch wieder her; ein manueller Neustart "
+            "ist nicht erforderlich.</p></div>");
+    }
+
+    page += F("<div class='progress-head'><div><strong>");
+    page += String(progress);
+    page += F("%</strong><br><span>Gesamtfortschritt</span></div><span>");
+    page += complete ? F("bereit") : F("in Arbeit");
+    page += F("</span></div><div class='progress-track'><div class='progress-bar' style='width:");
+    page += String(progress);
+    page += F("%'></div></div>");
+
+    appendCalibrationStep(
+        page, 1, "Ruhig halten", "GYR", calibration.gyro,
+        calibration.gyro == 3
+            ? CalibrationStepState::DONE
+            : (activeStep == 1 ? CalibrationStepState::CURRENT
+                               : CalibrationStepState::WAITING),
+        "Das ROADTEST-Gerät auf eine feste Fläche legen und einige Sekunden "
+        "vollständig stillhalten. Nicht berühren, bis GYR 3 erreicht.");
+
+    appendCalibrationStep(
+        page, 2, "Sechs Seiten", "ACC", calibration.accel,
+        calibration.accel == 3
+            ? CalibrationStepState::DONE
+            : (activeStep == 2 ? CalibrationStepState::CURRENT
+                               : CalibrationStepState::WAITING),
+        "Das Gerät nacheinander flach auf Oberseite, Unterseite und alle vier "
+        "Seiten legen. Jede Lage ruhig halten, bis der Wert weitersteigt.");
+
+    if (ROADTEST_BNO_USES_MAG) {
+        appendCalibrationStep(
+            page, 3, "Liegende Acht", "MAG", calibration.mag,
+            calibration.mag == 3
+                ? CalibrationStepState::DONE
+                : (activeStep == 3 ? CalibrationStepState::CURRENT
+                                   : CalibrationStepState::WAITING),
+            "Abseits größerer Metallteile langsam eine liegende Acht in der "
+            "Luft beschreiben und das Gerät dabei um alle Achsen drehen.");
+
+        appendCalibrationStep(
+            page, 4, "Sensorfusion bestätigen", "SYS",
+            calibration.system,
+            calibration.system == 3
+                ? CalibrationStepState::DONE
+                : (activeStep == 4 ? CalibrationStepState::CURRENT
+                                   : CalibrationStepState::WAITING),
+            "SYS ist kein eigener Sensor, sondern das Gesamtvertrauen der "
+            "Fusion. Die ruhigen Lagen und die Acht langsam wiederholen, bis "
+            "auch SYS 3 anzeigt.");
+    }
+
+    if (complete) {
+        page += F("<div class='finish'><h2>Kalibrierung vollständig</h2><p>");
+        page += String("Alle für ") + ROADTEST_BNO_MODE_NAME +
+                " benötigten Werte stehen auf 3.</p><p>";
+        page += saved
+            ? F("Im Speicher liegen bereits Kalibrierungswerte. Mit dem "
+                "Button wird der jetzt erreichte Stand übernommen.")
+            : F("Jetzt dauerhaft speichern, bevor das Gerät ausgeschaltet wird.");
+        page += F("</p></div><form method='POST' action='/calibration/save'>"
+                  "<button type='submit'>");
+        page += saved ? F("Aktuellen Stand speichern")
+                      : F("Kalibrierung dauerhaft speichern");
+        page += F("</button></form><p class='footer'>Das Speichern ist mit den "
+                  "Admin-Zugangsdaten geschützt.</p>");
+    }
+
     page += F(
-        "</ol>"
-        "<form method='POST' action='/calibration/save'>"
-        "<button type='submit'>Kalibrierung speichern</button></form>"
-        "<form method='POST' action='/calibration/restart'>"
-        "<button type='submit'>BNO055 neu starten</button></form>"
-        "<p>Neustart und Speichern verwenden dieselben Zugangsdaten wie das "
-        "Firmware-Update. Vor einem Sensorneustart die Aufzeichnung stoppen.</p>"
-        "<p><a href='/'>Zur Statusseite</a></p></body></html>");
+        "<details><summary>Technische Sensordaten</summary>"
+        "<div class='diagnostics'><span>Betriebsmodus</span><span>");
+    page += runtimeStatus.isExpectedModeActive()
+        ? String(ROADTEST_BNO_MODE_NAME)
+        : String(runtimeStatus.operationMode);
+    page += F("</span><span>Sensorfusion</span><span>");
+    page += runtimeStatus.isFusionRunning() ? F("läuft") : F("läuft nicht");
+    page += F("</span><span>Systemstatus</span><span>");
+    page += String(runtimeStatus.systemStatus);
+    page += F(" / erwartet 5</span><span>Fehlercode</span><span>");
+    page += String(runtimeStatus.systemError);
+    page += F(" / erwartet 0</span><span>Taktquelle</span><span>intern</span>"
+              "<span>Gespeicherte Werte</span><span>");
+    page += saved ? F("vorhanden") : F("noch keine");
+    page += F(
+        "</span></div></details>"
+        "<p class='footer'>Die Seite aktualisiert sich automatisch. "
+        "Ein Sensorneustart ist für die Kalibrierung nicht notwendig.</p>"
+        "<p><a href='/'>← Zur Statusseite</a></p></main></body></html>");
     return page;
 }
 
 String WebManager::buildUpdatePage() {
-    return F(
+    String page;
+    page.reserve(3200);
+    page += F(
         "<!doctype html><html lang='de'><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
         "<title>ROADTEST Update</title>"
-        "<style>body{font-family:system-ui;max-width:34rem;margin:2rem auto;padding:0 1rem}"
-        "input,button{font:inherit;margin:.5rem 0}button{padding:.55rem 1rem}</style>"
-        "</head><body><h1>Firmware aktualisieren</h1>"
-        "<p>Nur eine für das LOLIN S3 Mini erzeugte <code>.bin</code>-Datei auswählen.</p>"
-        "<p>Während des Updates wird die SD-Aufzeichnung sauber beendet.</p>"
-        "<form method='POST' action='/update' enctype='multipart/form-data'>"
-        "<input type='file' name='firmware' accept='.bin' required><br>"
-        "<button type='submit'>Update starten</button></form>"
-        "<p><a href='/'>Abbrechen</a></p></body></html>");
+        "<style>:root{--ink:#15221c;--paper:#f4f1e8;--panel:#fffdf7;"
+        "--line:#d8d5ca;--lime:#cce34d;--muted:#66736c}"
+        "*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);"
+        "font-family:'Avenir Next','Trebuchet MS',sans-serif}"
+        "main{max-width:40rem;margin:auto;padding:1.4rem 1rem 2.5rem}"
+        ".brand{font-size:.72rem;font-weight:900;letter-spacing:.18em;"
+        "border-bottom:3px solid var(--ink);padding-bottom:.9rem}"
+        ".brand span{background:var(--lime);padding:.22rem .42rem}"
+        "h1{font-size:clamp(2rem,9vw,3.5rem);line-height:.95;letter-spacing:-.05em;"
+        "margin:1.2rem 0}.version{display:grid;grid-template-columns:1fr auto;"
+        "align-items:center;background:var(--ink);color:#fff;padding:1rem 1.1rem;"
+        "box-shadow:0 7px 0 var(--lime)}.version small{letter-spacing:.12em;"
+        "font-weight:800}.version strong{font-size:1.8rem}.file{border:1px solid var(--line);"
+        "background:var(--panel);padding:1rem;margin:1.5rem 0}.file code{display:block;"
+        "font-size:1rem;font-weight:800;margin-top:.35rem;overflow-wrap:anywhere}"
+        "input{width:100%;font:inherit;border:1px solid var(--line);background:#fff;"
+        "padding:.8rem;margin:.5rem 0 1rem}button{width:100%;border:0;"
+        "background:var(--ink);color:#fff;font:inherit;font-weight:900;padding:.95rem}"
+        ".hint{color:var(--muted);font-size:.9rem;line-height:1.5}"
+        "a{color:var(--ink);font-weight:800}</style></head><body><main>"
+        "<div class='brand'><span>ROADTEST</span> · FIRMWARE</div>"
+        "<h1>Update</h1><div class='version'><small>AKTUELL INSTALLIERT</small><strong>");
+    page += ROADTEST_FIRMWARE_VERSION;
+    page += F(
+        "</strong></div><div class='file'>Offizieller Dateiname dieses Builds:"
+        "<code>");
+    page += ROADTEST_FIRMWARE_FILE_NAME;
+    page += F(
+        "</code></div><p>Eine für das LOLIN S3 Mini erzeugte, versionierte "
+        "<code>.bin</code>-Datei auswählen.</p>");
+    const bool measurementActive =
+        vehicleDataDiscovery.isActive() ||
+        sdLogger.isLogging() ||
+        sdLogger.isLoggingStartPending();
+    if (measurementActive) {
+        page += F(
+            "<div class='file'><strong>Update gesperrt</strong><p>Bitte die "
+            "laufende Messung zuerst sicher beenden. Dadurch bleiben Sitzung, "
+            "Marker und Abschlussdateien vollständig.</p></div>");
+    } else {
+        page += F(
+            "<form method='POST' action='/update' enctype='multipart/form-data'>"
+            "<input type='file' name='firmware' accept='.bin' required>"
+            "<button type='submit'>Update starten</button></form>");
+    }
+    page += F(
+        "<p class='hint'>Ein Update startet nur bei vollständig beendeter "
+        "Aufzeichnung. Nach dem Neustart zeigt diese Seite die Version der "
+        "neu installierten Firmware.</p>"
+        "<p><a href='/'>← Abbrechen</a></p></main></body></html>");
+    return page;
+}
+
+String WebManager::buildUpdateResultPage(bool success) {
+    String page;
+    page.reserve(1400);
+    page += F(
+        "<!doctype html><html lang='de'><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+        "<title>ROADTEST Update</title><style>body{font-family:'Avenir Next',"
+        "'Trebuchet MS',sans-serif;max-width:34rem;margin:2rem auto;"
+        "padding:0 1rem;background:#f4f1e8;color:#15221c}"
+        ".result{border-left:6px solid #17724a;background:#fffdf7;padding:1rem}"
+        ".error{border-left-color:#a83d32}code{font-weight:800;"
+        "overflow-wrap:anywhere}a{color:#15221c;font-weight:800}</style>"
+        "</head><body><div class='result ");
+    page += success ? F("'>") : F("error'>");
+    page += success ? F("<h1>Update erfolgreich</h1>")
+                    : F("<h1>Update fehlgeschlagen</h1>");
+    page += F("<p>Hochgeladene Datei: <code>");
+    page += escapeHTML(otaUploadFileName);
+    page += F("</code></p>");
+    if (success) {
+        page += F(
+            "<p>ROADTEST startet jetzt neu. Danach wieder mit dem WLAN "
+            "verbinden und auf der Update-Seite die installierte "
+            "Versionsnummer prüfen.</p>");
+    } else {
+        if (otaBlockedByMeasurement) {
+            page += F(
+                "<p>Das Update wurde nicht gestartet, weil noch eine Messung "
+                "oder deren Vorbereitung aktiv ist. Bitte diese zuerst sicher "
+                "beenden.</p>");
+        }
+        page += F("<p>Die bisherige Firmware ");
+        page += ROADTEST_FIRMWARE_VERSION;
+        page += F(
+            " bleibt aktiv.</p><p><a href='/update'>← Zurück</a></p>");
+    }
+    page += F("</div></body></html>");
+    return page;
 }
 
 bool WebManager::authenticateOTA() {
@@ -658,11 +1395,21 @@ void WebManager::handleUpdateUpload() {
             return;
         }
 
-        otaInProgress = true;
-        loggingWasActive = sdLogger.isLogging();
-        if (loggingWasActive) {
-            sdLogger.stopLogging();
+        otaBlockedByMeasurement =
+            vehicleDataDiscovery.isActive() ||
+            sdLogger.isLogging() ||
+            sdLogger.isLoggingStartPending();
+        otaUploadRejected = otaBlockedByMeasurement;
+        if (otaUploadRejected) {
+            otaInProgress = false;
+            otaUploadFileName = upload.filename;
+            Serial.println(
+                "⚠️ OTA abgelehnt: Eine Messung oder deren Vorbereitung läuft");
+            return;
         }
+
+        otaInProgress = true;
+        otaUploadFileName = upload.filename;
 
         Serial.printf("OTA-Update gestartet: %s\n", upload.filename.c_str());
         const uint32_t maxSketchSpace =
@@ -670,33 +1417,30 @@ void WebManager::handleUpdateUpload() {
         if (!Update.begin(maxSketchSpace, U_FLASH)) {
             Update.printError(Serial);
         }
-    } else if (otaAuthorized && upload.status == UPLOAD_FILE_WRITE) {
+    } else if (otaAuthorized && !otaUploadRejected &&
+               upload.status == UPLOAD_FILE_WRITE) {
         if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
             Update.printError(Serial);
         }
-    } else if (otaAuthorized && upload.status == UPLOAD_FILE_END) {
+    } else if (otaAuthorized && !otaUploadRejected &&
+               upload.status == UPLOAD_FILE_END) {
         if (Update.end(true)) {
             Serial.printf("✅ OTA-Update vollständig: %u Bytes\n", upload.totalSize);
         } else {
             Update.printError(Serial);
         }
-    } else if (otaAuthorized && upload.status == UPLOAD_FILE_ABORTED) {
+    } else if (otaAuthorized && !otaUploadRejected &&
+               upload.status == UPLOAD_FILE_ABORTED) {
         Update.abort();
+        otaUploadRejected = true;
+        otaInProgress = false;
         Serial.println("⚠️ OTA-Update abgebrochen");
-        resumeLoggingAfterFailedUpdate();
     }
 }
 
-void WebManager::resumeLoggingAfterFailedUpdate() {
+void WebManager::resetOTAState() {
     otaInProgress = false;
     otaAuthorized = false;
-
-    if (loggingWasActive && sdLogger.isReady() && !sdLogger.isLogging()) {
-        if (sdLogger.startLogging()) {
-            Serial.println("✅ SD-Aufzeichnung nach fehlgeschlagenem Update fortgesetzt");
-        } else {
-            Serial.println("❌ SD-Aufzeichnung konnte nicht erneut gestartet werden");
-        }
-    }
-    loggingWasActive = false;
+    otaUploadRejected = false;
+    otaBlockedByMeasurement = false;
 }

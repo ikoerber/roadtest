@@ -67,5 +67,13 @@ config.local.*
 *.net
 *.cir
 
+# Lokale Messdaten und Werkzeugkonfiguration
+*.sal
+Bilder/
+testdata/**/*.csv
+.claude/
+.codex/
+.Codex/
+
 # Third-party libraries (embedded git repos)
 arduino-CAN/

@@ -4,6 +4,14 @@
 #include "bno055_manager.h"
 #include "hardware_config.h"
 
+namespace {
+constexpr size_t OLED_TEXT_COLUMNS = SCREEN_WIDTH / 6;
+static_assert(
+    sizeof("ROADTEST " ROADTEST_FIRMWARE_VERSION " CHECK") - 1 <=
+        OLED_TEXT_COLUMNS,
+    "Firmwareversion passt nicht in die OLED-Startzeile");
+}
+
 // Globale OLED-Manager Instanz
 OLEDManager oledManager;
 
@@ -149,8 +157,8 @@ void OLEDManager::drawHeader(const String& title) {
     if (!display) return;
     
     display->setTextSize(1);
-    display->println("=== " + title + " ===");
-    display->println();
+    display->printf("ROADTEST %s\n", ROADTEST_FIRMWARE_VERSION);
+    display->println(title);
 }
 
 void OLEDManager::drawStatusIndicator(const String& label, bool status, int line) {
@@ -209,7 +217,7 @@ void OLEDManager::showBootStatus(bool bno055, bool sd, bool gpsInitialized,
                                  bool allRequiredReady) {
     clearAndSetup();
 
-    display->println("ROADTEST 1.5.14 CHECK");
+    display->printf("ROADTEST %s CHECK\n", ROADTEST_FIRMWARE_VERSION);
     display->println("OLED:   OK");
     display->println(String("BNO055: ") + (bno055 ? "OK" : "FEHLER"));
     display->println(String("SD:     ") + (sd ? "OK" : "FEHLER"));
@@ -407,7 +415,7 @@ void OLEDManager::showBootMessage(const String& message, int progress) {
     clearAndSetup();
     
     display->setTextSize(1);
-    display->println("ESP32-S3 Road System");
+    display->printf("ROADTEST %s\n", ROADTEST_FIRMWARE_VERSION);
     display->println();
     display->println(message);
     

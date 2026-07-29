@@ -9,16 +9,37 @@ VehicleDataDiscovery vehicleDataDiscovery;
 
 VehicleDataDiscovery::VehicleDataDiscovery()
     : phase(VehicleDiscoveryPhase::IDLE),
+      ecuState(ECUReachabilityState::UNKNOWN),
       startedAt(0),
       phaseStartedAt(0),
       lastRequestAt(0),
       scanFinishedAt(0),
+      recoveryNextRoundAt(0),
+      ecuFirstReachableAt(0),
+      ecuLastReachableAt(0),
+      ignitionOnMarkedAt(0),
+      ignitionRestartMarkedAt(0),
+      engineStartMarkedAt(0),
+      engineStopMarkedAt(0),
+      engineRestartMarkedAt(0),
+      detectionAfterIgnitionOnMs(UINT32_MAX),
+      detectionAfterIgnitionRestartMs(UINT32_MAX),
+      detectionAfterEngineStartMs(UINT32_MAX),
+      detectionAfterEngineRestartMs(UINT32_MAX),
       initialCANMessages(0),
       passiveFrames(0),
       passiveExtendedFrames(0),
       passiveUniqueStandardIds(0),
+      scanSupportResponseBaseline(0),
+      recoveryResponseBaseline(0),
+      liveFailureBaseline(0),
+      liveResponseBaseline(0),
+      recoveryCount(0),
+      ecuLossCount(0),
       scanRequestIndex(0),
       liveRequestIndex(0),
+      recoveryRequestIndex(0),
+      recoveryRound(0),
       previousOBDPollingEnabled(false),
       loggingStartedByDiscovery(false),
       seenStandardIds{} {
@@ -34,8 +55,24 @@ const char* VehicleDataDiscovery::getPhaseName() const {
             return "passiver Listen-Only-Mitschnitt";
         case VehicleDiscoveryPhase::PID_SCAN:
             return "Standard-PID-Erkennung";
+        case VehicleDiscoveryPhase::ECU_RECOVERY:
+            return "ECU-Wiedererkennung";
         case VehicleDiscoveryPhase::LIVE_SAMPLING:
             return "Messwerte sammeln";
+    }
+    return "unbekannt";
+}
+
+const char* VehicleDataDiscovery::getECUStateName() const {
+    switch (ecuState) {
+        case ECUReachabilityState::UNKNOWN:
+            return "unbekannt";
+        case ECUReachabilityState::SEARCHING:
+            return "wird gesucht";
+        case ECUReachabilityState::REACHABLE:
+            return "erreichbar";
+        case ECUReachabilityState::LOST:
+            return "Verbindung verloren";
     }
     return "unbekannt";
 }
@@ -69,7 +106,28 @@ bool VehicleDataDiscovery::begin() {
     passiveUniqueStandardIds = 0;
     scanRequestIndex = 0;
     liveRequestIndex = 0;
+    recoveryRequestIndex = 0;
+    recoveryRound = 0;
     scanFinishedAt = 0;
+    recoveryNextRoundAt = 0;
+    scanSupportResponseBaseline = 0;
+    recoveryResponseBaseline = 0;
+    liveFailureBaseline = 0;
+    liveResponseBaseline = 0;
+    recoveryCount = 0;
+    ecuLossCount = 0;
+    ecuState = ECUReachabilityState::UNKNOWN;
+    ecuFirstReachableAt = 0;
+    ecuLastReachableAt = 0;
+    ignitionOnMarkedAt = 0;
+    ignitionRestartMarkedAt = 0;
+    engineStartMarkedAt = 0;
+    engineStopMarkedAt = 0;
+    engineRestartMarkedAt = 0;
+    detectionAfterIgnitionOnMs = UINT32_MAX;
+    detectionAfterIgnitionRestartMs = UINT32_MAX;
+    detectionAfterEngineStartMs = UINT32_MAX;
+    detectionAfterEngineRestartMs = UINT32_MAX;
     memset(seenStandardIds, 0, sizeof(seenStandardIds));
 
     previousOBDPollingEnabled = canReader.isOBDPollingEnabled();
@@ -106,6 +164,10 @@ void VehicleDataDiscovery::startPassiveCapture() {
     phaseStartedAt = millis();
     sdLogger.logEvent(
         "DISCOVERY_PHASE",
+        "PREPARATION_COMPLETE;DURATION_MS_" +
+            String(phaseStartedAt - startedAt));
+    sdLogger.logEvent(
+        "DISCOVERY_PHASE",
         "PASSIVE_START;60s;MCP2515_LISTEN_ONLY;NO_REQUESTS");
 
     Serial.println("\n=== DATENERKENNUNG: PHASE 1/3 ===");
@@ -126,6 +188,8 @@ void VehicleDataDiscovery::startPIDScan() {
     lastRequestAt = phaseStartedAt - CAN_OBD_REQUEST_INTERVAL_MS;
     scanRequestIndex = 0;
     scanFinishedAt = 0;
+    scanSupportResponseBaseline =
+        canReader.getOBDSessionStats().supportResponseCount;
     sdLogger.logEvent(
         "DISCOVERY_PHASE",
         "PID_SCAN_START;SERVICE_01;BLOCKS_00_20_40_60;TWO_ROUNDS");
@@ -134,6 +198,127 @@ void VehicleDataDiscovery::startPIDScan() {
     Serial.printf(
         "Standard-PID-Blöcke 00/20/40/60, maximal alle %d ms\n",
         CAN_OBD_REQUEST_INTERVAL_MS);
+}
+
+void VehicleDataDiscovery::setECUReachable(
+    unsigned long now, const char* reason) {
+    const bool newlyReachable =
+        ecuState != ECUReachabilityState::REACHABLE;
+    ecuState = ECUReachabilityState::REACHABLE;
+    ecuLastReachableAt = now;
+    if (ecuFirstReachableAt == 0) {
+        ecuFirstReachableAt = now;
+    }
+
+    if (newlyReachable && sdLogger.isLogging()) {
+        sdLogger.logEvent(
+            "ECU_STATE",
+            String("REACHABLE;REASON_") + reason +
+                ";RECOVERY_COUNT_" + String(recoveryCount));
+    }
+}
+
+void VehicleDataDiscovery::updateAcceptanceEngineState(
+    unsigned long now) {
+    const OBDSessionStats session = canReader.getOBDSessionStats();
+
+    unsigned long ignitionMarker = 0;
+    unsigned long* ignitionDetection = nullptr;
+    const char* ignitionEvent = nullptr;
+    if (ignitionRestartMarkedAt > 0) {
+        ignitionMarker = ignitionRestartMarkedAt;
+        ignitionDetection = &detectionAfterIgnitionRestartMs;
+        ignitionEvent = "ECU_NACH_ZUENDUNG_NEU_ERKANNT";
+    } else if (ignitionOnMarkedAt > 0) {
+        ignitionMarker = ignitionOnMarkedAt;
+        ignitionDetection = &detectionAfterIgnitionOnMs;
+        ignitionEvent = "ECU_NACH_ZUENDUNG_ERKANNT";
+    }
+
+    if (ignitionDetection != nullptr &&
+        *ignitionDetection == UINT32_MAX &&
+        session.lastResponseMs > ignitionMarker) {
+        *ignitionDetection =
+            session.lastResponseMs - ignitionMarker;
+        if (sdLogger.isLogging()) {
+            sdLogger.logEvent(
+                "IGNITION_STATE",
+                String(ignitionEvent) + ";DETECTION_MS_" +
+                    String(*ignitionDetection));
+        }
+    }
+
+    const OBDLiveData obd = canReader.getOBDData();
+    if (!obd.rpmValid || obd.rpm < 300.0f) {
+        return;
+    }
+
+    unsigned long engineMarker = 0;
+    unsigned long* engineDetection = nullptr;
+    const char* engineEvent = nullptr;
+    if (engineRestartMarkedAt > 0) {
+        engineMarker = engineRestartMarkedAt;
+        engineDetection = &detectionAfterEngineRestartMs;
+        engineEvent = "MOTOR_NEU_LAEUFT";
+    } else if (engineStartMarkedAt > 0) {
+        engineMarker = engineStartMarkedAt;
+        engineDetection = &detectionAfterEngineStartMs;
+        engineEvent = "MOTOR_LAEUFT";
+    }
+
+    if (engineDetection != nullptr &&
+        *engineDetection == UINT32_MAX &&
+        obd.rpmUpdatedMs > engineMarker &&
+        obd.rpmUpdatedMs <= now) {
+        *engineDetection = obd.rpmUpdatedMs - engineMarker;
+        if (sdLogger.isLogging()) {
+            sdLogger.logEvent(
+                "ENGINE_STATE",
+                String(engineEvent) + ";RPM_" +
+                    String(obd.rpm, 0) + ";DETECTION_MS_" +
+                    String(*engineDetection));
+        }
+    }
+}
+
+void VehicleDataDiscovery::enterECURecovery(const char* reason) {
+    const unsigned long now = millis();
+    if (!canReader.configureOBDResponseMode()) {
+        Serial.println("❌ ECU-Wiedererkennung konnte nicht gestartet werden");
+        end();
+        return;
+    }
+
+    canReader.setOBDPollingEnabled(true);
+    const bool wasReachable =
+        ecuState == ECUReachabilityState::REACHABLE;
+    if (wasReachable) {
+        ecuLossCount++;
+        ecuState = ECUReachabilityState::LOST;
+    } else if (ecuState != ECUReachabilityState::LOST) {
+        ecuState = ECUReachabilityState::SEARCHING;
+    }
+
+    phase = VehicleDiscoveryPhase::ECU_RECOVERY;
+    phaseStartedAt = now;
+    lastRequestAt = now - CAN_OBD_REQUEST_INTERVAL_MS;
+    recoveryNextRoundAt = now;
+    recoveryRequestIndex = 0;
+    recoveryRound = 0;
+    recoveryResponseBaseline =
+        canReader.getOBDSessionStats().responseCount;
+    recoveryCount++;
+
+    if (sdLogger.isLogging()) {
+        sdLogger.logEvent(
+            "ECU_STATE",
+            String(wasReachable ? "LOST" : "SEARCHING") +
+                ";REASON_" + reason +
+                ";RECOVERY_COUNT_" + String(recoveryCount));
+    }
+    Serial.printf(
+        "⚠️ ECU-Wiedererkennung #%u: %s\n",
+        recoveryCount, reason);
 }
 
 void VehicleDataDiscovery::printPIDSupport(
@@ -189,10 +374,15 @@ void VehicleDataDiscovery::printSupportSummary(bool logToSD) {
 }
 
 void VehicleDataDiscovery::startLiveSampling() {
+    setECUReachable(millis(), "PID_SCAN_RESPONSE");
     phase = VehicleDiscoveryPhase::LIVE_SAMPLING;
     phaseStartedAt = millis();
     lastRequestAt = phaseStartedAt - CAN_OBD_REQUEST_INTERVAL_MS;
     liveRequestIndex = 0;
+    const OBDSessionStats session = canReader.getOBDSessionStats();
+    liveFailureBaseline =
+        session.requestErrors + session.timeoutCount;
+    liveResponseBaseline = session.responseCount;
 
     printSupportSummary(true);
     sdLogger.logEvent(
@@ -210,6 +400,7 @@ void VehicleDataDiscovery::update() {
     }
 
     const unsigned long now = millis();
+    updateAcceptanceEngineState(now);
 
     if (phase == VehicleDiscoveryPhase::PREPARING_LOG) {
         if (sdLogger.isLogging()) {
@@ -264,13 +455,76 @@ void VehicleDataDiscovery::update() {
             }
         } else if (scanFinishedAt > 0 &&
                    now - scanFinishedAt >= SCAN_RESPONSE_WAIT_MS) {
-            startLiveSampling();
+            const OBDSessionStats session =
+                canReader.getOBDSessionStats();
+            if (session.supportResponseCount >
+                scanSupportResponseBaseline) {
+                startLiveSampling();
+            } else {
+                enterECURecovery("PID_SCAN_NO_RESPONSE");
+            }
         }
         return;
     }
 
-    if (phase == VehicleDiscoveryPhase::LIVE_SAMPLING &&
-        now - lastRequestAt >= CAN_OBD_REQUEST_INTERVAL_MS) {
+    if (phase == VehicleDiscoveryPhase::ECU_RECOVERY) {
+        const OBDSessionStats session =
+            canReader.getOBDSessionStats();
+        if (session.responseCount > recoveryResponseBaseline &&
+            session.lastResponseMs >= phaseStartedAt) {
+            setECUReachable(now, "SAFE_FALLBACK_RESPONSE");
+            startPIDScan();
+            return;
+        }
+
+        static const uint8_t recoveryPids[] = {
+            0x0C, 0x0D, 0x11, 0x00
+        };
+        static_assert(
+            sizeof(recoveryPids) == RECOVERY_PROBES_PER_ROUND,
+            "Recovery-Proben und Rundengroesse muessen zusammenpassen");
+
+        if (now >= recoveryNextRoundAt &&
+            now - lastRequestAt >= CAN_OBD_REQUEST_INTERVAL_MS) {
+            canReader.requestOBDPid(
+                recoveryPids[recoveryRequestIndex]);
+            recoveryRequestIndex++;
+            lastRequestAt = now;
+
+            if (recoveryRequestIndex >= sizeof(recoveryPids)) {
+                recoveryRequestIndex = 0;
+                recoveryRound++;
+                const unsigned long backoff =
+                    min(
+                        RECOVERY_BACKOFF_BASE_MS *
+                            static_cast<unsigned long>(recoveryRound),
+                        RECOVERY_BACKOFF_MAX_MS);
+                recoveryNextRoundAt = now + backoff;
+            }
+        }
+        return;
+    }
+
+    if (phase == VehicleDiscoveryPhase::LIVE_SAMPLING) {
+        OBDSessionStats session =
+            canReader.getOBDSessionStats();
+        const uint32_t failures =
+            session.requestErrors + session.timeoutCount;
+        if (session.responseCount > liveResponseBaseline) {
+            liveResponseBaseline = session.responseCount;
+            liveFailureBaseline = failures;
+        }
+        if (failures - liveFailureBaseline >=
+                LIVE_FAILURES_BEFORE_LOST &&
+            session.lastRequestMs > session.lastResponseMs) {
+            enterECURecovery("CONSECUTIVE_REQUEST_FAILURES");
+            return;
+        }
+
+        if (now - lastRequestAt < CAN_OBD_REQUEST_INTERVAL_MS) {
+            return;
+        }
+
         // Geschwindigkeit erscheint mehrfach, damit der Vergleich mit GPS
         // trotz der bewusst niedrigen Gesamtrate zeitlich brauchbar bleibt.
         static const uint8_t livePids[] = {
@@ -337,6 +591,108 @@ bool VehicleDataDiscovery::addMarker(String description) {
     return written;
 }
 
+bool VehicleDataDiscovery::markIgnitionOn() {
+    if (!isActive() || !sdLogger.isLogging()) {
+        return false;
+    }
+
+    const unsigned long now = millis();
+    const bool restart =
+        engineStopMarkedAt > 0 &&
+        engineStopMarkedAt >= engineStartMarkedAt;
+    if (restart) {
+        if (ignitionRestartMarkedAt > 0) {
+            return true;
+        }
+        if (!addMarker("ABNAHME_ZUENDUNG_NEU_AN")) {
+            return false;
+        }
+        ignitionRestartMarkedAt = now;
+        detectionAfterIgnitionRestartMs = UINT32_MAX;
+        return true;
+    }
+
+    if (ignitionOnMarkedAt > 0) {
+        return true;
+    }
+    if (!addMarker("ABNAHME_ZUENDUNG_AN")) {
+        return false;
+    }
+    ignitionOnMarkedAt = now;
+    detectionAfterIgnitionOnMs = UINT32_MAX;
+    return true;
+}
+
+bool VehicleDataDiscovery::markEngineStarted() {
+    if (!isActive() || !sdLogger.isLogging()) {
+        return false;
+    }
+
+    const unsigned long now = millis();
+    const bool restart =
+        engineStopMarkedAt > 0 &&
+        engineStopMarkedAt >= engineStartMarkedAt;
+    if (restart) {
+        if (ignitionRestartMarkedAt == 0) {
+            Serial.println(
+                "ℹ️ Vor dem Motorneustart zuerst Zündung-Ein markieren");
+            return false;
+        }
+        if (engineRestartMarkedAt > 0) {
+            return true;
+        }
+        if (!addMarker("ABNAHME_MOTOR_NEU_GESTARTET")) {
+            return false;
+        }
+        engineRestartMarkedAt = now;
+        detectionAfterEngineRestartMs = UINT32_MAX;
+        return true;
+    }
+
+    if (ignitionOnMarkedAt == 0) {
+        Serial.println(
+            "ℹ️ Vor dem Motorstart zuerst Zündung-Ein markieren");
+        return false;
+    }
+    if (engineStartMarkedAt > 0) {
+        return true;
+    }
+    if (!addMarker("ABNAHME_MOTOR_GESTARTET")) {
+        return false;
+    }
+    engineStartMarkedAt = now;
+    detectionAfterEngineStartMs = UINT32_MAX;
+    return true;
+}
+
+bool VehicleDataDiscovery::markEngineStopped() {
+    if (!isActive() || !sdLogger.isLogging()) {
+        return false;
+    }
+
+    if (engineStopMarkedAt > 0) {
+        return true;
+    }
+    const OBDLiveData obd = canReader.getOBDData();
+    if (engineStartMarkedAt == 0 ||
+        detectionAfterEngineStartMs == UINT32_MAX ||
+        millis() -
+                (engineStartMarkedAt + detectionAfterEngineStartMs) <
+            ACCEPTANCE_INITIAL_STAND_MS ||
+        !obd.speedValid ||
+        obd.speedKmh > GPS_DISTANCE_OBD_STATIONARY_KMH) {
+        Serial.println(
+            "ℹ️ Motor-Aus erst nach stabiler Laufphase bei OBD-Stillstand markieren");
+        return false;
+    }
+    const unsigned long now = millis();
+    if (!addMarker("ABNAHME_MOTOR_AUS")) {
+        return false;
+    }
+    engineStopMarkedAt = now;
+    return true;
+}
+
 void VehicleDataDiscovery::printStatus() {
     if (!isActive()) {
         Serial.println("Fahrzeugdaten-Erkennung: inaktiv");
@@ -345,10 +701,14 @@ void VehicleDataDiscovery::printStatus() {
 
     const unsigned long now = millis();
     const OBDLiveData obd = canReader.getOBDData();
+    const OBDSessionStats session = canReader.getOBDSessionStats();
     Serial.println("\n=== FAHRZEUGDATEN-ERKENNUNG ===");
     Serial.printf(
         "Phase: %s, Gesamtdauer: %lu s\n",
         getPhaseName(), (now - startedAt) / 1000);
+    Serial.printf(
+        "ECU: %s, Wiedererkennungen: %u, Verbindungsverluste: %u\n",
+        getECUStateName(), recoveryCount, ecuLossCount);
     if (phase == VehicleDiscoveryPhase::PASSIVE_CAPTURE) {
         const unsigned long elapsed = now - phaseStartedAt;
         const unsigned long remaining =
@@ -362,10 +722,28 @@ void VehicleDataDiscovery::printStatus() {
             passiveExtendedFrames, remaining);
     }
     Serial.printf(
-        "OBD: %lu Anfragen, %lu Antworten, %lu PID-Blockantworten, "
-        "%lu Sendefehler\n",
-        obd.requestCount, obd.responseCount, obd.supportResponseCount,
-        obd.requestErrors);
+        "OBD-Sitzung: %lu Anfragen, %lu Antworten, %lu "
+        "PID-Blockantworten, %lu Sendefehler, %lu Timeouts, "
+        "%lu nicht zugeordnet\n",
+        static_cast<unsigned long>(session.requestCount),
+        static_cast<unsigned long>(session.responseCount),
+        static_cast<unsigned long>(session.supportResponseCount),
+        static_cast<unsigned long>(session.requestErrors),
+        static_cast<unsigned long>(session.timeoutCount),
+        static_cast<unsigned long>(session.unmatchedResponseCount));
+    Serial.printf(
+        "OBD seit Boot: %lu Anfragen, %lu Antworten, %lu Sendefehler\n",
+        obd.requestCount, obd.responseCount, obd.requestErrors);
+    if (session.lastResponseMs > 0) {
+        Serial.printf(
+            "Letzte Transaktion: Anfrage #%lu PID %02X, "
+            "Antwort %03lX/PID %02X nach %lu ms\n",
+            static_cast<unsigned long>(session.lastRequestSequence),
+            session.lastRequestPid,
+            static_cast<unsigned long>(session.lastResponseCanId),
+            session.lastResponsePid,
+            static_cast<unsigned long>(session.lastResponseLatencyMs));
+    }
     const bool hasLiveValue =
         obd.speedValid || obd.rpmValid || obd.throttleValid ||
         obd.mafValid || obd.fuelRateValid ||
@@ -424,15 +802,44 @@ void VehicleDataDiscovery::end() {
     }
 
     const String finishedSessionId = sdLogger.getSessionId();
+    const OBDSessionStats finalOBDSession =
+        canReader.getOBDSessionStats();
     if (sdLogger.isLogging()) {
         printSupportSummary(true);
+        if (ignitionOnMarkedAt > 0 || engineStartMarkedAt > 0) {
+            const String ignitionFirst =
+                detectionAfterIgnitionOnMs == UINT32_MAX
+                    ? "NA"
+                    : String(detectionAfterIgnitionOnMs);
+            const String engineFirst =
+                detectionAfterEngineStartMs == UINT32_MAX
+                    ? "NA"
+                    : String(detectionAfterEngineStartMs);
+            const String ignitionAgain =
+                detectionAfterIgnitionRestartMs == UINT32_MAX
+                    ? "NA"
+                    : String(detectionAfterIgnitionRestartMs);
+            const String engineAgain =
+                detectionAfterEngineRestartMs == UINT32_MAX
+                    ? "NA"
+                    : String(detectionAfterEngineRestartMs);
+            sdLogger.logEvent(
+                "ACCEPTANCE_RESULT",
+                "IGNITION_FIRST_MS_" + ignitionFirst +
+                    ";ENGINE_FIRST_MS_" + engineFirst +
+                    ";IGNITION_RESTART_MS_" + ignitionAgain +
+                    ";ENGINE_RESTART_MS_" + engineAgain);
+        }
         sdLogger.logEvent(
             "DISCOVERY_PHASE",
             "DISCOVERY_END;DURATION_S_" +
                 String((millis() - startedAt) / 1000) +
                 ";PASSIVE_FRAMES_" + String(passiveFrames) +
                 ";PASSIVE_UNIQUE_11BIT_IDS_" +
-                String(passiveUniqueStandardIds));
+                String(passiveUniqueStandardIds) +
+                ";OBD_REQUESTS_" + String(finalOBDSession.requestCount) +
+                ";OBD_RESPONSES_" + String(finalOBDSession.responseCount) +
+                ";OBD_TIMEOUTS_" + String(finalOBDSession.timeoutCount));
         sdLogger.flush();
     }
 
@@ -444,6 +851,7 @@ void VehicleDataDiscovery::end() {
     }
 
     phase = VehicleDiscoveryPhase::IDLE;
+    ecuState = ECUReachabilityState::UNKNOWN;
     loggingStartedByDiscovery = false;
     Serial.println("\n✅ Fahrzeugdaten-Erkennung beendet");
     Serial.printf("SD-Sitzung: %s\n", finishedSessionId.c_str());

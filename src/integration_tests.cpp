@@ -915,6 +915,29 @@ bool IntegrationTests::testCANBusOverload() {
         testPassed = false;
         details += ", System instabil!";
     }
+
+    // Die kontrollierte Controller-Recovery selbst prüfen, ohne einen
+    // beliebigen Fahrzeugframe zu senden: erst echtes Listen-Only, danach den
+    // engen OBD-Antwortfilter wiederherstellen.
+    const CANHardwareDiagnostics beforeRecovery =
+        canReader.getHardwareDiagnostics();
+    const bool controllerRecovered =
+        canReader.restartController(CAN_BAUDRATE, true);
+    const CANHardwareDiagnostics passiveDiagnostics =
+        canReader.getHardwareDiagnostics();
+    const bool passiveRestored =
+        controllerRecovered && passiveDiagnostics.valid &&
+        passiveDiagnostics.operatingMode == 3 &&
+        passiveDiagnostics.controllerRecoveryCount ==
+            beforeRecovery.controllerRecoveryCount + 1;
+    const bool obdModeRestored =
+        passiveRestored && canReader.configureOBDResponseMode();
+    if (!obdModeRestored) {
+        testPassed = false;
+        details += ", Controller-Recovery Fehler";
+    } else {
+        details += ", Controller-Recovery OK";
+    }
     
     uint32_t duration = millis() - startTime;
     addTestResult("CAN-Bus Überlastung", testPassed, duration, details);
@@ -993,6 +1016,57 @@ bool IntegrationTests::testGPSSignalLoss() {
     if (wasInterruptMode) {
         gpsManager.enableInterruptMode(true);
     }
+
+    // Derselbe end()/begin()-Pfad wird von der automatischen UART-Recovery
+    // verwendet. Qualitätszähler und NewFix-Zustand dürfen dadurch nicht
+    // zurückspringen oder künstlich verändert werden.
+    const uint32_t fixSequenceBeforeRestart =
+        gpsManager.getFixSequence();
+    const GPSStatus statusBeforeRestart = gpsManager.getStatus();
+    const bool newFixBeforeRestart =
+        gpsManager.getCurrentData(false).new_fix;
+    gpsManager.end();
+    const bool uartRestarted =
+        gpsManager.begin(GPS_RX_PIN, GPS_TX_PIN, GPS_BAUD_RATE);
+    if (uartRestarted && wasInterruptMode) {
+        gpsManager.enableInterruptMode(true);
+    }
+    const GPSStatus statusAfterRestart = gpsManager.getStatus();
+    const bool countersMonotonic =
+        uartRestarted &&
+        gpsManager.getFixSequence() == fixSequenceBeforeRestart &&
+        statusAfterRestart.rx_buffer_overflows >=
+            statusBeforeRestart.rx_buffer_overflows &&
+        gpsManager.getCurrentData(false).new_fix ==
+            newFixBeforeRestart;
+    if (!countersMonotonic) {
+        testPassed = false;
+        details += ", UART-Zählerkontinuität: Fehler";
+    } else {
+        details += ", UART-Zählerkontinuität: OK";
+    }
+
+    const GPSData filteredData =
+        gpsManager.getCurrentData(false);
+    const bool locationFilterCoherent =
+        !filteredData.location_valid ||
+        (filteredData.location_age_ms <= GPS_LOCATION_MAX_AGE_MS &&
+         filteredData.satellites_valid &&
+         filteredData.satellites >= GPS_MIN_SATELLITES &&
+         filteredData.hdop_valid &&
+         filteredData.hdop <= GPS_MAX_HDOP);
+    const bool speedFilterCoherent =
+        !filteredData.speed_valid ||
+        (filteredData.speed_age_ms <= GPS_SPEED_MAX_AGE_MS &&
+         filteredData.speed_kmh >= GPS_MIN_RELIABLE_SPEED_KMH &&
+         filteredData.speed_kmh <=
+             GPS_MAX_PLAUSIBLE_SPEED_KMH);
+    if (!locationFilterCoherent || !speedFilterCoherent) {
+        testPassed = false;
+        details += ", GPS-Feldfilter: Fehler";
+    } else {
+        details += ", GPS-Feldfilter: OK";
+    }
     
     // Bewertung
     if (hadFix) {
@@ -1004,7 +1078,7 @@ bool IntegrationTests::testGPSSignalLoss() {
             testPassed = false;
         }
     } else {
-        details = "Kein initialer Fix - Test eingeschränkt";
+        details += ", Kein initialer Fix - Fixverlusttest eingeschränkt";
         // Test trotzdem als bestanden werten
     }
     
@@ -2019,7 +2093,7 @@ bool IntegrationTests::testDataConsistency() {
         samples[i].sensorAccel = sqrt(sensor.accelX * sensor.accelX + 
                                      sensor.accelY * sensor.accelY);
         
-        if (hasGPS && gps.valid_fix && gps.speed_kmh >= 5.0f) {
+        if (hasGPS && gps.valid_fix && gps.speed_valid) {
             samples[i].gpsHeading = gps.heading_deg;
             samples[i].gpsSpeed = gps.speed_kmh;
             samples[i].valid = true;
@@ -2280,7 +2354,9 @@ bool IntegrationTests::testCrossModuleSync() {
             // GPS-Geschwindigkeitsänderung?
             if (gpsManager.available()) {
                 GPSData gps = gpsManager.getCurrentData();
-                events[eventCount].gpsDetected = (gps.speed_kmh > 0.5);
+                events[eventCount].gpsDetected =
+                    gps.speed_valid &&
+                    gps.speed_kmh >= GPS_MIN_RELIABLE_SPEED_KMH;
                 events[eventCount].gpsValue = gps.speed_kmh;
             }
             
