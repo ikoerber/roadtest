@@ -169,8 +169,11 @@ private:
     unsigned long lastRideGPSTime;
     
     // Puffer für Performance mit Overflow-Schutz
-    static const int BUFFER_SIZE = 512;
-    static const int BUFFER_SAFETY_MARGIN = 32;  // Sicherheitspuffer
+    // Fünf Sekunden 10-Hz-Sensordaten passen vollständig in den RAM-Puffer.
+    // Der frühere 512-Byte-Puffer erzwang bereits nach wenigen CSV-Zeilen
+    // einen synchronen SD-Schreibzugriff und verlor dadurch Abtastslots.
+    static const int BUFFER_SIZE = 8192;
+    static const int BUFFER_SAFETY_MARGIN = 128;
     char writeBuffer[BUFFER_SIZE];
     int bufferIndex;
     uint32_t bufferedRecordCount;

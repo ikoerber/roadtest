@@ -2,8 +2,9 @@
 
 Ein fortschrittliches Embedded-System zur Messung und Bewertung von Straßenqualität für kurvenreiche Motorradstrecken.
 
-Aktueller Firmwarestand: **1.5.23**. Der Stand ist ein Hardware- und
-Fahrzeugteststand; der kurze Recovery-Kontrolltest mit 1.5.23 steht noch aus.
+Aktueller Firmwarestand: **1.5.25**. Der Stand ist ein Hardware- und
+Fahrzeugteststand; der korrigierte Recovery- und Abtasttest mit 1.5.25 steht
+noch aus.
 
 ## 📋 Überblick
 
@@ -289,7 +290,7 @@ vorherigen OBD-Zustand wieder her und schließt alle SD-Dateien.
 ### Geführte Recovery-Kontrolle im Browser
 
 Die GPS-/OBD-Vergleichsfahrt aus 1.5.22 ist bestanden und deshalb nicht mehr
-Teil der Testseite. Firmware 1.5.23 führt unter `/acceptance` nur noch durch
+Teil der Testseite. Firmware 1.5.25 führt unter `/acceptance` nur noch durch
 den kurzen ECU-Recovery-Kontrolltest:
 
 1. 60 Sekunden echte Listen-Only-Phase bei ausgeschalteter Zündung
@@ -302,8 +303,10 @@ den kurzen ECU-Recovery-Kontrolltest:
 Die großen Aktionsknöpfe erscheinen nur für den gerade zulässigen Schritt und
 verschwinden nach erfolgreicher Speicherung. Laufende Werte werden als kleine
 Statusantwort abgefragt; das vollständige HTML wird nur bei einem
-Schrittwechsel geladen. Während dieses Tests ist keine Fahrt und keine
-Bedienung während der Fahrt nötig.
+Schrittwechsel geladen. Bleibt die HTTP-Bestätigung aus, wird der Knopf nach
+fünf Sekunden erneut bedienbar. Eine frische OBD-Drehzahl bestätigt den
+zweiten Motorstart außerdem unabhängig vom Browsermarker. Während dieses
+Tests ist keine Fahrt und keine Bedienung während der Fahrt nötig.
 
 ### Testberichte
 
@@ -658,6 +661,19 @@ Der priorisierte Backlog für gleichmäßigere Sensorabtastung und geringere
 Buslast steht in [OPTIMIERUNGEN.md](OPTIMIERUNGEN.md).
 
 ## 📈 Version History
+
+### v1.5.25 - Stabiler Recovery-Meilenstein
+- ✅ Ein erkannter ECU-Ausfall bleibt auch nach erfolgreicher Wiederverbindung
+  als abgeschlossener Abnahmeschritt erhalten
+- ✅ Keine Rückkehr zu „ECU-Ausfall abwarten“ nach erneutem Einschalten
+- ✅ Ausfallbewertung beginnt exakt beim Motor-Aus-Marker
+
+### v1.5.24 - Kritische Datenqualitätskorrekturen
+- ✅ `NewFix` zählt GNSS-Zeitepochen statt mehrfacher NMEA-Positionscommits
+- ✅ Phasentreue 10-Hz-/5-Hz-Zeitplanung mit Zählern für verlorene Slots
+- ✅ 8-KiB-Sensorpuffer und kontinuierliches Leeren des GPS-UART-Puffers
+- ✅ Vollständige Laufzeit- und SD-Zeitdiagnose mit Summe und Messanzahl
+- ✅ Automatische OBD-Bestätigung des zweiten Motorstarts
 
 ### v1.5.23 - Kurzer Recovery-Kontrolltest
 - ✅ Nur noch der offene ECU-Ausfall-/Wiederanlauf-Test unter `/acceptance`

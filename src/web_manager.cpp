@@ -191,6 +191,12 @@ bool WebManager::begin() {
         }
         const bool marked =
             vehicleDataDiscovery.markEngineStarted();
+        if (vehicleDataDiscovery.isActive() && sdLogger.isLogging()) {
+            sdLogger.logEvent(
+                "WEB_ACTION",
+                String("ENGINE_START;RESULT_") +
+                    (marked ? "OK" : "BLOCKED"));
+        }
         redirectAcceptance(!marked);
     });
 
@@ -200,6 +206,12 @@ bool WebManager::begin() {
         }
         const bool marked =
             vehicleDataDiscovery.markIgnitionOn();
+        if (vehicleDataDiscovery.isActive() && sdLogger.isLogging()) {
+            sdLogger.logEvent(
+                "WEB_ACTION",
+                String("IGNITION_ON;RESULT_") +
+                    (marked ? "OK" : "BLOCKED"));
+        }
         redirectAcceptance(!marked);
     });
 
@@ -209,6 +221,12 @@ bool WebManager::begin() {
         }
         const bool marked =
             vehicleDataDiscovery.markEngineStopped();
+        if (vehicleDataDiscovery.isActive() && sdLogger.isLogging()) {
+            sdLogger.logEvent(
+                "WEB_ACTION",
+                String("ENGINE_STOP;RESULT_") +
+                    (marked ? "OK" : "BLOCKED"));
+        }
         redirectAcceptance(!marked);
     });
 
@@ -219,6 +237,9 @@ bool WebManager::begin() {
         if (!vehicleDataDiscovery.isActive()) {
             redirectAcceptance(true);
             return;
+        }
+        if (sdLogger.isLogging()) {
+            sdLogger.logEvent("WEB_ACTION", "END;RESULT_OK");
         }
         vehicleDataDiscovery.end();
         redirectAcceptance(false, true);
@@ -682,8 +703,10 @@ uint8_t WebManager::getAcceptanceStage() const {
                    ? 8
                    : 7;
     }
-    if (vehicleDataDiscovery.getECUState() !=
-        ECUReachabilityState::LOST) {
+    // ECU-Ausfall ist ein abgeschlossener Meilenstein. Nach erfolgreicher
+    // Wiedererkennung darf die Seite nicht zurück zu "Ausfall abwarten"
+    // springen, nur weil der aktuelle ECU-Zustand wieder REACHABLE ist.
+    if (!vehicleDataDiscovery.hasObservedECULossAfterEngineStop()) {
         return 9;
     }
 
@@ -1065,7 +1088,11 @@ String WebManager::buildAcceptanceTestPage(
               "c.textContent='Statusverbindung unterbrochen';c.className='connection "
               "bad'}}}poll();setInterval(poll,2000);document.querySelectorAll('form')."
               "forEach(f=>f.addEventListener('submit',()=>{const b=f.querySelector("
-              "'button');if(b){b.disabled=true;b.textContent='Wird gespeichert …'}}));"
+              "'button');if(!b)return;const label=b.textContent;b.disabled=true;"
+              "b.textContent='Wird gespeichert …';setTimeout(()=>{if(!b.disabled)"
+              "return;b.disabled=false;b.textContent=label;const c=document."
+              "getElementById('connection');if(c){c.textContent='Keine Bestätigung · "
+              "Knopf erneut drücken';c.className='connection bad'}},5000)}));"
               "</script></body></html>");
     return page;
 }

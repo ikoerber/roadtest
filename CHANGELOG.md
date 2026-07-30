@@ -41,6 +41,53 @@ und dieses Projekt hält sich an [Semantic Versioning](https://semver.org/spec/v
   dokumentiert
 - Unsichere pauschale Angaben zu CAN-Versorgung und Busterminierung entfernt
 
+## [1.5.25] - 2026-07-30
+
+### Behoben
+- Die Abnahmeseite behandelt den nach dem Ausschaltmarker beobachteten
+  ECU-Ausfall jetzt als dauerhaft erreichten Meilenstein. Nach dem erneuten
+  Einschalten und erfolgreicher Wiedererkennung springt die Anzeige nicht
+  länger fälschlich zu „ECU-Ausfall abwarten“ zurück.
+- Der ECU-Ausfall wird relativ zum Zählerstand beim Motor-Aus-Marker
+  ausgewertet. Ein früherer transienter ECU-Ausfall kann den Schritt daher
+  nicht vorzeitig erfüllen.
+
+### Geändert
+- CSV-Schemakennung auf `1.5.25-quality-v7` aktualisiert; die Spaltenstruktur
+  bleibt gegenüber 1.5.24 unverändert.
+
+## [1.5.24] - 2026-07-30
+
+### Behoben
+- `NewFix` und `FixSequence` folgen jetzt der eindeutigen GNSS-Zeitepoche.
+  Mehrere RMC-/GGA-Commits derselben Empfängerepoche erzeugen keinen
+  zusätzlichen Positionsfix mehr.
+- Der zweite Motorstart des Recovery-Kontrolltests wird aus einer frischen
+  OBD-Drehzahl ab 300 U/min automatisch bestätigt, falls der zugehörige
+  Browser-POST ausbleibt.
+- Sensor- und GPS-Zeitpläne behalten nach einer kurzen Verzögerung ihre
+  Sollphase, statt die Verzögerung dauerhaft in alle Folgeintervalle zu
+  übernehmen.
+
+### Geändert
+- Der Sensor-Schreibpuffer umfasst 8 KiB und wird regulär über das vorhandene
+  Fünf-Sekunden-Sicherungsintervall geleert. Der frühere 512-Byte-Puffer
+  verursachte bereits nach wenigen 10-Hz-Zeilen einen synchronen SD-Zugriff.
+- GPS-UART-Zeichen werden in jeder Hauptschleife verarbeitet; nur der
+  Qualitäts-Snapshot bleibt auf 200 ms begrenzt. Hardware- und
+  Software-RX-Puffer wurden auf 2 beziehungsweise 4 KiB vergrößert.
+- Ein Stall zählt ab 250 statt 1.000 ms. Das CSV-Schema wurde auf
+  `1.5.24-quality-v7` angehoben.
+
+### Diagnose
+- Laufzeit-, Web- und SD-Diagnose protokollieren neben Letzt- und Maximalwert
+  nun auch Messanzahl und aufsummierte Dauer.
+- Jeder relevante SD-Schreib- und Flush-Zugriff wird zeitlich erfasst.
+- `SensorMissedSlots` und `GPSMissedSlots` zählen verfehlte Solltermine
+  unabhängig von der allgemeinen Stallgrenze.
+- Die Abnahmeseite protokolliert angenommene und abgelehnte Webaktionen. Nach
+  fünf Sekunden ohne HTTP-Bestätigung wird der Aktionsknopf wieder bedienbar.
+
 ## [1.5.23] - 2026-07-29
 
 ### Behoben

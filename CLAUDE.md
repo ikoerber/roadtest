@@ -1,7 +1,7 @@
 # ROADTEST Firmware
 
 ESP32-S3-Firmware zur Aufzeichnung von BNO055-, GPS-, Straßenqualitäts- und
-standardisierten OBD-II-Daten. Aktueller Firmwarestand: **1.5.23**.
+standardisierten OBD-II-Daten. Aktueller Firmwarestand: **1.5.25**.
 
 Der aktuelle Stand ist ein Hardware- und Fahrzeugteststand, nicht abschließend
 produktionsreif. Bekannte Einschränkungen stehen weiter unten.
@@ -162,8 +162,8 @@ git diff --check
 
 ## Aktueller Teststand
 
-- Firmware 1.5.23 baut erfolgreich für `lolin_s3_mini`.
-- Letzter Build: 60.956 Byte RAM (18,6 %) und 1.232.962 Byte Flash (94,1 %).
+- Firmware 1.5.25 baut erfolgreich für `lolin_s3_mini`.
+- Letzter Build: 70.740 Byte RAM (21,6 %) und 1.236.006 Byte Flash (94,3 %).
 - BNO055-Selbsttest, SD-Logging, WLAN, optionales OLED und MCP2515-
   Grundkommunikation wurden am System geprüft.
 - Am Porsche Carrera S, Baujahr 2012, PDK wurden standardisierte Antworten von
@@ -172,6 +172,10 @@ git diff --check
   `testdata/20260728_2300/TESTBERICHT_2026-07-28.md`.
 - Die aktuelle GPS-/OBD-Abnahme steht in
   `testdata/20260729_170946_05A4DB46/ABNAHME_AUSWERTUNG.md`.
+- Der Recovery-Kontrolllauf `20260730_062734_543E6ED0` bestätigte stabile
+  Web-, SD- und GPS-Aufzeichnung, zeigte aber einen verlorenen Browsermarker
+  beim zweiten Motorstart sowie weiterhin verfehlte Abtastslots. Diese Punkte
+  sind ab 1.5.24 korrigiert und noch am Gerät zu bestätigen.
 
 ## Verbindlicher Datenqualitätsfokus
 
@@ -193,7 +197,7 @@ priorisiert, wenn die GPS-/Standard-OBD-Basis reproduzierbar belastbar ist.
 
 ### OBD-Discovery
 
-- 1.5.23 führt einen eigenen ECU-Zustand und eine begrenzte Wiedererkennung
+- 1.5.25 führt einen eigenen ECU-Zustand und eine begrenzte Wiedererkennung
   nach erfolglosem Scan oder drei aufeinanderfolgenden tatsächlichen
   Anfragefehlern. Eine reine lokale Programmpause löst keinen ECU-Verlust aus.
 - Die sichere Rückfallrunde verwendet ausschließlich `0x0C`, `0x0D`, `0x11`
@@ -209,9 +213,16 @@ priorisiert, wenn die GPS-/Standard-OBD-Basis reproduzierbar belastbar ist.
 - Die Vergleichsfahrt `20260729_170946_05A4DB46` bestätigte GPS-/OBD-
   Geschwindigkeit und Strecke. Die dabei beobachteten, webseitig ausgelösten
   Messpausen werden mit 1.5.23 gezielt vermieden und protokolliert.
+- Falls der zweite Browsermarker verloren geht, bestätigt 1.5.24 den
+  Motorneustart automatisch aus einer frischen OBD-Drehzahl ab 300 U/min.
+  Webaktionen werden mit ihrem Ergebnis protokolliert.
+- Ein nach dem Motor-Aus-Marker beobachteter ECU-Ausfall bleibt in 1.5.25
+  auch nach erfolgreicher Wiedererkennung als abgeschlossener Abnahmeschritt
+  erhalten.
 
 Nächster sinnvoller Schritt: kurzer ECU-Recovery-Kontrolltest im Stand über
-`/acceptance` mit 1.5.23; eine weitere Vergleichsfahrt ist dafür nicht nötig.
+`/acceptance` mit 1.5.25 und anschließende Prüfung der Abtast- und
+`MissedSlots`-Zähler; eine weitere kurze Vergleichsfahrt ist dafür nicht nötig.
 
 ### GPS
 
@@ -225,7 +236,8 @@ Nächster sinnvoller Schritt: kurzer ECU-Recovery-Kontrolltest im Stand über
   feldbezogenen Valid-Flags dürfen für Auswertungen verwendet werden;
   `RejectionReason` ist eine kombinierbare Bitmaske.
 - Die Aufzeichnung schreibt bewusst alle 200 ms einen Qualitäts-Snapshot;
-  `NewFix` unterscheidet neue Positionen von Wiederholungen.
+  `NewFix` zählt seit 1.5.24 eindeutige GNSS-Zeitepochen statt mehrfacher
+  RMC-/GGA-Commits derselben Epoche.
 
 Der Einbau unter dem Vordersitz wurde in `20260729_170946_05A4DB46` mit
 10 bis 12 Satelliten, HDOP-Median 0,89 und vollständiger zeitlicher
@@ -234,8 +246,10 @@ Positionssprungbewertung und ereignisorientiertes Logging bleiben offen.
 
 ### Messqualität
 
-- Effektive BNO055-Abtastrate lag im Fahrzeugtest bei ungefähr 8,5 statt
-  vorgesehenen 10 Hz.
+- Effektive BNO055-Abtastrate lag im Fahrzeugtest mit 1.5.22 bei ungefähr 8,5
+  statt vorgesehenen 10 Hz. 1.5.24 vergrößert den Sensorpuffer, hält die
+  Zeitplanphase stabil und zählt verfehlte Sensor- und GPS-Slots; die
+  Wirksamkeit muss noch am Gerät bestätigt werden.
 - Schlaglochereignisse sind noch nicht an eine Mindestgeschwindigkeit
   gekoppelt und können daher im Stand ausgelöst werden.
 - Absolute Kurswerte benötigen eine ausreichende Magnetometer- und

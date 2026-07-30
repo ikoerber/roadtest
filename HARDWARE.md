@@ -8,7 +8,7 @@ Signalbezeichnungen auf den Modulen. Kabelfarben sind nicht verbindlich.
 
 | Baugruppe | Ausführung | Verwendung |
 |---|---|---|
-| Controller | LOLIN S3 Mini, ESP32-S3, 4 MB Flash | Firmware, WLAN und OTA |
+| Controller | ESP32-S3-Board, genaue Variante per `diag` prüfen | Firmware, WLAN und OTA |
 | Bewegungssensor | Adafruit BNO055 Breakout | NDOF-Sensorfusion |
 | Display, optional | SSD1306 OLED, 128 × 64 | Steckbare I²C-Statusanzeige |
 | GPS | Beitian BN-880 | NMEA über UART, 9600 Baud |
@@ -50,7 +50,7 @@ Signalbezeichnungen auf den Modulen. Kabelfarben sind nicht verbindlich.
 
 Diese Tabelle entspricht `src/hardware_config.cpp`:
 
-| LOLIN S3 Mini | Richtung | Modulanschluss | Funktion |
+| ESP32-S3 GPIO | Richtung | Modulanschluss | Funktion |
 |---|---:|---|---|
 | GPIO 8 | ↔ | BNO055 SDA und OLED SDA | I²C-Daten |
 | GPIO 9 | → | BNO055 SCL und OLED SCL | I²C-Takt, 100 kHz |
@@ -60,11 +60,11 @@ Diese Tabelle entspricht `src/hardware_config.cpp`:
 | GPIO 5 | → | SD MOSI/DI | SD-Daten zum Modul |
 | GPIO 6 | ← | SD MISO/DO | SD-Daten zum ESP32 |
 | GPIO 7 | → | SD SCLK/CLK | SD-Takt |
-| GPIO 1 | → | MCP2515 CS | CAN Chip Select, optional |
-| GPIO 2 | ← | MCP2515 INT | CAN Interrupt, optional |
-| GPIO 3 | → | MCP2515 SCK | CAN SPI-Takt, optional |
-| GPIO 13 | → | MCP2515 SI/MOSI | CAN-Daten zum Modul, optional |
-| GPIO 11 | ← | MCP2515 SO/MISO | CAN-Daten zum ESP32, optional |
+| GPIO 1 | → | MCP2515 CS | CAN Chip Select |
+| GPIO 2 | ← | MCP2515 INT | CAN Interrupt |
+| GPIO 3 | → | MCP2515 SCK | CAN SPI-Takt; GPIO 3 ist ein Strapping-Pin |
+| GPIO 13 | → | MCP2515 SI/MOSI | CAN-Daten zum Modul |
+| GPIO 11 | ← | MCP2515 SO/MISO | CAN-Daten zum ESP32 |
 
 TX und RX werden beim GPS gekreuzt: **GPS-TX geht an ESP32-RX (GPIO 16)** und
 **GPS-RX an ESP32-TX (GPIO 15)**.
@@ -73,7 +73,7 @@ TX und RX werden beim GPS gekreuzt: **GPS-TX geht an ESP32-RX (GPIO 16)** und
 
 | Baugruppe | Anschluss im aktuellen Aufbau |
 |---|---|
-| LOLIN S3 Mini | USB-C oder vorhandener LiPo-Akkuanschluss des Boards |
+| ESP32-S3-Controller | USB-C oder vorhandener LiPo-Akkuanschluss des Boards |
 | BNO055 | geregelte 3,3 V an `VIN`, GND an GND |
 | OLED, optional | geregelte 3,3 V an `VCC`, GND an GND |
 | BN-880 | geregelte 3,3 V an `VCC`, GND an GND |
@@ -97,7 +97,7 @@ Hintergrund automatisch. Wegen des gemeinsam mit dem BNO055 genutzten
 I²C-Busses darf der Stecker nur bei ausgeschaltetem System betätigt werden.
 
 ```text
-LOLIN S3 Mini       BNO055                 SSD1306 OLED
+ESP32-S3 GPIO       BNO055                 SSD1306 OLED
 -------------       ------                 ------------
 GPIO 8              SDA                    SDA
 GPIO 9              SCL                    SCL
@@ -111,7 +111,7 @@ GND                  GND                    GND
 |---|---|
 | `3Vo` | nicht anschließen; dies ist ein Ausgang des Breakout-Reglers |
 | `ADR` | **auf 3,3 V gelegt, dadurch Adresse `0x29`** (nicht die Adafruit-Standardadresse 0x28) |
-| `RST` | nicht angeschlossen; die Firmware initialisiert den Sensor über I²C neu |
+| `RST` | extern nicht angeschlossen; der auf dem Breakout vorhandene 10-kΩ-Pull-up hält Reset inaktiv |
 | `PS0`, `PS1` | nicht angeschlossen; beim Adafruit-Breakout standardmäßig I²C |
 | `INT` | nicht verwendet |
 
@@ -128,11 +128,13 @@ Die erwarteten I²C-Adressen sind:
   die Chip-ID `0xA0`. `diag` gibt die feste Adresse aus.
 - OLED: `0x3C`, alternativ wird `0x3D` geprüft
 
-Die Breakout-Module besitzen bereits I²C-Pull-ups. Die Parallelschaltung im
-fertigen Aufbau ergibt **2,54 kΩ** gegen 3,3 V, an SDA wie an SCL (gemessen am
-28. Juli 2026, spannungsfrei). Der Wert liegt im empfohlenen Fenster von 2,2
-bis 4,7 kΩ; im gezogenen Zustand fließen rund 1,3 mA, deutlich unter den 3 mA
-der I²C-Spezifikation. **Zusätzliche Pull-ups sind nicht erforderlich.**
+Das Adafruit-BNO055-Breakout besitzt bereits je einen **10-kΩ-Pull-up an SDA
+und SCL** sowie einen **10-kΩ-Pull-up an RST**. Die parallelen Pull-ups der
+angeschlossenen Breakout-Module ergeben im fertigen Aufbau effektiv
+**2,54 kΩ** gegen 3,3 V, an SDA wie an SCL (gemessen am 28. Juli 2026,
+spannungsfrei). Der Wert liegt im empfohlenen Fenster von 2,2 bis 4,7 kΩ; im
+gezogenen Zustand fließen rund 1,3 mA, deutlich unter den 3 mA der
+I²C-Spezifikation. **Zusätzliche externe Pull-ups sind nicht erforderlich.**
 
 Zur Flankenreserve: Die Anstiegszeit beträgt näherungsweise 2,2 · R · C. Bei
 2,54 kΩ bleibt der Bus bis etwa 180 pF innerhalb der 1000 ns, die der Basistakt
@@ -145,23 +147,26 @@ Display arbeitet zwar einwandfrei; sollten dort je Artefakte auftreten, ist
 ## GPS BN-880
 
 ```text
-LOLIN S3 Mini       BN-880
--------------       ------
+ESP32-S3 GPIO       BN-880, 6-Pin
+-------------       ---------------
 GPIO 16 (RX)        TX
 GPIO 15 (TX)        RX
 3,3 V               VCC
 GND                  GND
-nicht verbunden     PPS
+nicht verbunden     SCL
+nicht verbunden     SDA
 ```
 
 Die Firmware verarbeitet NMEA-Daten mit 9600 Baud und benötigt keinen GPS-Fix
-für die Systembereitschaft. Der PPS-Ausgang des BN-880 wird von der aktuellen
-Firmware nicht ausgewertet und bleibt unbeschaltet.
+für die Systembereitschaft. Die am fotografierten 6-poligen Anschluss
+zusätzlich vorhandenen Leitungen `SCL` und `SDA` gehören zur optionalen
+Kompass-Schnittstelle des Moduls. Sie werden von der aktuellen Firmware nicht
+ausgewertet und bleiben unbeschaltet.
 
 ## PZSMOCN Micro-SD-Modul
 
 ```text
-LOLIN S3 Mini       PZSMOCN SD-Modul
+ESP32-S3 GPIO       PZSMOCN SD-Modul
 -------------       -----------------
 GPIO 4              CS
 GPIO 5              MOSI / DI
@@ -199,7 +204,7 @@ GPIO 11             SO / MISO
 GND                  GND
 ```
 
-Version 1.5.11 verwendet das Modul mit ISO 15765-4 CAN, 11-Bit-Identifiern und
+Version 1.5.23 verwendet das Modul mit ISO 15765-4 CAN, 11-Bit-Identifiern und
 500 kbit/s. Sie sendet höchstens zweimal pro Sekunde eine funktionale,
 standardisierte OBD-Anfrage auf `0x7DF`: Service 01, PID `0x0C` (Drehzahl),
 `0x0D` (Geschwindigkeit) oder `0x11` (Drosselklappe). Akzeptiert werden
@@ -289,14 +294,14 @@ Für einen späteren Fahrzeuganschluss:
 
 ## Inbetriebnahme-Checkliste
 
-- [ ] LOLIN S3 Mini wird über USB-C oder den vorhandenen Akkuanschluss versorgt.
+- [ ] ESP32-S3-Controller wird über USB-C oder den vorhandenen Akkuanschluss versorgt.
 - [ ] An der 3,3-V-Schiene liegen ungefähr 3,3 V gegen GND an.
 - [ ] Alle Module teilen dieselbe Masse.
 - [ ] I²C: GPIO 8 = SDA und GPIO 9 = SCL.
 - [ ] BNO055 antwortet auf `0x29` (ADR liegt auf 3,3 V).
 - [ ] Optionales OLED: nur ausgeschaltet stecken; verbunden antwortet es auf `0x3C` oder `0x3D`.
 - [ ] GPS-TX ist mit GPIO 16 verbunden und liefert NMEA-Daten.
-- [ ] GPS-RX ist mit GPIO 15 verbunden; PPS bleibt frei.
+- [ ] GPS-RX ist mit GPIO 15 verbunden; die BN-880-Leitungen SCL und SDA bleiben frei.
 - [ ] SD: CS 4, MOSI 5, MISO 6 und SCLK 7.
 - [ ] PZSMOCN SD-Modul wird mit 3,3 V versorgt.
 - [ ] CAN-Modul: `VCC` führt 3,3 V, `VCC1` führt 5 V (einzeln gegen GND messen).
@@ -315,7 +320,8 @@ Für einen späteren Fahrzeuganschluss:
    Antwortet stattdessen `0x28`, ist die ADR-Brücke nach 3,3 V offen.
 4. Steckverbindungen und Lötstellen bewegen beziehungsweise auf Durchgang
    prüfen.
-5. Erst danach zusätzliche Pull-ups in Betracht ziehen.
+5. Spannungsfrei den Widerstand von SDA und SCL gegen 3,3 V prüfen. Erwartet
+   werden im fertigen Aufbau etwa 2,54 kΩ; keine weiteren Pull-ups ergänzen.
 
 Fehlt ausschließlich das OLED, darf die Webseite trotzdem `System: bereit`
 anzeigen und die Aufzeichnung muss funktionieren.
@@ -334,7 +340,8 @@ anzeigen und die Aufzeichnung muss funktionieren.
 2. Gemeinsame Masse und 3,3-V-Versorgung kontrollieren.
 3. Für einen Fix freie Sicht zum Himmel schaffen und nach einem Kaltstart bis
    zu einigen Minuten warten.
-4. Ein fehlender PPS-Impuls verhindert den NMEA-Empfang nicht.
+4. Die BN-880-Leitungen `SCL` und `SDA` bleiben in diesem Aufbau frei; für
+   NMEA werden nur `TX`, `RX`, `VCC` und `GND` benötigt.
 
 ### CAN
 

@@ -36,6 +36,7 @@ VehicleDataDiscovery::VehicleDataDiscovery()
       liveResponseBaseline(0),
       recoveryCount(0),
       ecuLossCount(0),
+      ecuLossCountAtEngineStop(0),
       scanRequestIndex(0),
       liveRequestIndex(0),
       recoveryRequestIndex(0),
@@ -116,6 +117,7 @@ bool VehicleDataDiscovery::begin() {
     liveResponseBaseline = 0;
     recoveryCount = 0;
     ecuLossCount = 0;
+    ecuLossCountAtEngineStop = 0;
     ecuState = ECUReachabilityState::UNKNOWN;
     ecuFirstReachableAt = 0;
     ecuLastReachableAt = 0;
@@ -250,6 +252,53 @@ void VehicleDataDiscovery::updateAcceptanceEngineState(
 
     const OBDLiveData obd = canReader.getOBDData();
     if (!obd.rpmValid || obd.rpm < 300.0f) {
+        return;
+    }
+
+    // Der Browser-Marker verbessert die Bediennachvollziehbarkeit, darf aber
+    // nicht die reale OBD-Erkennung blockieren. Im Kontrolltest vom
+    // 30.07.2026 ging genau der zweite POST verloren, obwohl anschließend
+    // 99 gültige Drehzahlwerte vorlagen. Eine frische Drehzahl nach dem
+    // Zündungsmarker ist der stärkere technische Nachweis.
+    if (engineRestartMarkedAt == 0 &&
+        ignitionRestartMarkedAt > 0 &&
+        obd.rpmUpdatedMs > ignitionRestartMarkedAt &&
+        obd.rpmUpdatedMs <= now) {
+        if (!addMarker("ABNAHME_MOTOR_NEU_AUTOMATISCH_ERKANNT")) {
+            return;
+        }
+        engineRestartMarkedAt = ignitionRestartMarkedAt;
+        detectionAfterEngineRestartMs =
+            obd.rpmUpdatedMs - ignitionRestartMarkedAt;
+        if (sdLogger.isLogging()) {
+            sdLogger.logEvent(
+                "ENGINE_STATE",
+                String("MOTOR_NEU_LAEUFT;RPM_") +
+                    String(obd.rpm, 0) + ";DETECTION_MS_" +
+                    String(detectionAfterEngineRestartMs) +
+                    ";SOURCE_AUTO_RPM");
+        }
+        return;
+    }
+    if (engineStartMarkedAt == 0 &&
+        ignitionOnMarkedAt > 0 &&
+        engineStopMarkedAt == 0 &&
+        obd.rpmUpdatedMs > ignitionOnMarkedAt &&
+        obd.rpmUpdatedMs <= now) {
+        if (!addMarker("ABNAHME_MOTOR_AUTOMATISCH_ERKANNT")) {
+            return;
+        }
+        engineStartMarkedAt = ignitionOnMarkedAt;
+        detectionAfterEngineStartMs =
+            obd.rpmUpdatedMs - ignitionOnMarkedAt;
+        if (sdLogger.isLogging()) {
+            sdLogger.logEvent(
+                "ENGINE_STATE",
+                String("MOTOR_LAEUFT;RPM_") +
+                    String(obd.rpm, 0) + ";DETECTION_MS_" +
+                    String(detectionAfterEngineStartMs) +
+                    ";SOURCE_AUTO_RPM");
+        }
         return;
     }
 
@@ -690,6 +739,7 @@ bool VehicleDataDiscovery::markEngineStopped() {
         return false;
     }
     engineStopMarkedAt = now;
+    ecuLossCountAtEngineStop = ecuLossCount;
     return true;
 }
 

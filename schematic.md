@@ -9,8 +9,8 @@ elektrischen Hinweise stehen in [HARDWARE.md](HARDWARE.md).
 
 ```mermaid
 flowchart TB
-    MCU["LOLIN S3 Mini<br/>ESP32-S3, 4 MB"]
-    BNO["BNO055<br/>NDOF, Adresse 0x29"]
+    MCU["ESP32-S3 Controller<br/>Boardtyp per diag prüfen"]
+    BNO["Adafruit BNO055 Breakout<br/>NDOF, Adresse 0x29<br/>onboard: 10 kΩ an SDA, SCL und RST"]
     OLED["SSD1306 OLED<br/>steckbar, optional<br/>Adresse 0x3C/0x3D"]
     GPS["BN-880 GPS<br/>UART, 9600 Baud"]
     SD["PZSMOCN Micro-SD<br/>SPI, 3,3 V"]
@@ -53,7 +53,7 @@ flowchart TB
     GND --> CAN
 ```
 
-Firmware 1.5.11 fragt über ISO 15765-4 CAN mit 11-Bit-Identifiern und
+Firmware 1.5.23 fragt über ISO 15765-4 CAN mit 11-Bit-Identifiern und
 500 kbit/s ausschließlich OBD-Service-01-Livewerte ab. `P1` bleibt am
 Fahrzeug offen; CAN-H geht an OBD-Pin 6, CAN-L an OBD-Pin 14.
 
@@ -61,30 +61,47 @@ Fahrzeug offen; CAN-H geht an OBD-Pin 6, CAN-L an OBD-Pin 14.
 
 | GPIO | Signal | Ziel |
 |---:|---|---|
-| 1 | CAN CS | MCP2515, optional |
-| 2 | CAN INT | MCP2515, optional |
-| 3 | CAN SCK | MCP2515, optional |
+| 1 | CAN CS | MCP2515 |
+| 2 | CAN INT | MCP2515 |
+| 3 | CAN SCK | MCP2515; ESP32-S3-Strapping-Pin |
 | 4 | SD CS | PZSMOCN SD-Modul |
 | 5 | SD MOSI | PZSMOCN SD-Modul |
 | 6 | SD MISO | PZSMOCN SD-Modul |
 | 7 | SD SCLK | PZSMOCN SD-Modul |
 | 8 | I²C SDA | BNO055 und OLED |
 | 9 | I²C SCL | BNO055 und OLED |
-| 11 | CAN MISO | MCP2515, optional |
-| 13 | CAN MOSI | MCP2515, optional |
+| 11 | CAN MISO | MCP2515 |
+| 13 | CAN MOSI | MCP2515 |
 | 15 | UART TX | BN-880 RX |
 | 16 | UART RX | BN-880 TX |
 
 ## Nicht verwendete Signale
 
-- BNO055: `3Vo`, `RST`, `PS0`, `PS1` und `INT`
-- BN-880: `PPS`
+- BNO055: `3Vo`, `RST`, `PS0`, `PS1` und `INT`; `RST` wird durch den
+  vorhandenen 10-kΩ-Pull-up des Breakouts high gehalten
+- BN-880: `SCL` und `SDA` des fotografierten 6-poligen Anschlusses
 - MCP2515/CAN: keine DTC-Löschung, Codierung oder Stellgliedansteuerung
 
 ## Versorgung
 
-- LOLIN S3 Mini: USB-C oder vorhandener LiPo-Akkuanschluss
+- ESP32-S3-Controller: USB-C oder vorhandener LiPo-Akkuanschluss
 - BNO055, OLED, BN-880 und PZSMOCN SD-Modul: geregelte 3,3 V
 - Alle Baugruppen: gemeinsame Masse
 - Keine 5-V-Signale an ESP32-S3-GPIOs
 - CAN-Modul: `VCC` 3,3 V, `VCC1` 5 V, gemeinsame Masse
+
+## BNO055-Pull-ups
+
+Das Adafruit-Breakout enthält je **10 kΩ von SDA und SCL nach 3Vo** sowie
+**10 kΩ von RST nach 3Vo**. Der RST-Header bleibt extern offen. Am
+vollständigen I²C-Bus wurden durch die parallelen Modulwiderstände effektiv
+2,54 kΩ gegen 3,3 V gemessen. Deshalb werden keine zusätzlichen externen
+SDA-/SCL-Pull-ups bestückt.
+
+## BN-880-Anschluss
+
+Das fotografierte BN-880 besitzt einen 6-poligen Anschluss. Benutzt werden
+`VCC`, `GND`, `TX` und `RX`; die zusätzlichen Leitungen `SCL` und `SDA` für
+die optionale Kompass-Schnittstelle bleiben frei. Maßgeblich sind die
+Beschriftungen am Modul, nicht Kabelfarben oder eine generische
+Steckernummerierung.

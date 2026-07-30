@@ -51,6 +51,8 @@ constexpr unsigned long CAN_RECOVERY_RETRY_INTERVAL = 10000;
 constexpr uint8_t CAN_MODE_FAILURE_LIMIT = 2;
 constexpr unsigned long BOOT_STATUS_INTERVAL = 1000;
 constexpr unsigned long BOOT_READY_HOLD_TIME = 2500;
+constexpr unsigned long SENSOR_SAMPLE_INTERVAL_MS = 100;
+constexpr unsigned long GPS_SNAPSHOT_INTERVAL_MS = 200;
 unsigned long lastHardwareCheck = 0;
 unsigned long lastGPSRestart = 0;
 unsigned long lastCANRecoveryAttempt = 0;
@@ -1306,12 +1308,25 @@ void loop() {
     unsigned long currentTime = millis();
     handleHardwareRecovery(currentTime);
     gpsAvailable = gpsManager.isReady();
+    // Den UART-Ringpuffer in jeder Schleifenrunde leeren. Die 200-ms-Grenze
+    // gilt nur für CSV-Snapshots, nicht für den Empfang der NMEA-Zeichen.
+    if (gpsAvailable) {
+        gpsManager.update();
+    }
+    currentTime = millis();
     
     // BNO055 Sensor-Daten lesen (alle 100ms)
     if (bnoManager.isSelfTestPassed() &&
         bnoManager.isFusionModeActive() &&
         bnoManager.isDataValid() &&
-        (currentTime - lastSensorRead >= 100)) {
+        (currentTime - lastSensorRead >= SENSOR_SAMPLE_INTERVAL_MS)) {
+        const bool firstSensorSample = lastSensorRead == 0;
+        const unsigned long sensorElapsed =
+            firstSensorSample
+                ? SENSOR_SAMPLE_INTERVAL_MS
+                : currentTime - lastSensorRead;
+        runtimeDiagnostics.recordSensorSchedule(
+            sensorElapsed, SENSOR_SAMPLE_INTERVAL_MS);
         SensorData sensorData = bnoManager.getCurrentData();
         lastSensorData = sensorData;  // Für Zeitkorrelation speichern
         bnoManager.processSample(sensorData);
@@ -1358,13 +1373,31 @@ void loop() {
                           bnoManager.getCurveAngle());
         }
         
-        lastSensorRead = currentTime;
+        if (firstSensorSample) {
+            lastSensorRead = currentTime;
+        } else {
+            lastSensorRead +=
+                max(
+                    sensorElapsed / SENSOR_SAMPLE_INTERVAL_MS,
+                    1UL) *
+                SENSOR_SAMPLE_INTERVAL_MS;
+        }
+        if (lastSensorRead > currentTime) {
+            lastSensorRead = currentTime;
+        }
     }
     
     // GPS-Daten verarbeiten (alle 200ms)
     // Im Interrupt-Modus verarbeitet update() die gepufferten Daten
-    if (gpsAvailable && (currentTime - lastGPSUpdate >= 200)) {
-        gpsManager.update();  // Verarbeitet Interrupt-Buffer
+    if (gpsAvailable &&
+        (currentTime - lastGPSUpdate >= GPS_SNAPSHOT_INTERVAL_MS)) {
+        const bool firstGPSSnapshot = lastGPSUpdate == 0;
+        const unsigned long gpsElapsed =
+            firstGPSSnapshot
+                ? GPS_SNAPSHOT_INTERVAL_MS
+                : currentTime - lastGPSUpdate;
+        runtimeDiagnostics.recordGPSSchedule(
+            gpsElapsed, GPS_SNAPSHOT_INTERVAL_MS);
 
         if (!gpsClockSynced && gpsManager.hasValidDateTime()) {
             gpsClockSynced = gpsManager.syncSystemClock();
@@ -1382,7 +1415,18 @@ void loop() {
             sdLogger.logGPSData(gpsData);
         }
         
-        lastGPSUpdate = currentTime;
+        if (firstGPSSnapshot) {
+            lastGPSUpdate = currentTime;
+        } else {
+            lastGPSUpdate +=
+                max(
+                    gpsElapsed / GPS_SNAPSHOT_INTERVAL_MS,
+                    1UL) *
+                GPS_SNAPSHOT_INTERVAL_MS;
+        }
+        if (lastGPSUpdate > currentTime) {
+            lastGPSUpdate = currentTime;
+        }
     }
 
     if (!gpsManager.isCommunicating()) {

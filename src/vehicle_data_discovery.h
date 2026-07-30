@@ -59,6 +59,7 @@ private:
     uint32_t liveResponseBaseline;
     uint16_t recoveryCount;
     uint16_t ecuLossCount;
+    uint16_t ecuLossCountAtEngineStop;
     uint8_t scanRequestIndex;
     uint8_t liveRequestIndex;
     uint8_t recoveryRequestIndex;
@@ -126,6 +127,10 @@ public:
     const char* getECUStateName() const;
     uint16_t getRecoveryCount() const { return recoveryCount; }
     uint16_t getECULossCount() const { return ecuLossCount; }
+    bool hasObservedECULossAfterEngineStop() const {
+        return engineStopMarkedAt > 0 &&
+               ecuLossCount > ecuLossCountAtEngineStop;
+    }
     unsigned long getEngineStartMarkedAt() const {
         return engineStartMarkedAt;
     }

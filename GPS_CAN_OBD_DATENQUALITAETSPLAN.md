@@ -263,10 +263,14 @@ Bei der Streckenbildung bestätigt eine frische OBD-Geschwindigkeit bis
 1 km/h den Fahrzeugstillstand; ohne OBD ist eine gültige GPS-Geschwindigkeit
 der Bewegungsnachweis.
 
-Firmware 1.5.23 reduziert `/acceptance` nach der bestandenen Vergleichsfahrt
+Firmware 1.5.25 reduziert `/acceptance` nach der bestandenen Vergleichsfahrt
 auf den noch offenen ECU-Recovery-Kontrolltest. Die Seite überträgt während
-der Messung nur kleine Statusantworten und protokolliert Laufzeit-, Web- und
-SD-Pausen in den Sitzungsmetadaten.
+der Messung nur kleine Statusantworten. Eine frische OBD-Drehzahl kann den
+zweiten Motorstart unabhängig vom Browsermarker bestätigen. Laufzeit-, Web-
+und alle relevanten SD-Zeiten werden mit Summe und Anzahl protokolliert;
+verfehlte 10-Hz-Sensor- und 5-Hz-GPS-Termine besitzen eigene Sitzungszähler.
+Ein nach dem Motor-Aus-Marker beobachteter ECU-Ausfall bleibt beim
+anschließenden Wiederanlauf als abgeschlossener Meilenstein gespeichert.
 
 #### Firmware
 

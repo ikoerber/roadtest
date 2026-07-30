@@ -25,8 +25,8 @@ GPSManager::GPSManager() :
     baudRate(9600), lastDataUpdate(0), lastCharacterUpdate(0),
     lastNMEAStartUpdate(0), dataReady(false),
     interruptEnabled(false), rxIndex(0), rxProcessIndex(0),
-    rxBufferOverflows(0), hasObservedLocationCommit(false),
-    lastLocationCommitMs(0), fixSequence(0),
+    rxBufferOverflows(0), hasObservedFixEpoch(false),
+    lastFixEpochKey(0), fixSequence(0),
     lastDeliveredFixSequence(0) {
     
     // Status initialisieren
@@ -72,6 +72,11 @@ bool GPSManager::begin(int rx, int tx, uint32_t baud) {
     Serial.printf("UART2: RX=%d, TX=%d, Baud=%lu\n", rxPin, txPin, baudRate);
     
     // Hardware UART2 initialisieren
+    // Hardware-UART und nachgelagerter Software-Ringpuffer besitzen getrennte
+    // Reserven. setRxBufferSize() muss vor begin() erfolgen.
+    if (!Serial2.setRxBufferSize(UART_RX_BUFFER_SIZE)) {
+        Serial.println("⚠️ GPS-Hardware-RX-Puffer konnte nicht vergrößert werden");
+    }
     Serial2.begin(baudRate, SERIAL_8N1, rxPin, txPin);
     serial = &Serial2;
     
@@ -648,14 +653,18 @@ void GPSManager::updateStatus() {
             ? writeIndex - readIndex
             : RX_BUFFER_SIZE - readIndex + writeIndex);
 
-    if (gps.location.isValid()) {
-        const uint32_t now = millis();
-        const uint32_t locationCommitMs =
-            now - gps.location.age();
-        if (!hasObservedLocationCommit ||
-            locationCommitMs != lastLocationCommitMs) {
-            hasObservedLocationCommit = true;
-            lastLocationCommitMs = locationCommitMs;
+    // RMC und GGA können dieselbe Positionsepoche nacheinander committen.
+    // Ein Positions-Commit oder eine veränderte Koordinate ist deshalb kein
+    // belastbarer "neuer Fix". Die GNSS-Zeit identifiziert die gemeinsame
+    // Empfängerepoche auch bei identischer Position im Stillstand eindeutig.
+    if (gps.location.isValid() && gps.time.isValid()) {
+        uint64_t epochKey = gps.time.centisecond();
+        epochKey += static_cast<uint64_t>(gps.time.second()) * 100ULL;
+        epochKey += static_cast<uint64_t>(gps.time.minute()) * 6000ULL;
+        epochKey += static_cast<uint64_t>(gps.time.hour()) * 360000ULL;
+        if (!hasObservedFixEpoch || epochKey != lastFixEpochKey) {
+            hasObservedFixEpoch = true;
+            lastFixEpochKey = epochKey;
             fixSequence++;
         }
     }

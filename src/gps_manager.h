@@ -97,13 +97,14 @@ private:
     static GPSManager* instance;  // Für statische Interrupt-Handler
     volatile bool dataReady;
     volatile bool interruptEnabled;
-    static const size_t RX_BUFFER_SIZE = 2048;
+    static const size_t UART_RX_BUFFER_SIZE = 2048;
+    static const size_t RX_BUFFER_SIZE = 4096;
     volatile uint8_t rxBuffer[RX_BUFFER_SIZE];
     volatile size_t rxIndex;
     volatile size_t rxProcessIndex;
     volatile uint32_t rxBufferOverflows;
-    bool hasObservedLocationCommit;
-    uint32_t lastLocationCommitMs;
+    bool hasObservedFixEpoch;
+    uint64_t lastFixEpochKey;
     uint32_t fixSequence;
     uint32_t lastDeliveredFixSequence;
     

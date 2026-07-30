@@ -1,591 +1,235 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<mxfile host="app.diagrams.net" modified="2024-01-01T00:00:00.000Z" agent="ESP32-S3 Road Quality System" etag="roadtest_v1" version="21.2.8" type="device">
-  <diagram name="ESP32-S3 Schaltplan" id="esp32-roadtest">
-    <mxGraphModel dx="1426" dy="794" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1169" pageHeight="827" math="0" shadow="0">
+<mxfile host="app.diagrams.net" modified="2026-07-29T12:00:00.000Z" agent="Codex ROADTEST hardware review" etag="roadtest-2026-07-29" version="24.7.17" type="device">
+  <diagram name="Aktiver Aufbau" id="roadtest-active">
+    <mxGraphModel dx="1600" dy="1000" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="1000" math="0" shadow="0">
       <root>
-        <mxCell id="0" />
-        <mxCell id="1" parent="0" />
-        
-        <!-- ESP32-S3 Hauptcontroller -->
-        <mxCell id="esp32" value="ESP32-S3&#xa;DevKit-C1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontStyle=1;fontSize=14;" vertex="1" parent="1">
-          <mxGeometry x="500" y="300" width="160" height="200" as="geometry" />
+        <mxCell id="a0"/>
+        <mxCell id="a1" parent="a0"/>
+
+        <mxCell id="a-title" value="ROADTEST – aktiver Aufbau" style="text;html=1;align=center;verticalAlign=middle;fontStyle=1;fontSize=24;fontColor=#1F2937;" vertex="1" parent="a1">
+          <mxGeometry x="390" y="20" width="820" height="40" as="geometry"/>
         </mxCell>
-        
-        <!-- Pin Labels ESP32 Links -->
-        <mxCell id="pin-gpio8" value="GPIO8 (SDA)" style="text;html=1;strokeColor=none;fillColor=none;align=right;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;" vertex="1" parent="1">
-          <mxGeometry x="430" y="320" width="60" height="20" as="geometry" />
+        <mxCell id="a-subtitle" value="Nach Modulaufnahmen, Firmwarebelegung und Messwerten · Stand 29.07.2026" style="text;html=1;align=center;verticalAlign=middle;fontSize=12;fontColor=#4B5563;" vertex="1" parent="a1">
+          <mxGeometry x="390" y="60" width="820" height="30" as="geometry"/>
         </mxCell>
-        <mxCell id="pin-gpio9" value="GPIO9 (SCL)" style="text;html=1;strokeColor=none;fillColor=none;align=right;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;" vertex="1" parent="1">
-          <mxGeometry x="430" y="340" width="60" height="20" as="geometry" />
+
+        <mxCell id="a-bno" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F4FD;strokeColor=#2F80C0;strokeWidth=2;" vertex="1" parent="a1">
+          <mxGeometry x="40" y="130" width="500" height="520" as="geometry"/>
         </mxCell>
-        <mxCell id="pin-gpio16" value="GPIO16 (RX)" style="text;html=1;strokeColor=none;fillColor=none;align=right;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;" vertex="1" parent="1">
-          <mxGeometry x="430" y="380" width="60" height="20" as="geometry" />
+        <mxCell id="a-bno-title" value="Adafruit BNO055 Breakout" style="text;html=1;align=center;verticalAlign=middle;fontStyle=1;fontSize=18;fontColor=#174A75;" vertex="1" parent="a1">
+          <mxGeometry x="100" y="145" width="380" height="35" as="geometry"/>
         </mxCell>
-        <mxCell id="pin-gpio15" value="GPIO15 (TX)" style="text;html=1;strokeColor=none;fillColor=none;align=right;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;" vertex="1" parent="1">
-          <mxGeometry x="430" y="400" width="60" height="20" as="geometry" />
+        <mxCell id="a-bno-note" value="NDOF · I²C-Adresse 0x29" style="text;html=1;align=center;verticalAlign=middle;fontSize=12;fontColor=#174A75;" vertex="1" parent="a1">
+          <mxGeometry x="150" y="180" width="280" height="25" as="geometry"/>
         </mxCell>
-        <mxCell id="pin-gpio2" value="GPIO2 (INT)" style="text;html=1;strokeColor=none;fillColor=none;align=right;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;" vertex="1" parent="1">
-          <mxGeometry x="430" y="440" width="60" height="20" as="geometry" />
+        <mxCell id="a-3vo" value="3Vo – interne Logikversorgung des Breakouts" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FADBD8;strokeColor=#C0392B;fontStyle=1;fontSize=11;" vertex="1" parent="a1">
+          <mxGeometry x="100" y="220" width="380" height="35" as="geometry"/>
         </mxCell>
-        
-        <!-- Pin Labels ESP32 Rechts -->
-        <mxCell id="pin-gpio4" value="GPIO4 (CS)" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;" vertex="1" parent="1">
-          <mxGeometry x="670" y="320" width="60" height="20" as="geometry" />
+
+        <mxCell id="a-r-sda" value="10 kΩ&#xa;onboard" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF2CC;strokeColor=#D6B656;fontStyle=1;" vertex="1" parent="a1">
+          <mxGeometry x="105" y="290" width="90" height="55" as="geometry"/>
         </mxCell>
-        <mxCell id="pin-gpio5" value="GPIO5 (MOSI)" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;" vertex="1" parent="1">
-          <mxGeometry x="670" y="340" width="70" height="20" as="geometry" />
+        <mxCell id="a-r-scl" value="10 kΩ&#xa;onboard" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF2CC;strokeColor=#D6B656;fontStyle=1;" vertex="1" parent="a1">
+          <mxGeometry x="245" y="290" width="90" height="55" as="geometry"/>
         </mxCell>
-        <mxCell id="pin-gpio6" value="GPIO6 (MISO)" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;" vertex="1" parent="1">
-          <mxGeometry x="670" y="360" width="70" height="20" as="geometry" />
+        <mxCell id="a-r-rst" value="10 kΩ&#xa;onboard" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF2CC;strokeColor=#D6B656;fontStyle=1;" vertex="1" parent="a1">
+          <mxGeometry x="385" y="290" width="90" height="55" as="geometry"/>
         </mxCell>
-        <mxCell id="pin-gpio7" value="GPIO7 (SCK)" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;" vertex="1" parent="1">
-          <mxGeometry x="670" y="380" width="60" height="20" as="geometry" />
+
+        <mxCell id="a-bno-sda" value="SDA" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DAE8FC;strokeColor=#6C8EBF;fontStyle=1;" vertex="1" parent="a1">
+          <mxGeometry x="105" y="390" width="90" height="40" as="geometry"/>
         </mxCell>
-        <mxCell id="pin-gpio1" value="GPIO1 (CS)" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;" vertex="1" parent="1">
-          <mxGeometry x="670" y="420" width="60" height="20" as="geometry" />
+        <mxCell id="a-bno-scl" value="SCL" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DAE8FC;strokeColor=#6C8EBF;fontStyle=1;" vertex="1" parent="a1">
+          <mxGeometry x="245" y="390" width="90" height="40" as="geometry"/>
         </mxCell>
-        <mxCell id="pin-gpio13" value="GPIO13 (MOSI)" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;" vertex="1" parent="1">
-          <mxGeometry x="670" y="440" width="80" height="20" as="geometry" />
+        <mxCell id="a-bno-rst" value="RST&#xa;Header: NC" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1D5E7;strokeColor=#9673A6;fontStyle=1;" vertex="1" parent="a1">
+          <mxGeometry x="385" y="390" width="90" height="40" as="geometry"/>
         </mxCell>
-        <mxCell id="pin-gpio11" value="GPIO11 (MISO)" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;" vertex="1" parent="1">
-          <mxGeometry x="670" y="460" width="80" height="20" as="geometry" />
+        <mxCell id="a-bno-adr" value="ADR fest an 3,3 V&#xa;→ Adresse 0x29" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FADBD8;strokeColor=#C0392B;fontStyle=1;" vertex="1" parent="a1">
+          <mxGeometry x="105" y="470" width="170" height="55" as="geometry"/>
         </mxCell>
-        <mxCell id="pin-gpio3" value="GPIO3 (SCK)" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;" vertex="1" parent="1">
-          <mxGeometry x="670" y="480" width="60" height="20" as="geometry" />
+        <mxCell id="a-bno-power" value="VIN: geregelte 3,3 V&#xa;GND: gemeinsame Masse" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#666666;" vertex="1" parent="a1">
+          <mxGeometry x="305" y="470" width="170" height="55" as="geometry"/>
         </mxCell>
-        
-        <!-- BNO055 Sensor -->
-        <mxCell id="bno055" value="BNO055&#xa;9-DoF Sensor&#xa;I2C: 0x28/0x29" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;" vertex="1" parent="1">
-          <mxGeometry x="100" y="280" width="120" height="80" as="geometry" />
+        <mxCell id="a-bno-unused" value="PS0, PS1, INT: nicht angeschlossen" style="text;html=1;align=center;verticalAlign=middle;fontSize=11;fontColor=#4B5563;" vertex="1" parent="a1">
+          <mxGeometry x="105" y="540" width="370" height="25" as="geometry"/>
         </mxCell>
-        
-        <!-- BNO055 PIN Labels -->
-        <mxCell id="bno055-pin-sda" value="SDA (4)" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=8;" vertex="1" parent="1">
-          <mxGeometry x="215" y="310" width="35" height="15" as="geometry" />
+        <mxCell id="a-bno-measured" value="Gemessener effektiver Pull-up des fertigen I²C-Busses: 2,54 kΩ&#xa;Keine zusätzlichen externen SDA/SCL-Pull-ups bestücken." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D5E8D4;strokeColor=#82B366;fontStyle=1;fontSize=11;" vertex="1" parent="a1">
+          <mxGeometry x="75" y="580" width="430" height="55" as="geometry"/>
         </mxCell>
-        <mxCell id="bno055-pin-scl" value="SCL (5)" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=8;" vertex="1" parent="1">
-          <mxGeometry x="215" y="330" width="35" height="15" as="geometry" />
+
+        <mxCell id="a-e-3vo-sda1" style="endArrow=none;html=1;strokeColor=#C0392B;strokeWidth=2;" edge="1" parent="a1" source="a-3vo" target="a-r-sda">
+          <mxGeometry relative="1" as="geometry"/>
         </mxCell>
-        <mxCell id="bno055-pin-vcc" value="VCC (3)" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=8;" vertex="1" parent="1">
-          <mxGeometry x="70" y="290" width="35" height="15" as="geometry" />
+        <mxCell id="a-e-3vo-scl1" style="endArrow=none;html=1;strokeColor=#C0392B;strokeWidth=2;" edge="1" parent="a1" source="a-3vo" target="a-r-scl">
+          <mxGeometry relative="1" as="geometry"/>
         </mxCell>
-        <mxCell id="bno055-pin-gnd" value="GND (2)" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=8;" vertex="1" parent="1">
-          <mxGeometry x="70" y="340" width="35" height="15" as="geometry" />
+        <mxCell id="a-e-3vo-rst1" style="endArrow=none;html=1;strokeColor=#C0392B;strokeWidth=2;" edge="1" parent="a1" source="a-3vo" target="a-r-rst">
+          <mxGeometry relative="1" as="geometry"/>
         </mxCell>
-        
-        <!-- OLED Display -->
-        <mxCell id="oled" value="OLED Display&#xa;128x64&#xa;I2C: 0x3C/0x3D" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;" vertex="1" parent="1">
-          <mxGeometry x="100" y="380" width="120" height="80" as="geometry" />
+        <mxCell id="a-e-r-sda" style="endArrow=none;html=1;strokeColor=#C0392B;strokeWidth=2;" edge="1" parent="a1" source="a-r-sda" target="a-bno-sda">
+          <mxGeometry relative="1" as="geometry"/>
         </mxCell>
-        
-        <!-- OLED PIN Labels -->
-        <mxCell id="oled-pin-sda" value="SDA (3)" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=8;" vertex="1" parent="1">
-          <mxGeometry x="215" y="410" width="35" height="15" as="geometry" />
+        <mxCell id="a-e-r-scl" style="endArrow=none;html=1;strokeColor=#C0392B;strokeWidth=2;" edge="1" parent="a1" source="a-r-scl" target="a-bno-scl">
+          <mxGeometry relative="1" as="geometry"/>
         </mxCell>
-        <mxCell id="oled-pin-scl" value="SCL (4)" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=8;" vertex="1" parent="1">
-          <mxGeometry x="215" y="430" width="35" height="15" as="geometry" />
+        <mxCell id="a-e-r-rst" style="endArrow=none;html=1;strokeColor=#C0392B;strokeWidth=2;" edge="1" parent="a1" source="a-r-rst" target="a-bno-rst">
+          <mxGeometry relative="1" as="geometry"/>
         </mxCell>
-        <mxCell id="oled-pin-vcc" value="VCC (2)" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=8;" vertex="1" parent="1">
-          <mxGeometry x="70" y="390" width="35" height="15" as="geometry" />
+        <mxCell id="a-e-adr" style="endArrow=none;html=1;strokeColor=#C0392B;strokeWidth=2;fontSize=10;" edge="1" parent="a1" source="a-3vo" target="a-bno-adr">
+          <mxGeometry relative="1" as="geometry"/>
         </mxCell>
-        <mxCell id="oled-pin-gnd" value="GND (1)" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=8;" vertex="1" parent="1">
-          <mxGeometry x="70" y="440" width="35" height="15" as="geometry" />
+
+        <mxCell id="a-mcu" value="ESP32-S3 Controller&#xa;&#xa;Boardtyp über „diag“ verifizieren&#xa;Firmware-Ziel aktuell: lolin_s3_mini&#xa;&#xa;I²C&#xa;GPIO 8  = SDA&#xa;GPIO 9  = SCL · 100 kHz&#xa;&#xa;UART GPS&#xa;GPIO 16 = RX ← GPS TX&#xa;GPIO 15 = TX → GPS RX&#xa;&#xa;SPI MicroSD&#xa;GPIO 4 = CS · 5 = MOSI&#xa;GPIO 6 = MISO · 7 = SCLK" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFE6CC;strokeColor=#D79B00;strokeWidth=2;fontStyle=1;fontSize=12;align=left;spacingLeft=16;" vertex="1" parent="a1">
+          <mxGeometry x="650" y="150" width="350" height="500" as="geometry"/>
         </mxCell>
-        
-        <!-- GPS Modul -->
-        <mxCell id="gps" value="GPS BN-880&#xa;UART&#xa;9600 baud" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontStyle=1;" vertex="1" parent="1">
-          <mxGeometry x="250" y="480" width="120" height="80" as="geometry" />
+
+        <mxCell id="a-oled" value="SSD1306 OLED (optional)&#xa;&#xa;VCC → 3,3 V&#xa;GND → GND&#xa;SDA → GPIO 8&#xa;SCL → GPIO 9&#xa;&#xa;Adresse 0x3C oder 0x3D&#xa;Nur stromlos stecken/ziehen." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1D5E7;strokeColor=#9673A6;strokeWidth=2;fontStyle=1;fontSize=12;" vertex="1" parent="a1">
+          <mxGeometry x="1110" y="120" width="390" height="190" as="geometry"/>
         </mxCell>
-        
-        <!-- GPS PIN Labels -->
-        <mxCell id="gps-pin-tx" value="TX (3)" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=8;" vertex="1" parent="1">
-          <mxGeometry x="365" y="500" width="30" height="15" as="geometry" />
+        <mxCell id="a-gps" value="Beitian BN-880 · fotografierter 6-Pin-Anschluss&#xa;&#xa;VCC → geregelte 3,3 V&#xa;GND → gemeinsame Masse&#xa;TX → GPIO 16 (RX)&#xa;RX ← GPIO 15 (TX)&#xa;SCL / SDA → nicht benutzt&#xa;&#xa;UART 9600 Baud" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D5E8D4;strokeColor=#82B366;strokeWidth=2;fontStyle=1;fontSize=12;" vertex="1" parent="a1">
+          <mxGeometry x="1110" y="360" width="390" height="210" as="geometry"/>
         </mxCell>
-        <mxCell id="gps-pin-rx" value="RX (2)" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=8;" vertex="1" parent="1">
-          <mxGeometry x="365" y="530" width="30" height="15" as="geometry" />
+        <mxCell id="a-sd" value="PZSMOCN MicroSD-Modul&#xa;&#xa;VCC → geregelte 3,3 V&#xa;GND → gemeinsame Masse&#xa;CS → GPIO 4&#xa;DI / MOSI → GPIO 5&#xa;DO / MISO → GPIO 6&#xa;SCLK → GPIO 7" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF2CC;strokeColor=#D6B656;strokeWidth=2;fontStyle=1;fontSize=12;" vertex="1" parent="a1">
+          <mxGeometry x="1110" y="620" width="390" height="210" as="geometry"/>
         </mxCell>
-        <mxCell id="gps-pin-vcc" value="VCC (1)" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=8;" vertex="1" parent="1">
-          <mxGeometry x="220" y="490" width="35" height="15" as="geometry" />
+
+        <mxCell id="a-e-i2c" value="I²C · GPIO 8 SDA / GPIO 9 SCL" style="endArrow=none;html=1;strokeColor=#2F80C0;strokeWidth=3;fontStyle=1;edgeStyle=orthogonalEdgeStyle;rounded=1;" edge="1" parent="a1" source="a-bno" target="a-mcu">
+          <mxGeometry relative="1" as="geometry"/>
         </mxCell>
-        <mxCell id="gps-pin-gnd" value="GND (4)" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=8;" vertex="1" parent="1">
-          <mxGeometry x="220" y="540" width="35" height="15" as="geometry" />
+        <mxCell id="a-e-oled" value="gemeinsamer I²C-Bus · GPIO 8/9" style="endArrow=none;html=1;strokeColor=#2F80C0;strokeWidth=3;fontStyle=1;" edge="1" parent="a1" source="a-mcu" target="a-oled">
+          <mxGeometry relative="1" as="geometry"/>
         </mxCell>
-        
-        <!-- SD-Karte -->
-        <mxCell id="sdcard" value="SD-Karte&#xa;Modul&#xa;SPI" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1;" vertex="1" parent="1">
-          <mxGeometry x="800" y="280" width="120" height="80" as="geometry" />
+        <mxCell id="a-e-gps" value="UART · GPIO 15/16" style="endArrow=none;html=1;strokeColor=#8E44AD;strokeWidth=3;fontStyle=1;" edge="1" parent="a1" source="a-mcu" target="a-gps">
+          <mxGeometry relative="1" as="geometry"/>
         </mxCell>
-        
-        <!-- SD-Card PIN Labels -->
-        <mxCell id="sd-pin-cs" value="CS (1)" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=8;" vertex="1" parent="1">
-          <mxGeometry x="770" y="290" width="30" height="15" as="geometry" />
+        <mxCell id="a-e-sd" value="SPI · GPIO 4/5/6/7" style="endArrow=none;html=1;strokeColor=#229954;strokeWidth=3;fontStyle=1;" edge="1" parent="a1" source="a-mcu" target="a-sd">
+          <mxGeometry relative="1" as="geometry"/>
         </mxCell>
-        <mxCell id="sd-pin-mosi" value="MOSI (2)" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=8;" vertex="1" parent="1">
-          <mxGeometry x="765" y="310" width="40" height="15" as="geometry" />
+
+        <mxCell id="a-power" value="Versorgung des aktiven Aufbaus&#xa;&#xa;3,3 V geregelt: BNO055 VIN, OLED VCC, BN-880 VCC, MicroSD VCC&#xa;GND: eine gemeinsame Masse für Controller und alle Module&#xa;&#xa;Keines dieser Module direkt an eine rohe LiPo-Zelle anschließen." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F8CECC;strokeColor=#B85450;strokeWidth=2;fontStyle=1;fontSize=12;" vertex="1" parent="a1">
+          <mxGeometry x="150" y="730" width="850" height="140" as="geometry"/>
         </mxCell>
-        <mxCell id="sd-pin-miso" value="MISO (7)" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=8;" vertex="1" parent="1">
-          <mxGeometry x="765" y="330" width="40" height="15" as="geometry" />
+        <mxCell id="a-check" value="Vor dem Einschalten prüfen&#xa;&#xa;• 3,3-V-Schiene gegen GND messen&#xa;• Durchgang der gemeinsamen Masse prüfen&#xa;• Keine 5-V-Signale an ESP32-GPIOs&#xa;• OLED nur stromlos an-/abstecken" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#666666;strokeWidth=2;fontSize=12;" vertex="1" parent="a1">
+          <mxGeometry x="1110" y="860" width="390" height="120" as="geometry"/>
         </mxCell>
-        <mxCell id="sd-pin-sck" value="SCK (5)" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=8;" vertex="1" parent="1">
-          <mxGeometry x="770" y="350" width="35" height="15" as="geometry" />
+
+        <mxCell id="a-legend-i2c" value="I²C" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DAE8FC;strokeColor=#2F80C0;fontStyle=1;" vertex="1" parent="a1">
+          <mxGeometry x="180" y="900" width="90" height="35" as="geometry"/>
         </mxCell>
-        <mxCell id="sd-pin-vcc" value="VCC (4)" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=8;" vertex="1" parent="1">
-          <mxGeometry x="915" y="290" width="35" height="15" as="geometry" />
+        <mxCell id="a-legend-uart" value="UART" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1D5E7;strokeColor=#8E44AD;fontStyle=1;" vertex="1" parent="a1">
+          <mxGeometry x="290" y="900" width="90" height="35" as="geometry"/>
         </mxCell>
-        <mxCell id="sd-pin-gnd" value="GND (3,6)" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=8;" vertex="1" parent="1">
-          <mxGeometry x="915" y="340" width="45" height="15" as="geometry" />
+        <mxCell id="a-legend-spi" value="SPI" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D5E8D4;strokeColor=#229954;fontStyle=1;" vertex="1" parent="a1">
+          <mxGeometry x="400" y="900" width="90" height="35" as="geometry"/>
         </mxCell>
-        
-        <!-- MCP2515 CAN Controller -->
-        <mxCell id="mcp2515" value="MCP2515&#xa;CAN Controller&#xa;SPI" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontStyle=1;" vertex="1" parent="1">
-          <mxGeometry x="800" y="420" width="120" height="80" as="geometry" />
+        <mxCell id="a-source" value="Hinweis: Modulheader sind verbindlich; IC-Pinnummern sind nur in pin_reference.md dokumentiert." style="text;html=1;align=left;verticalAlign=middle;fontSize=11;fontColor=#4B5563;" vertex="1" parent="a1">
+          <mxGeometry x="520" y="900" width="480" height="40" as="geometry"/>
         </mxCell>
-        
-        <!-- MCP2515 PIN Labels -->
-        <mxCell id="mcp-pin-cs" value="CS (16)" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=8;" vertex="1" parent="1">
-          <mxGeometry x="765" y="430" width="35" height="15" as="geometry" />
+      </root>
+    </mxGraphModel>
+  </diagram>
+
+  <diagram name="CAN und OBD" id="roadtest-can">
+    <mxGraphModel dx="1600" dy="1000" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="1000" math="0" shadow="0">
+      <root>
+        <mxCell id="c0"/>
+        <mxCell id="c1" parent="c0"/>
+
+        <mxCell id="c-title" value="ROADTEST – CAN / OBD-II" style="text;html=1;align=center;verticalAlign=middle;fontStyle=1;fontSize=24;fontColor=#1F2937;" vertex="1" parent="c1">
+          <mxGeometry x="390" y="20" width="820" height="40" as="geometry"/>
         </mxCell>
-        <mxCell id="mcp-pin-mosi" value="MOSI (14)" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=8;" vertex="1" parent="1">
-          <mxGeometry x="760" y="450" width="45" height="15" as="geometry" />
+        <mxCell id="c-subtitle" value="Joy-IT SBC-CAN01 · MCP2515 + MCP2562 · 16-MHz-Quarz · nur lesender Betrieb" style="text;html=1;align=center;verticalAlign=middle;fontSize=12;fontColor=#4B5563;" vertex="1" parent="c1">
+          <mxGeometry x="350" y="60" width="900" height="30" as="geometry"/>
         </mxCell>
-        <mxCell id="mcp-pin-miso" value="MISO (15)" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=8;" vertex="1" parent="1">
-          <mxGeometry x="760" y="470" width="45" height="15" as="geometry" />
+
+        <mxCell id="c-mcu" value="ESP32-S3 Controller&#xa;&#xa;GPIO 1  → CS&#xa;GPIO 2  ← INT&#xa;GPIO 3  → SCK&#xa;GPIO 13 → MOSI / SI&#xa;GPIO 11 ← MISO / SO&#xa;GND      ↔ GND&#xa;&#xa;Achtung: GPIO 3 ist ein Strapping-Pin.&#xa;Beim Reset keinen störenden Pegel erzwingen." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFE6CC;strokeColor=#D79B00;strokeWidth=2;fontStyle=1;fontSize=13;align=left;spacingLeft=18;" vertex="1" parent="c1">
+          <mxGeometry x="90" y="210" width="340" height="410" as="geometry"/>
         </mxCell>
-        <mxCell id="mcp-pin-sck" value="SCK (13)" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=8;" vertex="1" parent="1">
-          <mxGeometry x="765" y="490" width="40" height="15" as="geometry" />
+
+        <mxCell id="c-can" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F4FD;strokeColor=#2F80C0;strokeWidth=2;" vertex="1" parent="c1">
+          <mxGeometry x="570" y="150" width="500" height="570" as="geometry"/>
         </mxCell>
-        <mxCell id="mcp-pin-int" value="INT (12)" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=8;" vertex="1" parent="1">
-          <mxGeometry x="845" y="495" width="35" height="15" as="geometry" />
+        <mxCell id="c-can-title" value="Joy-IT SBC-CAN01" style="text;html=1;align=center;verticalAlign=middle;fontStyle=1;fontSize=20;fontColor=#174A75;" vertex="1" parent="c1">
+          <mxGeometry x="650" y="170" width="340" height="40" as="geometry"/>
         </mxCell>
-        <mxCell id="mcp-pin-canh" value="CAN-H (7)" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=8;" vertex="1" parent="1">
-          <mxGeometry x="910" y="440" width="50" height="15" as="geometry" />
+        <mxCell id="c-logic" value="MCP2515 CAN-Controller&#xa;Logikversorgung: VCC = 3,3 V&#xa;SPI-Pegel bleiben 3,3 V" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DAE8FC;strokeColor=#6C8EBF;fontStyle=1;fontSize=13;" vertex="1" parent="c1">
+          <mxGeometry x="620" y="240" width="400" height="100" as="geometry"/>
         </mxCell>
-        <mxCell id="mcp-pin-canl" value="CAN-L (6)" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=8;" vertex="1" parent="1">
-          <mxGeometry x="910" y="460" width="50" height="15" as="geometry" />
+        <mxCell id="c-xcvr" value="MCP2562 CAN-Transceiver&#xa;Bustreiberversorgung: VCC1 = 5 V&#xa;5 V dürfen nicht auf die SPI-Leitungen gelangen." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FADBD8;strokeColor=#C0392B;fontStyle=1;fontSize=13;" vertex="1" parent="c1">
+          <mxGeometry x="620" y="380" width="400" height="110" as="geometry"/>
         </mxCell>
-        <mxCell id="mcp-pin-vcc" value="VCC (17)" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=8;" vertex="1" parent="1">
-          <mxGeometry x="910" y="425" width="40" height="15" as="geometry" />
+        <mxCell id="c-term" value="P1 / 120-Ω-Abschluss&#xa;&#xa;Fahrzeugbetrieb: Jumper offen / abgezogen&#xa;Keine zusätzliche Terminierung am Stichkabel." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF2CC;strokeColor=#D6B656;fontStyle=1;fontSize=13;" vertex="1" parent="c1">
+          <mxGeometry x="620" y="530" width="400" height="110" as="geometry"/>
         </mxCell>
-        <mxCell id="mcp-pin-gnd" value="GND (9)" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=8;" vertex="1" parent="1">
-          <mxGeometry x="910" y="480" width="40" height="15" as="geometry" />
+        <mxCell id="c-can-label" value="CANH / CANL am Transceiver-Ausgang – nicht am MCP2515" style="text;html=1;align=center;verticalAlign=middle;fontSize=11;fontColor=#4B5563;" vertex="1" parent="c1">
+          <mxGeometry x="620" y="660" width="400" height="30" as="geometry"/>
         </mxCell>
-        
-        <!-- CAN-Bus -->
-        <mxCell id="canbus" value="CAN-Bus&#xa;Fahrzeug&#xa;500kbps" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontStyle=1;" vertex="1" parent="1">
-          <mxGeometry x="980" y="420" width="100" height="80" as="geometry" />
+
+        <mxCell id="c-obd" value="Fahrzeug OBD-II&#xa;&#xa;Pin 6  = CAN-H&#xa;Pin 14 = CAN-L&#xa;Masse  = gemeinsame Masse&#xa;&#xa;Stichleitung möglichst kurz, Ziel &lt; 30 cm.&#xa;Keine DTC-Löschung, Codierung oder Stellgliedansteuerung." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D5E8D4;strokeColor=#82B366;strokeWidth=2;fontStyle=1;fontSize=13;" vertex="1" parent="c1">
+          <mxGeometry x="1200" y="250" width="330" height="320" as="geometry"/>
         </mxCell>
-        
-        <!-- CAN-Bus PIN Labels -->
-        <mxCell id="can-pin-h" value="CAN-H" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=8;" vertex="1" parent="1">
-          <mxGeometry x="965" y="440" width="35" height="15" as="geometry" />
+
+        <mxCell id="c-e-spi" value="SPI · CS / INT / SCK / MOSI / MISO" style="endArrow=none;html=1;strokeColor=#229954;strokeWidth=3;fontStyle=1;" edge="1" parent="c1" source="c-mcu" target="c-logic">
+          <mxGeometry relative="1" as="geometry"/>
         </mxCell>
-        <mxCell id="can-pin-l" value="CAN-L" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=8;" vertex="1" parent="1">
-          <mxGeometry x="965" y="460" width="35" height="15" as="geometry" />
+        <mxCell id="c-e-internal" value="CAN TX/RX intern" style="endArrow=none;html=1;strokeColor=#6C8EBF;strokeWidth=2;" edge="1" parent="c1" source="c-logic" target="c-xcvr">
+          <mxGeometry relative="1" as="geometry"/>
         </mxCell>
-        <mxCell id="can-pin-gnd" value="GND" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=8;" vertex="1" parent="1">
-          <mxGeometry x="1055" y="460" width="25" height="15" as="geometry" />
+        <mxCell id="c-e-canh" value="CAN-H → OBD Pin 6" style="endArrow=classic;html=1;strokeColor=#C0392B;strokeWidth=3;fontStyle=1;edgeStyle=orthogonalEdgeStyle;rounded=1;exitX=1;exitY=0.35;entryX=0;entryY=0.35;" edge="1" parent="c1" source="c-xcvr" target="c-obd">
+          <mxGeometry relative="1" as="geometry"/>
         </mxCell>
-        
-        <!-- Stromversorgung -->
-        <mxCell id="power3v3" value="3.3V" style="ellipse;whiteSpace=wrap;html=1;fillColor=#ffcccc;strokeColor=#cc0000;fontStyle=1;" vertex="1" parent="1">
-          <mxGeometry x="520" y="100" width="60" height="40" as="geometry" />
+        <mxCell id="c-e-canl" value="CAN-L → OBD Pin 14" style="endArrow=classic;html=1;strokeColor=#2F80C0;strokeWidth=3;fontStyle=1;edgeStyle=orthogonalEdgeStyle;rounded=1;exitX=1;exitY=0.65;entryX=0;entryY=0.58;" edge="1" parent="c1" source="c-xcvr" target="c-obd">
+          <mxGeometry relative="1" as="geometry"/>
         </mxCell>
-        
-        <mxCell id="gnd" value="GND" style="ellipse;whiteSpace=wrap;html=1;fillColor=#666666;strokeColor=#000000;fontColor=#FFFFFF;fontStyle=1;" vertex="1" parent="1">
-          <mxGeometry x="600" y="100" width="60" height="40" as="geometry" />
+        <mxCell id="c-e-term" value="schaltbar über P1" style="endArrow=none;html=1;strokeColor=#D6B656;strokeWidth=2;dashed=1;fontSize=10;" edge="1" parent="c1" source="c-term" target="c-xcvr">
+          <mxGeometry relative="1" as="geometry"/>
         </mxCell>
-        
-        <!-- I2C-Bus Verbindungen -->
-        <mxCell id="i2c-sda1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#0066CC;strokeWidth=2;" edge="1" parent="1" source="esp32" target="bno055">
+
+        <mxCell id="c-v33" value="geregelte 3,3 V&#xa;→ VCC" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F8CECC;strokeColor=#B85450;strokeWidth=2;fontStyle=1;" vertex="1" parent="c1">
+          <mxGeometry x="570" y="780" width="190" height="75" as="geometry"/>
+        </mxCell>
+        <mxCell id="c-v5" value="geregelte 5 V&#xa;→ VCC1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FADBD8;strokeColor=#C0392B;strokeWidth=2;fontStyle=1;" vertex="1" parent="c1">
+          <mxGeometry x="790" y="780" width="190" height="75" as="geometry"/>
+        </mxCell>
+        <mxCell id="c-gnd" value="gemeinsame Masse&#xa;Controller ↔ SBC-CAN01 ↔ Fahrzeug" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#666666;strokeWidth=2;fontStyle=1;" vertex="1" parent="c1">
+          <mxGeometry x="1010" y="780" width="330" height="75" as="geometry"/>
+        </mxCell>
+        <mxCell id="c-e-v33" style="endArrow=classic;html=1;strokeColor=#B85450;strokeWidth=3;edgeStyle=orthogonalEdgeStyle;rounded=1;entryX=0;entryY=0.5;" edge="1" parent="c1" source="c-v33" target="c-logic">
           <mxGeometry relative="1" as="geometry">
-            <mxPoint x="490" y="330" as="sourcePoint" />
-            <mxPoint x="220" y="320" as="targetPoint" />
-          </mxGeometry>
-        </mxCell>
-        <mxCell id="i2c-sda1-label" value="SDA" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=10;" vertex="1" connectable="0" parent="i2c-sda1">
-          <mxGeometry x="-0.3" y="-1" relative="1" as="geometry">
-            <mxPoint as="offset" />
-          </mxGeometry>
-        </mxCell>
-        
-        <mxCell id="i2c-scl1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#0066CC;strokeWidth=2;" edge="1" parent="1" source="esp32" target="bno055">
-          <mxGeometry relative="1" as="geometry">
-            <mxPoint x="490" y="350" as="sourcePoint" />
-            <mxPoint x="220" y="340" as="targetPoint" />
             <Array as="points">
-              <mxPoint x="320" y="350" />
-              <mxPoint x="320" y="340" />
+              <mxPoint x="590" y="745"/>
+              <mxPoint x="590" y="290"/>
             </Array>
           </mxGeometry>
         </mxCell>
-        <mxCell id="i2c-scl1-label" value="SCL" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=10;" vertex="1" connectable="0" parent="i2c-scl1">
-          <mxGeometry x="-0.3" y="-1" relative="1" as="geometry">
-            <mxPoint as="offset" />
-          </mxGeometry>
-        </mxCell>
-        
-        <mxCell id="i2c-sda2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#0066CC;strokeWidth=2;" edge="1" parent="1" source="esp32" target="oled">
+        <mxCell id="c-e-v5" style="endArrow=classic;html=1;strokeColor=#C0392B;strokeWidth=3;edgeStyle=orthogonalEdgeStyle;rounded=1;entryX=1;entryY=0.5;" edge="1" parent="c1" source="c-v5" target="c-xcvr">
           <mxGeometry relative="1" as="geometry">
-            <mxPoint x="490" y="330" as="sourcePoint" />
-            <mxPoint x="220" y="400" as="targetPoint" />
             <Array as="points">
-              <mxPoint x="300" y="330" />
-              <mxPoint x="300" y="420" />
+              <mxPoint x="1040" y="745"/>
+              <mxPoint x="1040" y="435"/>
             </Array>
           </mxGeometry>
         </mxCell>
-        
-        <mxCell id="i2c-scl2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#0066CC;strokeWidth=2;" edge="1" parent="1" source="esp32" target="oled">
-          <mxGeometry relative="1" as="geometry">
-            <mxPoint x="490" y="350" as="sourcePoint" />
-            <mxPoint x="220" y="420" as="targetPoint" />
-            <Array as="points">
-              <mxPoint x="280" y="350" />
-              <mxPoint x="280" y="440" />
-            </Array>
-          </mxGeometry>
+        <mxCell id="c-e-gnd-mcu" style="endArrow=none;html=1;strokeColor=#666666;strokeWidth=3;" edge="1" parent="c1" source="c-gnd" target="c-mcu">
+          <mxGeometry relative="1" as="geometry"/>
         </mxCell>
-        
-        <!-- UART Verbindungen -->
-        <mxCell id="uart-rx" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#009900;strokeWidth=2;" edge="1" parent="1" source="esp32" target="gps">
-          <mxGeometry relative="1" as="geometry">
-            <mxPoint x="490" y="390" as="sourcePoint" />
-            <mxPoint x="370" y="500" as="targetPoint" />
-          </mxGeometry>
+        <mxCell id="c-e-gnd-can" style="endArrow=none;html=1;strokeColor=#666666;strokeWidth=3;" edge="1" parent="c1" source="c-gnd" target="c-can">
+          <mxGeometry relative="1" as="geometry"/>
         </mxCell>
-        <mxCell id="uart-rx-label" value="RX←TX" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=10;" vertex="1" connectable="0" parent="uart-rx">
-          <mxGeometry x="-0.3" y="-1" relative="1" as="geometry">
-            <mxPoint as="offset" />
-          </mxGeometry>
+        <mxCell id="c-e-gnd-obd" style="endArrow=none;html=1;strokeColor=#666666;strokeWidth=3;" edge="1" parent="c1" source="c-gnd" target="c-obd">
+          <mxGeometry relative="1" as="geometry"/>
         </mxCell>
-        
-        <mxCell id="uart-tx" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#009900;strokeWidth=2;" edge="1" parent="1" source="esp32" target="gps">
-          <mxGeometry relative="1" as="geometry">
-            <mxPoint x="490" y="410" as="sourcePoint" />
-            <mxPoint x="370" y="520" as="targetPoint" />
-            <Array as="points">
-              <mxPoint x="420" y="410" />
-              <mxPoint x="420" y="540" />
-            </Array>
-          </mxGeometry>
+
+        <mxCell id="c-warning" value="Wichtiger Versorgungstest vor dem Fahrzeuganschluss&#xa;&#xa;1. VCC einzeln gegen GND messen: 3,3 V&#xa;2. VCC1 einzeln gegen GND messen: 5 V&#xa;3. Prüfen, dass an CS/INT/SCK/MOSI/MISO niemals 5 V anliegen&#xa;4. P1 abgezogen und CAN-H/CAN-L korrekt zugeordnet" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F8CECC;strokeColor=#B85450;strokeWidth=3;fontStyle=1;fontSize=13;" vertex="1" parent="c1">
+          <mxGeometry x="90" y="700" width="400" height="190" as="geometry"/>
         </mxCell>
-        <mxCell id="uart-tx-label" value="TX→RX" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=10;" vertex="1" connectable="0" parent="uart-tx">
-          <mxGeometry x="-0.3" y="-1" relative="1" as="geometry">
-            <mxPoint as="offset" />
-          </mxGeometry>
+        <mxCell id="c-mode" value="Firmwarebetrieb&#xa;&#xa;ISO 15765-4 · 11-Bit · 500 kbit/s&#xa;OBD Service 01 Livewerte · nur lesend&#xa;CAN vor Firmware-Upload vom Fahrzeug trennen." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1D5E7;strokeColor=#9673A6;strokeWidth=2;fontStyle=1;fontSize=13;" vertex="1" parent="c1">
+          <mxGeometry x="1200" y="620" width="330" height="180" as="geometry"/>
         </mxCell>
-        
-        <!-- SPI SD-Karte Verbindungen -->
-        <mxCell id="spi-sd-cs" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#990099;strokeWidth=2;" edge="1" parent="1" source="esp32" target="sdcard">
-          <mxGeometry relative="1" as="geometry">
-            <mxPoint x="670" y="330" as="sourcePoint" />
-            <mxPoint x="800" y="300" as="targetPoint" />
-          </mxGeometry>
+        <mxCell id="c-source" value="Verbindlich sind die Anschlussnamen auf dem fotografierten SBC-CAN01. Verifizierte IC-Pins stehen in pin_reference.md." style="text;html=1;align=center;verticalAlign=middle;fontSize=11;fontColor=#4B5563;" vertex="1" parent="c1">
+          <mxGeometry x="480" y="920" width="700" height="40" as="geometry"/>
         </mxCell>
-        <mxCell id="spi-sd-cs-label" value="CS" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=10;" vertex="1" connectable="0" parent="spi-sd-cs">
-          <mxGeometry x="-0.3" y="-1" relative="1" as="geometry">
-            <mxPoint as="offset" />
-          </mxGeometry>
-        </mxCell>
-        
-        <mxCell id="spi-sd-mosi" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#990099;strokeWidth=2;" edge="1" parent="1" source="esp32" target="sdcard">
-          <mxGeometry relative="1" as="geometry">
-            <mxPoint x="670" y="350" as="sourcePoint" />
-            <mxPoint x="800" y="320" as="targetPoint" />
-            <Array as="points">
-              <mxPoint x="750" y="350" />
-              <mxPoint x="750" y="320" />
-            </Array>
-          </mxGeometry>
-        </mxCell>
-        <mxCell id="spi-sd-mosi-label" value="MOSI" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=10;" vertex="1" connectable="0" parent="spi-sd-mosi">
-          <mxGeometry x="-0.3" y="-1" relative="1" as="geometry">
-            <mxPoint as="offset" />
-          </mxGeometry>
-        </mxCell>
-        
-        <mxCell id="spi-sd-miso" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#990099;strokeWidth=2;" edge="1" parent="1" source="esp32" target="sdcard">
-          <mxGeometry relative="1" as="geometry">
-            <mxPoint x="670" y="370" as="sourcePoint" />
-            <mxPoint x="800" y="340" as="targetPoint" />
-            <Array as="points">
-              <mxPoint x="760" y="370" />
-              <mxPoint x="760" y="340" />
-            </Array>
-          </mxGeometry>
-        </mxCell>
-        <mxCell id="spi-sd-miso-label" value="MISO" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=10;" vertex="1" connectable="0" parent="spi-sd-miso">
-          <mxGeometry x="-0.3" y="-1" relative="1" as="geometry">
-            <mxPoint as="offset" />
-          </mxGeometry>
-        </mxCell>
-        
-        <mxCell id="spi-sd-sck" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#990099;strokeWidth=2;" edge="1" parent="1" source="esp32" target="sdcard">
-          <mxGeometry relative="1" as="geometry">
-            <mxPoint x="670" y="390" as="sourcePoint" />
-            <mxPoint x="800" y="360" as="targetPoint" />
-            <Array as="points">
-              <mxPoint x="770" y="390" />
-              <mxPoint x="770" y="360" />
-            </Array>
-          </mxGeometry>
-        </mxCell>
-        <mxCell id="spi-sd-sck-label" value="SCK" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=10;" vertex="1" connectable="0" parent="spi-sd-sck">
-          <mxGeometry x="-0.3" y="-1" relative="1" as="geometry">
-            <mxPoint as="offset" />
-          </mxGeometry>
-        </mxCell>
-        
-        <!-- SPI CAN Verbindungen -->
-        <mxCell id="spi-can-cs" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#CC6600;strokeWidth=2;" edge="1" parent="1" source="esp32" target="mcp2515">
-          <mxGeometry relative="1" as="geometry">
-            <mxPoint x="670" y="430" as="sourcePoint" />
-            <mxPoint x="800" y="440" as="targetPoint" />
-          </mxGeometry>
-        </mxCell>
-        <mxCell id="spi-can-cs-label" value="CS" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=10;" vertex="1" connectable="0" parent="spi-can-cs">
-          <mxGeometry x="-0.3" y="-1" relative="1" as="geometry">
-            <mxPoint as="offset" />
-          </mxGeometry>
-        </mxCell>
-        
-        <mxCell id="spi-can-mosi" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#CC6600;strokeWidth=2;" edge="1" parent="1" source="esp32" target="mcp2515">
-          <mxGeometry relative="1" as="geometry">
-            <mxPoint x="670" y="450" as="sourcePoint" />
-            <mxPoint x="800" y="460" as="targetPoint" />
-            <Array as="points">
-              <mxPoint x="750" y="450" />
-              <mxPoint x="750" y="460" />
-            </Array>
-          </mxGeometry>
-        </mxCell>
-        <mxCell id="spi-can-mosi-label" value="MOSI" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=10;" vertex="1" connectable="0" parent="spi-can-mosi">
-          <mxGeometry x="-0.3" y="-1" relative="1" as="geometry">
-            <mxPoint as="offset" />
-          </mxGeometry>
-        </mxCell>
-        
-        <mxCell id="spi-can-miso" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#CC6600;strokeWidth=2;" edge="1" parent="1" source="esp32" target="mcp2515">
-          <mxGeometry relative="1" as="geometry">
-            <mxPoint x="670" y="470" as="sourcePoint" />
-            <mxPoint x="800" y="480" as="targetPoint" />
-            <Array as="points">
-              <mxPoint x="760" y="470" />
-              <mxPoint x="760" y="480" />
-            </Array>
-          </mxGeometry>
-        </mxCell>
-        <mxCell id="spi-can-miso-label" value="MISO" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=10;" vertex="1" connectable="0" parent="spi-can-miso">
-          <mxGeometry x="-0.3" y="-1" relative="1" as="geometry">
-            <mxPoint as="offset" />
-          </mxGeometry>
-        </mxCell>
-        
-        <mxCell id="spi-can-sck" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#CC6600;strokeWidth=2;" edge="1" parent="1" source="esp32" target="mcp2515">
-          <mxGeometry relative="1" as="geometry">
-            <mxPoint x="670" y="490" as="sourcePoint" />
-            <mxPoint x="800" y="500" as="targetPoint" />
-            <Array as="points">
-              <mxPoint x="770" y="490" />
-              <mxPoint x="770" y="500" />
-            </Array>
-          </mxGeometry>
-        </mxCell>
-        <mxCell id="spi-can-sck-label" value="SCK" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=10;" vertex="1" connectable="0" parent="spi-can-sck">
-          <mxGeometry x="-0.3" y="-1" relative="1" as="geometry">
-            <mxPoint as="offset" />
-          </mxGeometry>
-        </mxCell>
-        
-        <mxCell id="can-int" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#CC6600;strokeWidth=2;" edge="1" parent="1" source="esp32" target="mcp2515">
-          <mxGeometry relative="1" as="geometry">
-            <mxPoint x="490" y="450" as="sourcePoint" />
-            <mxPoint x="800" y="450" as="targetPoint" />
-            <Array as="points">
-              <mxPoint x="450" y="450" />
-              <mxPoint x="450" y="600" />
-              <mxPoint x="860" y="600" />
-            </Array>
-          </mxGeometry>
-        </mxCell>
-        <mxCell id="can-int-label" value="INT" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=10;" vertex="1" connectable="0" parent="can-int">
-          <mxGeometry x="-0.3" y="-1" relative="1" as="geometry">
-            <mxPoint as="offset" />
-          </mxGeometry>
-        </mxCell>
-        
-        <!-- CAN-Bus Verbindung -->
-        <mxCell id="can-h" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#FF0000;strokeWidth=2;" edge="1" parent="1" source="mcp2515" target="canbus">
-          <mxGeometry relative="1" as="geometry">
-            <Array as="points">
-              <mxPoint x="950" y="450" />
-              <mxPoint x="950" y="450" />
-            </Array>
-          </mxGeometry>
-        </mxCell>
-        <mxCell id="can-h-label" value="CAN-H" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=10;" vertex="1" connectable="0" parent="can-h">
-          <mxGeometry x="-0.3" y="-1" relative="1" as="geometry">
-            <mxPoint as="offset" />
-          </mxGeometry>
-        </mxCell>
-        
-        <mxCell id="can-l" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#FF0000;strokeWidth=2;" edge="1" parent="1" source="mcp2515" target="canbus">
-          <mxGeometry relative="1" as="geometry">
-            <Array as="points">
-              <mxPoint x="950" y="470" />
-              <mxPoint x="950" y="470" />
-            </Array>
-          </mxGeometry>
-        </mxCell>
-        <mxCell id="can-l-label" value="CAN-L" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=10;" vertex="1" connectable="0" parent="can-l">
-          <mxGeometry x="-0.3" y="-1" relative="1" as="geometry">
-            <mxPoint as="offset" />
-          </mxGeometry>
-        </mxCell>
-        
-        <!-- Stromversorgung Verbindungen -->
-        <mxCell id="pwr-esp32" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#CC0000;strokeWidth=3;dashed=1;" edge="1" parent="1" source="power3v3" target="esp32">
-          <mxGeometry relative="1" as="geometry">
-            <Array as="points">
-              <mxPoint x="550" y="200" />
-              <mxPoint x="580" y="200" />
-            </Array>
-          </mxGeometry>
-        </mxCell>
-        
-        <mxCell id="pwr-bno055" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#CC0000;strokeWidth=2;dashed=1;" edge="1" parent="1" source="power3v3" target="bno055">
-          <mxGeometry relative="1" as="geometry">
-            <Array as="points">
-              <mxPoint x="550" y="180" />
-              <mxPoint x="160" y="180" />
-            </Array>
-          </mxGeometry>
-        </mxCell>
-        
-        <mxCell id="pwr-oled" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#CC0000;strokeWidth=2;dashed=1;" edge="1" parent="1" source="power3v3" target="oled">
-          <mxGeometry relative="1" as="geometry">
-            <Array as="points">
-              <mxPoint x="550" y="180" />
-              <mxPoint x="160" y="180" />
-            </Array>
-          </mxGeometry>
-        </mxCell>
-        
-        <mxCell id="pwr-gps" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#CC0000;strokeWidth=2;dashed=1;" edge="1" parent="1" source="power3v3" target="gps">
-          <mxGeometry relative="1" as="geometry">
-            <Array as="points">
-              <mxPoint x="550" y="180" />
-              <mxPoint x="310" y="180" />
-            </Array>
-          </mxGeometry>
-        </mxCell>
-        
-        <mxCell id="pwr-sd" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#CC0000;strokeWidth=2;dashed=1;" edge="1" parent="1" source="power3v3" target="sdcard">
-          <mxGeometry relative="1" as="geometry">
-            <Array as="points">
-              <mxPoint x="550" y="180" />
-              <mxPoint x="860" y="180" />
-            </Array>
-          </mxGeometry>
-        </mxCell>
-        
-        <mxCell id="pwr-mcp" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#CC0000;strokeWidth=2;dashed=1;" edge="1" parent="1" source="power3v3" target="mcp2515">
-          <mxGeometry relative="1" as="geometry">
-            <Array as="points">
-              <mxPoint x="550" y="180" />
-              <mxPoint x="860" y="180" />
-            </Array>
-          </mxGeometry>
-        </mxCell>
-        
-        <!-- GND Verbindungen -->
-        <mxCell id="gnd-esp32" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#000000;strokeWidth=3;dashed=1;" edge="1" parent="1" source="gnd" target="esp32">
-          <mxGeometry relative="1" as="geometry">
-            <Array as="points">
-              <mxPoint x="630" y="200" />
-              <mxPoint x="600" y="200" />
-            </Array>
-          </mxGeometry>
-        </mxCell>
-        
-        <mxCell id="gnd-all" value="GND zu allen Komponenten" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;fontStyle=2;" vertex="1" parent="1">
-          <mxGeometry x="570" y="150" width="120" height="20" as="geometry" />
-        </mxCell>
-        
-        <!-- Legende -->
-        <mxCell id="legend-box" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;strokeWidth=1;" vertex="1" parent="1">
-          <mxGeometry x="40" y="600" width="280" height="180" as="geometry" />
-        </mxCell>
-        
-        <mxCell id="legend-title" value="Legende" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontStyle=1;fontSize=14;" vertex="1" parent="1">
-          <mxGeometry x="120" y="610" width="120" height="20" as="geometry" />
-        </mxCell>
-        
-        <mxCell id="legend-i2c" value="" style="endArrow=classic;html=1;strokeColor=#0066CC;strokeWidth=2;" edge="1" parent="1">
-          <mxGeometry width="50" height="50" relative="1" as="geometry">
-            <mxPoint x="60" y="650" as="sourcePoint" />
-            <mxPoint x="100" y="650" as="targetPoint" />
-          </mxGeometry>
-        </mxCell>
-        <mxCell id="legend-i2c-text" value="I2C-Bus (SDA/SCL)" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;" vertex="1" parent="1">
-          <mxGeometry x="110" y="640" width="100" height="20" as="geometry" />
-        </mxCell>
-        
-        <mxCell id="legend-uart" value="" style="endArrow=classic;html=1;strokeColor=#009900;strokeWidth=2;" edge="1" parent="1">
-          <mxGeometry width="50" height="50" relative="1" as="geometry">
-            <mxPoint x="60" y="670" as="sourcePoint" />
-            <mxPoint x="100" y="670" as="targetPoint" />
-          </mxGeometry>
-        </mxCell>
-        <mxCell id="legend-uart-text" value="UART (RX/TX)" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;" vertex="1" parent="1">
-          <mxGeometry x="110" y="660" width="100" height="20" as="geometry" />
-        </mxCell>
-        
-        <mxCell id="legend-spi1" value="" style="endArrow=classic;html=1;strokeColor=#990099;strokeWidth=2;" edge="1" parent="1">
-          <mxGeometry width="50" height="50" relative="1" as="geometry">
-            <mxPoint x="60" y="690" as="sourcePoint" />
-            <mxPoint x="100" y="690" as="targetPoint" />
-          </mxGeometry>
-        </mxCell>
-        <mxCell id="legend-spi1-text" value="SPI-Bus SD-Karte" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;" vertex="1" parent="1">
-          <mxGeometry x="110" y="680" width="100" height="20" as="geometry" />
-        </mxCell>
-        
-        <mxCell id="legend-spi2" value="" style="endArrow=classic;html=1;strokeColor=#CC6600;strokeWidth=2;" edge="1" parent="1">
-          <mxGeometry width="50" height="50" relative="1" as="geometry">
-            <mxPoint x="60" y="710" as="sourcePoint" />
-            <mxPoint x="100" y="710" as="targetPoint" />
-          </mxGeometry>
-        </mxCell>
-        <mxCell id="legend-spi2-text" value="SPI-Bus CAN" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;" vertex="1" parent="1">
-          <mxGeometry x="110" y="700" width="100" height="20" as="geometry" />
-        </mxCell>
-        
-        <mxCell id="legend-can" value="" style="endArrow=classic;html=1;strokeColor=#FF0000;strokeWidth=2;" edge="1" parent="1">
-          <mxGeometry width="50" height="50" relative="1" as="geometry">
-            <mxPoint x="60" y="730" as="sourcePoint" />
-            <mxPoint x="100" y="730" as="targetPoint" />
-          </mxGeometry>
-        </mxCell>
-        <mxCell id="legend-can-text" value="CAN-Bus (H/L)" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;" vertex="1" parent="1">
-          <mxGeometry x="110" y="720" width="100" height="20" as="geometry" />
-        </mxCell>
-        
-        <mxCell id="legend-power" value="" style="endArrow=classic;html=1;strokeColor=#CC0000;strokeWidth=2;dashed=1;" edge="1" parent="1">
-          <mxGeometry width="50" height="50" relative="1" as="geometry">
-            <mxPoint x="60" y="750" as="sourcePoint" />
-            <mxPoint x="100" y="750" as="targetPoint" />
-          </mxGeometry>
-        </mxCell>
-        <mxCell id="legend-power-text" value="Stromversorgung 3.3V" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;" vertex="1" parent="1">
-          <mxGeometry x="110" y="740" width="130" height="20" as="geometry" />
-        </mxCell>
-        
-        <!-- Titel -->
-        <mxCell id="title" value="ESP32-S3 Straßenqualitäts-Messsystem - Hardware Schaltplan" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontStyle=1;fontSize=18;" vertex="1" parent="1">
-          <mxGeometry x="300" y="40" width="560" height="30" as="geometry" />
-        </mxCell>
-        
       </root>
     </mxGraphModel>
   </diagram>

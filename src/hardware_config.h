@@ -7,10 +7,10 @@
 // Zentrale Pin-Konfiguration für das Straßenqualitäts-Messsystem
 // Alle Hardware-spezifischen Pin-Zuordnungen sind hier definiert
 
-#define ROADTEST_FIRMWARE_VERSION "1.5.23"
+#define ROADTEST_FIRMWARE_VERSION "1.5.25"
 #define ROADTEST_FIRMWARE_FILE_NAME \
     "roadtest_" ROADTEST_FIRMWARE_VERSION ".bin"
-#define ROADTEST_CSV_SCHEMA_VERSION "1.5.23-quality-v6"
+#define ROADTEST_CSV_SCHEMA_VERSION "1.5.25-quality-v7"
 #define ROADTEST_VEHICLE_PROFILE "Porsche Carrera S 2012 PDK"
 
 // -----------------------------------------------------------------------------
@@ -117,9 +117,10 @@ extern const int GPS_BAUD_RATE;    // 9600    - GPS Baudrate
 #define ACCEPTANCE_INITIAL_STAND_MS         60000UL
 #define ACCEPTANCE_FINAL_STAND_MS          120000UL
 
-// Laufzeitdiagnose: Ab einer Sekunde ist eine Pause für GPS, Sensorabtastung
-// und OBD-Frische relevant und wird als Sitzungs-Stall gezählt.
-#define RUNTIME_STALL_THRESHOLD_MS           1000UL
+// Laufzeitdiagnose: 250 ms verfehlen bereits zwei 10-Hz-Sensorzeitpunkte und
+// mindestens einen 5-Hz-GPS-Snapshot. Verlorene Slots werden zusätzlich
+// unabhängig von dieser Schwelle gezählt.
+#define RUNTIME_STALL_THRESHOLD_MS            250UL
 
 // Task-Watchdog: Ein hängender loop() führt zum Neustart statt zu einem
 // stummen Gerät auf der Strecke. Grosszügig bemessen, damit langsame

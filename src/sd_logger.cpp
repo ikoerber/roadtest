@@ -14,6 +14,32 @@ uint32_t sessionCounterDelta(uint32_t current, uint32_t start) {
     // einen unsigned-Unterlauf als riesigen Sitzungswert protokollieren.
     return current >= start ? current - start : current;
 }
+
+size_t writeFileTimed(File& file, const char* data, size_t length) {
+    const unsigned long startedAt = millis();
+    const size_t written = file.write(
+        reinterpret_cast<const uint8_t*>(data), length);
+    runtimeDiagnostics.recordSDDuration(millis() - startedAt);
+    return written;
+}
+
+void flushFileTimed(File& file) {
+    const unsigned long startedAt = millis();
+    file.flush();
+    runtimeDiagnostics.recordSDDuration(millis() - startedAt);
+}
+
+void advanceLogSchedule(
+    unsigned long& lastLog, unsigned long now,
+    uint32_t intervalMs) {
+    if (lastLog == 0 || intervalMs == 0) {
+        lastLog = now;
+        return;
+    }
+    const unsigned long elapsed = now - lastLog;
+    lastLog +=
+        max(elapsed / intervalMs, 1UL) * intervalMs;
+}
 }
 
 // Globale Instanz
@@ -85,7 +111,9 @@ bool SDLogger::logCorrelatedData(const SensorData& sensorData, const CANMessage&
     logLine += "\n";
     
     if (correlatedLogFile &&
-        correlatedLogFile.print(logLine) == logLine.length()) {
+        writeFileTimed(
+            correlatedLogFile, logLine.c_str(), logLine.length()) ==
+            logLine.length()) {
         stats.totalWrites++;
         stats.totalBytes += logLine.length();
         return true;
@@ -682,9 +710,11 @@ bool SDLogger::writeHeader(File& file, LogType type) {
                 "CANMode,TEC,REC,EFLG,RX0OverflowCount,RX1OverflowCount,"
                 "CANRecoveryCount,"
                 "SDWrites,SDErrors,SDDropped,"
-                "LoopLastMs,LoopMaxMs,LoopStalls,"
-                "WebLastMs,WebMaxMs,WebStalls,"
-                "SDLastMs,SDMaxMs,SDStalls";
+                "LoopLastMs,LoopMaxMs,LoopTotalMs,LoopSamples,LoopStalls,"
+                "WebLastMs,WebMaxMs,WebTotalMs,WebSamples,WebStalls,"
+                "SDLastMs,SDMaxMs,SDTotalMs,SDSamples,SDStalls,"
+                "SensorSamples,SensorMissedSlots,"
+                "GPSSnapshots,GPSMissedSlots";
             break;
 
         case LOG_TYPE_CORRELATED:
@@ -879,7 +909,8 @@ bool SDLogger::logSensorData(const SensorData& data) {
     if (!logging || !config.enableSensorLog) return false;
     
     unsigned long now = millis();
-    if (now - lastSensorLog < config.sensorLogInterval) {
+    if (lastSensorLog != 0 &&
+        now - lastSensorLog < config.sensorLogInterval) {
         return true; // Noch nicht Zeit für nächsten Log
     }
     
@@ -908,7 +939,8 @@ bool SDLogger::logSensorData(const SensorData& data) {
     
     if (success) {
         bufferedRecordCount++;
-        lastSensorLog = now;
+        advanceLogSchedule(
+            lastSensorLog, now, config.sensorLogInterval);
         
         // Auto-Flush bei 80% Buffer-Auslastung
         if (getAvailableBufferSpace() < BUFFER_SIZE * 0.2) {
@@ -934,7 +966,9 @@ bool SDLogger::logVibrationMetrics(const VibrationMetrics& metrics) {
                     String(metrics.shockCount) + "\n";
     
     if (eventLogFile &&
-        eventLogFile.print(logLine) == logLine.length()) {
+        writeFileTimed(
+            eventLogFile, logLine.c_str(), logLine.length()) ==
+            logLine.length()) {
         stats.totalWrites++;
         stats.totalBytes += logLine.length();
         return true;
@@ -1002,7 +1036,8 @@ bool SDLogger::logCANMessage(const CANMessage& msg) {
     }
     
     size_t logLength = strlen(logBuffer);
-    if (canLogFile && canLogFile.print(logBuffer) == logLength) {
+    if (canLogFile &&
+        writeFileTimed(canLogFile, logBuffer, logLength) == logLength) {
         stats.totalWrites++;
         stats.totalBytes += logLength;
         return true;
@@ -1091,9 +1126,7 @@ bool SDLogger::logOBDData(
 
     const size_t logLength = static_cast<size_t>(written);
     if (obdLogFile &&
-        obdLogFile.write(
-            reinterpret_cast<const uint8_t*>(logBuffer), logLength) ==
-            logLength) {
+        writeFileTimed(obdLogFile, logBuffer, logLength) == logLength) {
         stats.totalWrites++;
         stats.totalBytes += logLength;
         return true;
@@ -1166,8 +1199,7 @@ bool SDLogger::logOBDTraceEvent(
     }
 
     const size_t length = static_cast<size_t>(written);
-    if (obdTraceLogFile.write(
-            reinterpret_cast<const uint8_t*>(logBuffer), length) == length) {
+    if (writeFileTimed(obdTraceLogFile, logBuffer, length) == length) {
         stats.totalWrites++;
         stats.totalBytes += length;
         return true;
@@ -1187,7 +1219,7 @@ bool SDLogger::logSessionMetadata(
 
     const RuntimeTimingDiagnostics timing =
         runtimeDiagnostics.getTiming();
-    char logBuffer[1024];
+    char logBuffer[1280];
     const int written = snprintf(
         logBuffer, sizeof(logBuffer),
         "%s,%s,%lu,%s,%s,%s,%s,%ld,%ld,%d,%d,%lu,"
@@ -1195,7 +1227,10 @@ bool SDLogger::logSessionMetadata(
         "%lu,%lu,%lu,%lu,%u,"
         "%d,%lu,%lu,%lu,%lu,%lu,%lu,"
         "%02X,%u,%u,%02X,%lu,%lu,%lu,%lu,%lu,%lu,"
-        "%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu\n",
+        "%lu,%lu,%lu,%lu,%lu,"
+        "%lu,%lu,%lu,%lu,%lu,"
+        "%lu,%lu,%lu,%lu,%lu,"
+        "%lu,%lu,%lu,%lu\n",
         record,
         formatUTC().c_str(),
         static_cast<unsigned long>(millis() - sessionStartTime),
@@ -1253,13 +1288,23 @@ bool SDLogger::logSessionMetadata(
         static_cast<unsigned long>(stats.droppedLogs),
         static_cast<unsigned long>(timing.lastLoopIntervalMs),
         static_cast<unsigned long>(timing.maxLoopIntervalMs),
+        static_cast<unsigned long>(timing.totalLoopIntervalMs),
+        static_cast<unsigned long>(timing.loopIntervalCount),
         static_cast<unsigned long>(timing.loopStallCount),
         static_cast<unsigned long>(timing.lastWebDurationMs),
         static_cast<unsigned long>(timing.maxWebDurationMs),
+        static_cast<unsigned long>(timing.totalWebDurationMs),
+        static_cast<unsigned long>(timing.webDurationCount),
         static_cast<unsigned long>(timing.webStallCount),
         static_cast<unsigned long>(timing.lastSDDurationMs),
         static_cast<unsigned long>(timing.maxSDDurationMs),
-        static_cast<unsigned long>(timing.sdStallCount));
+        static_cast<unsigned long>(timing.totalSDDurationMs),
+        static_cast<unsigned long>(timing.sdDurationCount),
+        static_cast<unsigned long>(timing.sdStallCount),
+        static_cast<unsigned long>(timing.sensorSampleCount),
+        static_cast<unsigned long>(timing.sensorMissedSlots),
+        static_cast<unsigned long>(timing.gpsSnapshotCount),
+        static_cast<unsigned long>(timing.gpsMissedSlots));
 
     if (written < 0 || written >= static_cast<int>(sizeof(logBuffer))) {
         stats.errorCount++;
@@ -1268,8 +1313,7 @@ bool SDLogger::logSessionMetadata(
     }
 
     const size_t length = static_cast<size_t>(written);
-    if (metaLogFile.write(
-            reinterpret_cast<const uint8_t*>(logBuffer), length) == length) {
+    if (writeFileTimed(metaLogFile, logBuffer, length) == length) {
         stats.totalWrites++;
         stats.totalBytes += length;
         lastMetadataLog = millis();
@@ -1284,7 +1328,8 @@ bool SDLogger::logGPSData(const GPSData& gps) {
     if (!logging || !config.enableGPSLog) return false;
     
     unsigned long now = millis();
-    if (now - lastGPSLog < config.gpsLogInterval) {
+    if (lastGPSLog != 0 &&
+        now - lastGPSLog < config.gpsLogInterval) {
         return true;
     }
     
@@ -1340,10 +1385,12 @@ bool SDLogger::logGPSData(const GPSData& gps) {
     }
     
     size_t logLength = strlen(logBuffer);
-    if (gpsLogFile && gpsLogFile.print(logBuffer) == logLength) {
+    if (gpsLogFile &&
+        writeFileTimed(gpsLogFile, logBuffer, logLength) == logLength) {
         stats.totalWrites++;
         stats.totalBytes += logLength;
-        lastGPSLog = now;
+        advanceLogSchedule(
+            lastGPSLog, now, config.gpsLogInterval);
         gpsSessionLastLoggedFixSequence = gps.fix_sequence;
 
         // Strecke nur einmal pro neuem Positionsfix bilden. Im Fahrzeug hat
@@ -1430,7 +1477,8 @@ bool SDLogger::logRoadQuality(float quality, float smoothness,
     if (!logging || !config.enableRoadLog) return false;
     
     unsigned long now = millis();
-    if (now - lastRoadLog < config.roadLogInterval) {
+    if (lastRoadLog != 0 &&
+        now - lastRoadLog < config.roadLogInterval) {
         return true;
     }
     
@@ -1441,10 +1489,13 @@ bool SDLogger::logRoadQuality(float quality, float smoothness,
                     String(vibrationRMS, 3) + "\n";
     
     if (roadLogFile &&
-        roadLogFile.print(logLine) == logLine.length()) {
+        writeFileTimed(
+            roadLogFile, logLine.c_str(), logLine.length()) ==
+            logLine.length()) {
         stats.totalWrites++;
         stats.totalBytes += logLine.length();
-        lastRoadLog = now;
+        advanceLogSchedule(
+            lastRoadLog, now, config.roadLogInterval);
         qualitySum += quality;
         rideSummary.qualitySamples++;
         rideSummary.averageQuality =
@@ -1478,8 +1529,10 @@ bool SDLogger::logEvent(const String& eventType, const String& description,
                     String(lon, 6) + ",0\n";
     
     if (eventLogFile &&
-        eventLogFile.print(logLine) == logLine.length()) {
-        eventLogFile.flush(); // Ereignisse sofort speichern
+        writeFileTimed(
+            eventLogFile, logLine.c_str(), logLine.length()) ==
+            logLine.length()) {
+        flushFileTimed(eventLogFile); // Ereignisse sofort speichern
         stats.totalWrites++;
         stats.totalBytes += logLine.length();
         return true;
@@ -1535,7 +1588,6 @@ bool SDLogger::logDebug(const String& message) {
 }
 
 void SDLogger::flush() {
-    const unsigned long flushStartedAt = millis();
     if (logging && metaLogFile &&
         millis() - lastMetadataLog >= 5000) {
         logSessionMetadata(
@@ -1545,24 +1597,20 @@ void SDLogger::flush() {
     }
 
     if (!isReady() || !flushBuffer()) {
-        runtimeDiagnostics.recordSDDuration(
-            millis() - flushStartedAt);
         return;
     }
 
     if (currentLogFile) {
-        currentLogFile.flush();
+        flushFileTimed(currentLogFile);
     }
-    if (roadLogFile) roadLogFile.flush();
-    if (gpsLogFile) gpsLogFile.flush();
-    if (canLogFile) canLogFile.flush();
-    if (obdLogFile) obdLogFile.flush();
-    if (obdTraceLogFile) obdTraceLogFile.flush();
-    if (metaLogFile) metaLogFile.flush();
-    if (eventLogFile) eventLogFile.flush();
-    if (correlatedLogFile) correlatedLogFile.flush();
-    runtimeDiagnostics.recordSDDuration(
-        millis() - flushStartedAt);
+    if (roadLogFile) flushFileTimed(roadLogFile);
+    if (gpsLogFile) flushFileTimed(gpsLogFile);
+    if (canLogFile) flushFileTimed(canLogFile);
+    if (obdLogFile) flushFileTimed(obdLogFile);
+    if (obdTraceLogFile) flushFileTimed(obdTraceLogFile);
+    if (metaLogFile) flushFileTimed(metaLogFile);
+    if (eventLogFile) flushFileTimed(eventLogFile);
+    if (correlatedLogFile) flushFileTimed(correlatedLogFile);
     
     lastFlush = millis();
 }
