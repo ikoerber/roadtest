@@ -1333,19 +1333,40 @@ void loop() {
 
         // Alle Auswertungen verwenden exakt denselben 10-Hz-Sensorwert.
         VibrationMetrics vibMetrics = bnoManager.analyzeVibration();
-        float speedKmh =
-            lastGPSData.speed_valid ? lastGPSData.speed_kmh : -1.0f;
+
+        // Verbindliche Geschwindigkeitsquelle für alle Fahrbahnauswertungen.
+        // Eine frische OBD-Geschwindigkeit hat Vorrang, weil sie den
+        // Stillstand exakt mit 0 km/h meldet; getOBDData() entwertet
+        // speedValid bereits über CAN_OBD_VALUE_MAX_AGE_MS. Erst danach gilt
+        // eine gefilterte GPS-Geschwindigkeit. Ist keine von beiden
+        // nachweisbar, bleibt die Geschwindigkeit unbekannt und wird als
+        // negativer Wert weitergegeben - nicht als null.
+        const OBDLiveData obdLive = canReader.getOBDData();
+        float speedKmh = -1.0f;
+        if (obdLive.speedValid) {
+            speedKmh = static_cast<float>(obdLive.speedKmh);
+        } else if (lastGPSData.speed_valid) {
+            speedKmh = lastGPSData.speed_kmh;
+        }
+
         float roadQuality = bnoManager.calculateRoadQuality(speedKmh);
-        bool potholeDetected = bnoManager.detectPothole(sensorData);
-        bool curveCompleted = bnoManager.detectCurve(sensorData);
+        bool potholeDetected =
+            bnoManager.detectPothole(sensorData, speedKmh);
+        bool curveCompleted =
+            bnoManager.detectCurve(sensorData, speedKmh);
 
         // Daten auf SD-Karte loggen
         if (sdLogger.isLogging()) {
             sdLogger.logSensorData(sensorData);
 
-            // Straßenqualität loggen
-            sdLogger.logRoadQuality(roadQuality, bnoManager.getSmoothness(), 
-                                   0, vibMetrics.rmsAccel);
+            // Straßenqualität nur bei nachgewiesener Fahrzeugbewegung
+            // protokollieren. Ein negativer Wert bedeutet "kein Messwert"
+            // und darf nicht als Zahl in der Auswertung erscheinen.
+            if (roadQuality >= 0.0f) {
+                sdLogger.logRoadQuality(
+                    roadQuality, bnoManager.getSmoothness(),
+                    0, vibMetrics.rmsAccel);
+            }
 
             // Schlagloch-Erkennung
             if (potholeDetected) {
@@ -1756,6 +1777,8 @@ void loop() {
             Serial.println("integration - Vollständige Integration-Tests");
             Serial.println("stress - Stress-Test-Suite");
             Serial.println("recovery - Failure-Recovery-Tests");
+            Serial.println(
+                "sdrecovery - Fokussierter SD-Wiederanlauftest");
             Serial.println("quick - Schnelle Integration-Tests");
             Serial.println("buffer - Buffer-Sicherheits-Test");
             Serial.println("memory - Memory-Leak-Test (2 Min)");
@@ -1824,6 +1847,13 @@ void loop() {
         else if (command == "recovery") {
             suspendWatchdog();
             runFailureRecoveryTests();
+            resumeWatchdog();
+        }
+        else if (command == "sdrecovery") {
+            suspendWatchdog();
+            integrationTests = IntegrationTests();
+            integrationTests.testSDCardHotplug();
+            integrationTests.printDetailedReport();
             resumeWatchdog();
         }
         else if (command == "quick") {

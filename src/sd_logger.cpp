@@ -9,6 +9,11 @@
 float calculateOverallQuality(const RoadMetrics& metrics);
 
 namespace {
+constexpr const char* SD_RECOVERY_NVS_NAMESPACE = "rt_sd_rec";
+constexpr const char* SENSOR_CSV_HEADER =
+    "UTC,UptimeMs,Heading,Pitch,Roll,AccelX,AccelY,AccelZ,"
+    "GyroX,GyroY,GyroZ,Temp,CalSystem,CalGyro,CalAccel,CalMag";
+
 uint32_t sessionCounterDelta(uint32_t current, uint32_t start) {
     // Auch bei einem unerwarteten Zählerneustart oder 32-Bit-Überlauf niemals
     // einen unsigned-Unterlauf als riesigen Sitzungswert protokollieren.
@@ -47,16 +52,22 @@ SDLogger sdLogger;
 
 SDLogger::SDLogger(int cs) 
     : csPin(cs), spiInstance(nullptr), initialized(false), 
-      cardAvailable(false), logging(false),
+      cardAvailable(false), logging(false), stopping(false),
       loggingStartState(LoggingStartState::IDLE), bufferIndex(0),
-      lastSensorLog(0), lastRoadLog(0), lastGPSLog(0), lastFlush(0),
+      lastRoadLog(0), lastFlush(0),
       lastMetadataLog(0), sessionStartTime(0),
       gpsSessionStartStatus{}, gpsSessionStartFixSequence(0),
       gpsSessionLastLoggedFixSequence(0),
       canSessionStartDiagnostics{}, qualitySum(0),
       hasLastRideGPS(false),
       lastRideLatitude(0), lastRideLongitude(0), lastRideGPSTime(0),
-      bufferedRecordCount(0) {
+      bufferedRecordCount(0), recoveryResumePending(false),
+      recoveryMarkerPending(false), recoveryBufferPending(false),
+      recoveryStateLoaded(false), recoveryOriginalSessionId(""),
+      recoveryFailureReason(""), recoveryFailureUTC(""),
+      recoveryFailureTime(0), recoveryBufferedRecordsAtFailure(0),
+      recoveryRecoveredRecords(0), recoveryBufferFileName(""),
+      lastRecoveryStatus("") {
     
     // Standard-Konfiguration
     config = {
@@ -188,7 +199,28 @@ bool SDLogger::begin(SPIClass& spi) {
     
     initialized = true;
     stats.startTime = millis();
-    
+
+    loadPersistentRecoveryState();
+    if (recoveryBufferPending && !recoverBufferedSensorData()) {
+        Serial.println(
+            "⚠️ Gepufferte Sensordaten konnten noch nicht gesichert werden; "
+            "SD-Wiederanlauf wird erneut versucht");
+        SD.end();
+        initialized = false;
+        cardAvailable = false;
+        return false;
+    }
+
+    // Nur ein im selben Gerätestart erkannter Kartenfehler wird automatisch
+    // fortgesetzt. Nach Reset oder Spannungsverlust bleibt der alte
+    // Sitzungsmarker erhalten, aber eine neue Messung beginnt aus
+    // Sicherheitsgründen erst auf ausdrücklichen Start.
+    if (recoveryResumePending) {
+        lastRecoveryStatus =
+            "SD wieder bereit; Fortsetzung der Messung wird vorbereitet";
+        requestLoggingStart();
+    }
+
     Serial.println("✅ SD Logger bereit!");
     return true;
 }
@@ -364,9 +396,7 @@ void SDLogger::processLoggingStart() {
     lastRideGPSTime = 0;
     bufferIndex = 0;
     bufferedRecordCount = 0;
-    lastSensorLog = 0;
     lastRoadLog = 0;
-    lastGPSLog = 0;
     lastMetadataLog = 0;
     gpsSessionStartStatus = gpsManager.getStatus();
     gpsSessionStartFixSequence = gpsManager.getFixSequence();
@@ -391,6 +421,16 @@ void SDLogger::processLoggingStart() {
         }
         return;
     }
+
+    if (recoveryResumePending || recoveryMarkerPending) {
+        finishRecoveryMarker();
+        if (!logging) {
+            return;
+        }
+    } else {
+        persistActiveSession();
+    }
+
     Serial.printf("✅ Sensor-Log: %s\n", currentFileName.c_str());
     if (roadLogFile) Serial.printf("✅ Straßen-Log: %s\n", roadFileName.c_str());
     if (gpsLogFile) Serial.printf("✅ GPS-Log: %s\n", gpsFileName.c_str());
@@ -407,6 +447,7 @@ void SDLogger::processLoggingStart() {
 }
 
 void SDLogger::failLoggingStart(const String& reason) {
+    const bool retryRecoveryStart = recoveryResumePending;
     if (logging) {
         rideSummary.durationSeconds =
             (millis() - sessionStartTime) / 1000;
@@ -420,8 +461,21 @@ void SDLogger::failLoggingStart(const String& reason) {
     }
     closeLogFiles();
     logging = false;
+    stopping = false;
     loggingStartState = LoggingStartState::IDLE;
     lastStartError = reason;
+    if (retryRecoveryStart) {
+        // Eine noch instabile Karte kann unmittelbar nach dem ersten
+        // erfolgreichen Mount beim Öffnen der Sitzungsdateien erneut
+        // ausfallen. Den Wiederanlauf dann nicht still aufgeben, sondern über
+        // denselben begrenzten Hardware-Recovery-Zyklus neu versuchen.
+        SD.end();
+        initialized = false;
+        cardAvailable = false;
+        lastRecoveryStatus =
+            "Fortsetzung konnte noch nicht geöffnet werden; erneuter "
+            "SD-Wiederanlauf folgt";
+    }
     Serial.printf("❌ SD-Aufzeichnungsstart fehlgeschlagen: %s\n",
                   reason.c_str());
 }
@@ -433,6 +487,7 @@ void SDLogger::stopLogging() {
     }
 
     if (!logging) return;
+    stopping = true;
 
     rideSummary.durationSeconds = (millis() - sessionStartTime) / 1000;
     rideSummary.endUTC = formatUTC();
@@ -458,6 +513,7 @@ void SDLogger::stopLogging() {
     flush();
     if (!isReady()) {
         logging = false;
+        stopping = false;
         Serial.println("⚠️ Messfahrt wegen SD-Schreibfehler abgebrochen");
         return;
     }
@@ -483,6 +539,26 @@ void SDLogger::stopLogging() {
     }
     closeLogFiles();
     logging = false;
+    stopping = false;
+
+    if (sessionComplete) {
+        clearPersistentRecoveryState();
+    } else if (isReady()) {
+        recoveryOriginalSessionId = sessionId;
+        recoveryFailureReason = "SESSION_FINALIZATION_INCOMPLETE";
+        recoveryFailureUTC = rideSummary.endUTC;
+        recoveryFailureTime = millis();
+        recoveryResumePending = false;
+        recoveryBufferPending = false;
+        recoveryBufferedRecordsAtFailure = 0;
+        recoveryRecoveredRecords = 0;
+        recoveryBufferFileName = "";
+        recoveryMarkerPending = true;
+        persistFailureState(recoveryFailureReason);
+        lastRecoveryStatus =
+            "Sitzungsabschluss unvollständig; Verweis wird bei der nächsten "
+            "Messung protokolliert";
+    }
 
     Serial.println(
         sessionComplete
@@ -609,18 +685,46 @@ void SDLogger::handleCardFailure(const char* reason, uint32_t droppedRecords) {
         return;
     }
 
-    if (logging) {
+    const bool wasLogging = logging;
+    if (wasLogging) {
         rideSummary.durationSeconds = (millis() - sessionStartTime) / 1000;
         rideSummary.endUTC = formatUTC();
         rideSummary.active = false;
         rideSummary.completed = false;
         rideSummary.interrupted = true;
+
+        // Ein Fehler während eines ausdrücklich angeforderten Stopps darf
+        // nicht überraschend eine neue Messung starten. Die Datenrettung und
+        // der persistente Verweis bleiben trotzdem aktiv.
+        recoveryResumePending = !stopping;
+        recoveryMarkerPending = true;
+        recoveryBufferPending =
+            bufferIndex > 0 && bufferedRecordCount > 0;
+        recoveryOriginalSessionId = sessionId;
+        recoveryFailureReason = reason;
+        recoveryFailureUTC = rideSummary.endUTC;
+        recoveryFailureTime = millis();
+        recoveryBufferedRecordsAtFailure = bufferedRecordCount;
+        recoveryRecoveredRecords = 0;
+        recoveryBufferFileName = "";
+        persistFailureState(recoveryFailureReason);
     }
 
     stats.errorCount++;
-    stats.droppedLogs += droppedRecords + bufferedRecordCount;
-    bufferIndex = 0;
-    bufferedRecordCount = 0;
+    stats.droppedLogs += droppedRecords;
+    lastRecoveryStatus =
+        wasLogging && recoveryResumePending
+            ? String("SD-Fehler erkannt; ") +
+                  String(bufferedRecordCount) +
+                  " gepufferte Sensorzeilen werden gesichert und die "
+                  "Messung danach fortgesetzt"
+            : (wasLogging
+                   ? String("SD-Fehler beim Beenden; ") +
+                         String(bufferedRecordCount) +
+                         " gepufferte Sensorzeilen werden nach dem "
+                         "Wiedereinbinden gesichert"
+                   : String(
+                         "SD-Fehler erkannt; Karte wird erneut eingebunden"));
     if (canReader.isOBDSessionActive()) {
         canReader.endOBDSession();
     }
@@ -630,14 +734,232 @@ void SDLogger::handleCardFailure(const char* reason, uint32_t droppedRecords) {
     initialized = false;
     cardAvailable = false;
 
-    Serial.printf("⚠️ SD-Fehler: %s; Aufzeichnung beendet\n", reason);
+    Serial.printf(
+        "⚠️ SD-Fehler: %s; %s\n", reason,
+        wasLogging && recoveryResumePending
+            ? "automatischer Messungs-Wiederanlauf vorgemerkt"
+            : "Karte wird im Hintergrund erneut geprüft");
+}
+
+void SDLogger::loadPersistentRecoveryState() {
+    if (recoveryStateLoaded || recoveryResumePending ||
+        recoveryMarkerPending) {
+        return;
+    }
+
+    Preferences recoveryPreferences;
+    if (!recoveryPreferences.begin(
+            SD_RECOVERY_NVS_NAMESPACE, true)) {
+        Serial.println(
+            "⚠️ Persistenter SD-Sitzungsstatus konnte nicht gelesen werden");
+        return;
+    }
+
+    const bool active =
+        recoveryPreferences.getBool("active", false);
+    if (active) {
+        recoveryOriginalSessionId =
+            recoveryPreferences.getString("sid", "");
+        recoveryFailureReason =
+            recoveryPreferences.getString("cause", "");
+        recoveryFailureUTC =
+            recoveryPreferences.getString("failutc", "");
+        recoveryBufferedRecordsAtFailure =
+            recoveryPreferences.getUInt("bufrows", 0);
+
+        if (recoveryFailureReason.length() == 0) {
+            recoveryFailureReason =
+                "UNEXPECTED_RESET_OR_POWER_LOSS";
+        }
+        if (recoveryFailureUTC.length() == 0) {
+            recoveryFailureUTC =
+                recoveryPreferences.getString("startutc", "");
+        }
+
+        recoveryMarkerPending = true;
+        lastRecoveryStatus =
+            "Eine zuvor nicht sauber abgeschlossene Messung wurde erkannt; "
+            "der Verweis wird beim nächsten Start protokolliert";
+        Serial.printf(
+            "⚠️ Unvollständige frühere Sitzung erkannt: %s (%s)\n",
+            recoveryOriginalSessionId.c_str(),
+            recoveryFailureReason.c_str());
+    }
+
+    recoveryPreferences.end();
+    recoveryStateLoaded = true;
+}
+
+void SDLogger::persistActiveSession() {
+    Preferences recoveryPreferences;
+    if (!recoveryPreferences.begin(
+            SD_RECOVERY_NVS_NAMESPACE, false)) {
+        Serial.println(
+            "⚠️ Aktiver SD-Sitzungsstatus konnte nicht gespeichert werden");
+        return;
+    }
+
+    recoveryPreferences.putBool("active", true);
+    recoveryPreferences.putString("sid", sessionId);
+    recoveryPreferences.putString("startutc", rideSummary.startUTC);
+    recoveryPreferences.putString("cause", "");
+    recoveryPreferences.putString("failutc", "");
+    recoveryPreferences.putUInt("bufrows", 0);
+    recoveryPreferences.end();
+}
+
+void SDLogger::persistFailureState(const String& reason) {
+    Preferences recoveryPreferences;
+    if (!recoveryPreferences.begin(
+            SD_RECOVERY_NVS_NAMESPACE, false)) {
+        Serial.println(
+            "⚠️ SD-Fehlerstatus konnte nicht persistent gespeichert werden");
+        return;
+    }
+
+    recoveryPreferences.putBool("active", true);
+    recoveryPreferences.putString(
+        "sid", recoveryOriginalSessionId);
+    recoveryPreferences.putString(
+        "startutc", rideSummary.startUTC);
+    recoveryPreferences.putString("cause", reason);
+    recoveryPreferences.putString(
+        "failutc", recoveryFailureUTC);
+    recoveryPreferences.putUInt(
+        "bufrows", recoveryBufferedRecordsAtFailure);
+    recoveryPreferences.end();
+}
+
+void SDLogger::clearPersistentRecoveryState() {
+    Preferences recoveryPreferences;
+    if (!recoveryPreferences.begin(
+            SD_RECOVERY_NVS_NAMESPACE, false)) {
+        Serial.println(
+            "⚠️ Abgeschlossener SD-Sitzungsstatus konnte nicht gelöscht werden");
+        return;
+    }
+
+    recoveryPreferences.clear();
+    recoveryPreferences.end();
+}
+
+bool SDLogger::recoverBufferedSensorData() {
+    if (!recoveryBufferPending || bufferIndex <= 0 ||
+        bufferedRecordCount == 0) {
+        recoveryBufferPending = false;
+        return true;
+    }
+
+    String recoveryDirectory =
+        "/sessions/" + recoveryOriginalSessionId;
+    if (!SD.exists(recoveryDirectory) &&
+        !SD.mkdir(recoveryDirectory)) {
+        Serial.printf(
+            "❌ Recovery-Verzeichnis fehlt: %s\n",
+            recoveryDirectory.c_str());
+        return false;
+    }
+
+    char uniqueSuffix[12];
+    snprintf(
+        uniqueSuffix, sizeof(uniqueSuffix), "%08lX",
+        static_cast<unsigned long>(esp_random()));
+    const String recoveryFileName =
+        recoveryDirectory + "/" + config.filePrefix +
+        "_sensor_recovered_" + uniqueSuffix + ".csv";
+    File recoveryFile =
+        SD.open(recoveryFileName, FILE_WRITE);
+    if (!recoveryFile) {
+        Serial.printf(
+            "❌ Recovery-Sensordatei konnte nicht angelegt werden: %s\n",
+            recoveryFileName.c_str());
+        return false;
+    }
+
+    const size_t headerBytes =
+        recoveryFile.println(SENSOR_CSV_HEADER);
+    const size_t sensorBytes =
+        writeFileTimed(
+            recoveryFile, writeBuffer,
+            static_cast<size_t>(bufferIndex));
+    flushFileTimed(recoveryFile);
+    recoveryFile.close();
+
+    if (headerBytes == 0 ||
+        sensorBytes != static_cast<size_t>(bufferIndex)) {
+        Serial.println(
+            "❌ Gepufferte Sensorzeilen wurden nicht vollständig gesichert");
+        return false;
+    }
+
+    recoveryRecoveredRecords = bufferedRecordCount;
+    recoveryBufferFileName = recoveryFileName;
+    stats.totalWrites += bufferedRecordCount;
+    stats.totalBytes += sensorBytes;
+    stats.fileCount++;
+    bufferIndex = 0;
+    bufferedRecordCount = 0;
+    recoveryBufferPending = false;
+    lastRecoveryStatus =
+        String(recoveryRecoveredRecords) +
+        " gepufferte Sensorzeilen gesichert; Fortsetzung wird vorbereitet";
+    Serial.printf(
+        "✅ %lu gepufferte Sensorzeilen gesichert: %s\n",
+        static_cast<unsigned long>(recoveryRecoveredRecords),
+        recoveryFileName.c_str());
+    return true;
+}
+
+void SDLogger::finishRecoveryMarker() {
+    String description =
+        "Ursprungssitzung=" + recoveryOriginalSessionId +
+        ";Ursache=" + recoveryFailureReason;
+    if (recoveryFailureUTC.length() > 0) {
+        description += ";FehlerUTC=" + recoveryFailureUTC;
+    }
+    if (recoveryFailureTime > 0) {
+        description +=
+            ";AusfallMs=" +
+            String(millis() - recoveryFailureTime);
+    }
+    description +=
+        ";PufferBeiFehler=" +
+        String(recoveryBufferedRecordsAtFailure);
+    description +=
+        ";PufferGerettet=" +
+        String(recoveryRecoveredRecords);
+    if (recoveryBufferFileName.length() > 0) {
+        description +=
+            ";RecoveryDatei=" + recoveryBufferFileName;
+    }
+
+    if (!logEvent("SD_RECOVERY_CONTINUATION", description)) {
+        return;
+    }
+
+    lastRecoveryStatus =
+        "SD-Wiederanlauf erfolgreich; neue Sitzung " + sessionId +
+        " setzt " + recoveryOriginalSessionId + " fort";
+    Serial.println("✅ " + lastRecoveryStatus);
+
+    recoveryResumePending = false;
+    recoveryMarkerPending = false;
+    recoveryBufferPending = false;
+    recoveryOriginalSessionId = "";
+    recoveryFailureReason = "";
+    recoveryFailureUTC = "";
+    recoveryFailureTime = 0;
+    recoveryBufferedRecordsAtFailure = 0;
+    recoveryRecoveredRecords = 0;
+    recoveryBufferFileName = "";
+    persistActiveSession();
 }
 
 bool SDLogger::writeHeader(File& file, LogType type) {
     const char* header = nullptr;
     switch(type) {
         case LOG_TYPE_SENSOR:
-            header = "UTC,UptimeMs,Heading,Pitch,Roll,AccelX,AccelY,AccelZ,GyroX,GyroY,GyroZ,Temp,CalSystem,CalGyro,CalAccel,CalMag";
+            header = SENSOR_CSV_HEADER;
             break;
             
         case LOG_TYPE_EVENT:
@@ -713,6 +1035,8 @@ bool SDLogger::writeHeader(File& file, LogType type) {
                 "LoopLastMs,LoopMaxMs,LoopTotalMs,LoopSamples,LoopStalls,"
                 "WebLastMs,WebMaxMs,WebTotalMs,WebSamples,WebStalls,"
                 "SDLastMs,SDMaxMs,SDTotalMs,SDSamples,SDStalls,"
+                "FlushLastMs,FlushMaxMs,FlushTotalMs,FlushCycles,"
+                "FlushStalls,"
                 "SensorSamples,SensorMissedSlots,"
                 "GPSSnapshots,GPSMissedSlots";
             break;
@@ -765,8 +1089,17 @@ bool SDLogger::writeRideSummaryFile() {
     size_t headerWritten = summaryFile.println(
         "Session,StartUTC,EndUTC,DauerSekunden,StreckeKm,"
         "Schlagloecher,Kurven,Qualitaetswerte,Durchschnittsqualitaet");
+    // Ohne einen einzigen gültigen Qualitätswert - etwa in einem reinen
+    // Standlauf - bleibt das Mittelwertfeld leer. Eine 0,0 wäre hier keine
+    // gemessene Straßenlage, sondern eine fehlende Messung.
+    char averageQualityField[12] = "";
+    if (rideSummary.qualitySamples > 0) {
+        snprintf(
+            averageQualityField, sizeof(averageQualityField), "%.1f",
+            rideSummary.averageQuality);
+    }
     size_t summaryWritten = summaryFile.printf(
-        "%s,%s,%s,%lu,%.3f,%lu,%lu,%lu,%.1f\n",
+        "%s,%s,%s,%lu,%.3f,%lu,%lu,%lu,%s\n",
         rideSummary.sessionId.c_str(),
         rideSummary.startUTC.c_str(),
         rideSummary.endUTC.c_str(),
@@ -775,7 +1108,7 @@ bool SDLogger::writeRideSummaryFile() {
         static_cast<unsigned long>(rideSummary.potholeCount),
         static_cast<unsigned long>(rideSummary.curveCount),
         static_cast<unsigned long>(rideSummary.qualitySamples),
-        rideSummary.averageQuality);
+        averageQualityField);
     summaryFile.flush();
     summaryFile.close();
 
@@ -812,7 +1145,6 @@ bool SDLogger::flushBuffer() {
             runtimeDiagnostics.recordSDDuration(
                 millis() - writeStartedAt);
             if (bytesWritten != bytesToWrite) {
-                bufferIndex = 0;
                 handleCardFailure(
                     "Sensorpuffer konnte nicht vollständig geschrieben werden");
                 return false;
@@ -827,8 +1159,11 @@ bool SDLogger::flushBuffer() {
                 "❌ KRITISCH: Buffer-Grenze verletzt! Index: %d, Max: %d\n",
                 bufferIndex, BUFFER_SIZE);
             stats.bufferOverflows++;
+            const uint32_t invalidRecords = bufferedRecordCount;
             bufferIndex = 0;
-            handleCardFailure("Sensorpuffer-Grenze verletzt");
+            bufferedRecordCount = 0;
+            handleCardFailure(
+                "Sensorpuffer-Grenze verletzt", invalidRecords);
             return false;
         }
         bufferIndex = 0;
@@ -868,8 +1203,12 @@ bool SDLogger::safeAppendToBuffer(const char* data, size_t dataLen) {
     // Zusätzlicher Sicherheits-Check
     if (bufferIndex > BUFFER_SIZE) {
         Serial.println("❌ FATAL: Buffer-Index außerhalb der Grenzen!");
+        const uint32_t invalidRecords = bufferedRecordCount;
         bufferIndex = 0;
-        handleCardFailure("Sensorpuffer-Index außerhalb der Grenzen");
+        bufferedRecordCount = 0;
+        handleCardFailure(
+            "Sensorpuffer-Index außerhalb der Grenzen",
+            invalidRecords);
         return false;
     }
     
@@ -907,13 +1246,7 @@ String SDLogger::formatUTC() {
 
 bool SDLogger::logSensorData(const SensorData& data) {
     if (!logging || !config.enableSensorLog) return false;
-    
-    unsigned long now = millis();
-    if (lastSensorLog != 0 &&
-        now - lastSensorLog < config.sensorLogInterval) {
-        return true; // Noch nicht Zeit für nächsten Log
-    }
-    
+
     // Sichere Formatierung mit begrenzter Puffergröße
     char logBuffer[256]; // Maximale Zeilenlänge begrenzt
     int written = snprintf(logBuffer, sizeof(logBuffer), 
@@ -939,9 +1272,6 @@ bool SDLogger::logSensorData(const SensorData& data) {
     
     if (success) {
         bufferedRecordCount++;
-        advanceLogSchedule(
-            lastSensorLog, now, config.sensorLogInterval);
-        
         // Auto-Flush bei 80% Buffer-Auslastung
         if (getAvailableBufferSpace() < BUFFER_SIZE * 0.2) {
             if (!flushBuffer()) {
@@ -1230,6 +1560,7 @@ bool SDLogger::logSessionMetadata(
         "%lu,%lu,%lu,%lu,%lu,"
         "%lu,%lu,%lu,%lu,%lu,"
         "%lu,%lu,%lu,%lu,%lu,"
+        "%lu,%lu,%lu,%lu,%lu,"
         "%lu,%lu,%lu,%lu\n",
         record,
         formatUTC().c_str(),
@@ -1301,6 +1632,11 @@ bool SDLogger::logSessionMetadata(
         static_cast<unsigned long>(timing.totalSDDurationMs),
         static_cast<unsigned long>(timing.sdDurationCount),
         static_cast<unsigned long>(timing.sdStallCount),
+        static_cast<unsigned long>(timing.lastFlushCycleMs),
+        static_cast<unsigned long>(timing.maxFlushCycleMs),
+        static_cast<unsigned long>(timing.totalFlushCycleMs),
+        static_cast<unsigned long>(timing.flushCycleCount),
+        static_cast<unsigned long>(timing.flushCycleStallCount),
         static_cast<unsigned long>(timing.sensorSampleCount),
         static_cast<unsigned long>(timing.sensorMissedSlots),
         static_cast<unsigned long>(timing.gpsSnapshotCount),
@@ -1326,14 +1662,9 @@ bool SDLogger::logSessionMetadata(
 
 bool SDLogger::logGPSData(const GPSData& gps) {
     if (!logging || !config.enableGPSLog) return false;
-    
-    unsigned long now = millis();
-    if (lastGPSLog != 0 &&
-        now - lastGPSLog < config.gpsLogInterval) {
-        return true;
-    }
-    
+
     // Sichere GPS-Daten-Formatierung
+    const unsigned long now = millis();
     char logBuffer[640];
     String utc = gps.datetime_valid ? formatGPSDateTimeUTC(gps) : formatUTC();
     const bool newFixInSession =
@@ -1389,8 +1720,6 @@ bool SDLogger::logGPSData(const GPSData& gps) {
         writeFileTimed(gpsLogFile, logBuffer, logLength) == logLength) {
         stats.totalWrites++;
         stats.totalBytes += logLength;
-        advanceLogSchedule(
-            lastGPSLog, now, config.gpsLogInterval);
         gpsSessionLastLoggedFixSequence = gps.fix_sequence;
 
         // Strecke nur einmal pro neuem Positionsfix bilden. Im Fahrzeug hat
@@ -1518,15 +1847,16 @@ bool SDLogger::logRoadMetrics(const RoadMetrics& metrics) {
     );
 }
 
-bool SDLogger::logEvent(const String& eventType, const String& description, 
-                       float lat, float lon) {
+bool SDLogger::logEvent(const String& eventType, const String& description,
+                       float lat, float lon, float severity) {
     if (!logging || !config.enableEventLog) return false;
     
     String logLine = formatTimestamp() + "," +
                     eventType + "," +
                     description + "," +
                     String(lat, 6) + "," +
-                    String(lon, 6) + ",0\n";
+                    String(lon, 6) + "," +
+                    String(severity, 2) + "\n";
     
     if (eventLogFile &&
         writeFileTimed(
@@ -1550,7 +1880,7 @@ bool SDLogger::logPothole(float severity, float lat, float lon) {
     
     bool logged = logEvent(
         "SCHLAGLOCH", sevStr + " (" + String(severity, 1) + " m/s²)",
-        lat, lon);
+        lat, lon, severity);
     if (logged) {
         rideSummary.potholeCount++;
     }
@@ -1563,7 +1893,7 @@ bool SDLogger::logCurve(float angle, float radius, float lat, float lon) {
         desc += ", Radius: " + String(radius, 0) + "m";
     }
     
-    bool logged = logEvent("KURVE", desc, lat, lon);
+    bool logged = logEvent("KURVE", desc, lat, lon, fabs(angle));
     if (logged) {
         rideSummary.curveCount++;
     }
@@ -1588,6 +1918,11 @@ bool SDLogger::logDebug(const String& message) {
 }
 
 void SDLogger::flush() {
+    // Der gesamte Durchlauf wird zusätzlich zu den Einzelmessungen je Datei
+    // als ein Vorgang erfasst. Nur damit lässt sich eine lange
+    // Hauptschleifenpause einer Ursache zuordnen.
+    const unsigned long flushCycleStartedAt = millis();
+
     if (logging && metaLogFile &&
         millis() - lastMetadataLog >= 5000) {
         logSessionMetadata(
@@ -1597,6 +1932,8 @@ void SDLogger::flush() {
     }
 
     if (!isReady() || !flushBuffer()) {
+        runtimeDiagnostics.recordFlushCycle(
+            millis() - flushCycleStartedAt);
         return;
     }
 
@@ -1611,8 +1948,10 @@ void SDLogger::flush() {
     if (metaLogFile) flushFileTimed(metaLogFile);
     if (eventLogFile) flushFileTimed(eventLogFile);
     if (correlatedLogFile) flushFileTimed(correlatedLogFile);
-    
+
     lastFlush = millis();
+    runtimeDiagnostics.recordFlushCycle(
+        lastFlush - flushCycleStartedAt);
 }
 
 bool SDLogger::rotateLogFile() {

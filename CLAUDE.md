@@ -1,7 +1,7 @@
 # ROADTEST Firmware
 
 ESP32-S3-Firmware zur Aufzeichnung von BNO055-, GPS-, Straßenqualitäts- und
-standardisierten OBD-II-Daten. Aktueller Firmwarestand: **1.5.25**.
+standardisierten OBD-II-Daten. Aktueller Firmwarestand: **1.5.27**.
 
 Der aktuelle Stand ist ein Hardware- und Fahrzeugteststand, nicht abschließend
 produktionsreif. Bekannte Einschränkungen stehen weiter unten.
@@ -136,6 +136,7 @@ quick
 integration
 stress
 recovery
+sdrecovery
 buffer
 memory
 calibration
@@ -162,8 +163,8 @@ git diff --check
 
 ## Aktueller Teststand
 
-- Firmware 1.5.25 baut erfolgreich für `lolin_s3_mini`.
-- Letzter Build: 70.740 Byte RAM (21,6 %) und 1.236.006 Byte Flash (94,3 %).
+- Firmware 1.5.27 baut erfolgreich für `lolin_s3_mini`.
+- Letzter Build: 70.876 Byte RAM (21,6 %) und 1.246.190 Byte Flash (95,1 %).
 - BNO055-Selbsttest, SD-Logging, WLAN, optionales OLED und MCP2515-
   Grundkommunikation wurden am System geprüft.
 - Am Porsche Carrera S, Baujahr 2012, PDK wurden standardisierte Antworten von
@@ -172,10 +173,19 @@ git diff --check
   `testdata/20260728_2300/TESTBERICHT_2026-07-28.md`.
 - Die aktuelle GPS-/OBD-Abnahme steht in
   `testdata/20260729_170946_05A4DB46/ABNAHME_AUSWERTUNG.md`.
-- Der Recovery-Kontrolllauf `20260730_062734_543E6ED0` bestätigte stabile
-  Web-, SD- und GPS-Aufzeichnung, zeigte aber einen verlorenen Browsermarker
-  beim zweiten Motorstart sowie weiterhin verfehlte Abtastslots. Diese Punkte
-  sind ab 1.5.24 korrigiert und noch am Gerät zu bestätigen.
+- Der Recovery-Kontrolllauf `20260730_101000_5901D247` bestätigte mit 1.5.25
+  beide Zündungs- und Motorstartschritte sowie ECU-Ausfall und Wiederanlauf.
+  Gleichzeitig zeigte er, dass ein verbliebenes halbes Loggergatter weiterhin
+  72 Sensor- und 21 GPS-Zeilen verwarf. 1.5.26 entfernt dieses zweite
+  Zeitgatter vollständig; die Wirksamkeit ist noch am Gerät zu bestätigen.
+- Die Überlandfahrt `20260730_095603_A41A2450` wurde mit ausdrücklicher
+  Zustimmung über OSRM auf das Straßennetz abgeglichen. 13 von 37
+  kartenseitigen Kurvenabschnitten besaßen kein zeitnahes Firmwareereignis;
+  1.5.27 ergänzt dafür einen kumulativen Langkurvenpfad.
+- Die Sitzung `20260730_093525_F94C8878` brach bei einem SD-Fehler ohne
+  Abschlussmetadaten ab; 48 gepufferte Sensorzeilen gingen verloren. 1.5.27
+  sichert solche Puffer nach dem Wiedereinbinden separat und setzt eine
+  laufende Messung in einer verknüpften Folgesitzung fort.
 
 ## Verbindlicher Datenqualitätsfokus
 
@@ -220,9 +230,11 @@ priorisiert, wenn die GPS-/Standard-OBD-Basis reproduzierbar belastbar ist.
   auch nach erfolgreicher Wiedererkennung als abgeschlossener Abnahmeschritt
   erhalten.
 
-Nächster sinnvoller Schritt: kurzer ECU-Recovery-Kontrolltest im Stand über
-`/acceptance` mit 1.5.25 und anschließende Prüfung der Abtast- und
-`MissedSlots`-Zähler; eine weitere kurze Vergleichsfahrt ist dafür nicht nötig.
+Nächster sinnvoller Schritt: kurzer stationärer Vollständigkeitstest mit
+1.5.27 sowie der fokussierte serielle Befehl `sdrecovery` auf dem Arbeitstisch.
+Anschließend eine Überlandfahrt mit mindestens zwei langgezogenen und einer
+S-Kurve. Der vollständige ECU-Recovery-Ablauf muss dabei nicht erneut
+durchgeführt werden.
 
 ### GPS
 
@@ -248,10 +260,18 @@ Positionssprungbewertung und ereignisorientiertes Logging bleiben offen.
 
 - Effektive BNO055-Abtastrate lag im Fahrzeugtest mit 1.5.22 bei ungefähr 8,5
   statt vorgesehenen 10 Hz. 1.5.24 vergrößert den Sensorpuffer, hält die
-  Zeitplanphase stabil und zählt verfehlte Sensor- und GPS-Slots; die
-  Wirksamkeit muss noch am Gerät bestätigt werden.
-- Schlaglochereignisse sind noch nicht an eine Mindestgeschwindigkeit
-  gekoppelt und können daher im Stand ausgelöst werden.
+  Zeitplanphase stabil und zählt verfehlte Sensor- und GPS-Slots. 1.5.26
+  entfernt die zweite Zeitbegrenzung im Logger; die vollständige
+  Zeilenausgabe muss noch am Gerät bestätigt werden.
+- Straßenqualität, Schlaglöcher und Kurven benötigen seit 1.5.26 eine
+  nachgewiesene Fahrzeuggeschwindigkeit von mindestens 5 km/h.
+- 1.5.27 erkennt zusätzlich langsame Kurven über mindestens 8 Grad
+  Netto-Kursänderung und 20 Meter Fahrweg innerhalb von zehn Sekunden.
+  Die Wirksamkeit und Fehlalarmrate müssen noch am Fahrzeug bestätigt werden.
+- Ein vorübergehender SD-Ausfall wird in derselben Gerätesitzung automatisch
+  durch eine separate Puffer-Recovery-Datei und eine neue, verknüpfte
+  Messsitzung behandelt. Nach Reset oder Spannungsverlust bleibt ein
+  manueller Messstart verbindlich.
 - Absolute Kurswerte benötigen eine ausreichende Magnetometer- und
   Systemkalibrierung; relative Beschleunigungen bleiben davon weitgehend
   unabhängig.

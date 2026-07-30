@@ -44,6 +44,13 @@ void RuntimeDiagnostics::recordSDDuration(uint32_t durationMs) {
         timing.sdDurationCount, timing.sdStallCount);
 }
 
+void RuntimeDiagnostics::recordFlushCycle(uint32_t durationMs) {
+    record(
+        durationMs, timing.lastFlushCycleMs,
+        timing.maxFlushCycleMs, timing.totalFlushCycleMs,
+        timing.flushCycleCount, timing.flushCycleStallCount);
+}
+
 void RuntimeDiagnostics::recordSensorSchedule(
     uint32_t elapsedMs, uint32_t intervalMs) {
     if (intervalMs == 0 || elapsedMs < intervalMs) {

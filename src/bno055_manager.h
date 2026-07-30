@@ -6,6 +6,7 @@
 #include <Wire.h>
 #include <utility/imumaths.h>
 #include <Preferences.h>
+#include "hardware_config.h"
 
 // Betriebsmodus des BNO055.
 //
@@ -149,6 +150,15 @@ private:
     unsigned long curveStartTime;
     unsigned long curveQuietSince;
     unsigned long lastCurveEvent;
+    int8_t curveDirection;
+    bool curveCandidateActive;
+    int8_t curveCandidateDirection;
+    float curveCandidateAngle;
+    float curveCandidateDistanceM;
+    unsigned long curveCandidateStartTime;
+    unsigned long curveCandidateLastTurnTime;
+    float curveReversalAngle;
+    unsigned long curveReversalStartTime;
 
     // Schlagloch-Erkennung
     bool potholeArmed;
@@ -215,15 +225,27 @@ public:
     void updateVibrationBuffer(float accelZ);
     void setVibrationThreshold(float threshold) { vibrationThreshold = threshold; }
     
-    // Kurven-Erkennung
-    bool detectCurve(const SensorData& data, float turnRateThreshold = 8.0);
+    // Kurven- und Fahrbahnereigniserkennung.
+    //
+    // speedKmh ist verbindlich und muss eine nachgewiesene
+    // Fahrzeuggeschwindigkeit sein; ein negativer Wert bedeutet "unbekannt".
+    // Unterhalb von ROAD_EVENT_MIN_SPEED_KMH und bei unbekannter
+    // Geschwindigkeit entsteht kein Ereignis, und der interne Zustand wird
+    // zurückgesetzt. Ohne diese Bindung lösten Leerlaufvibration und
+    // Kursdrift im Stand Ereignisse aus.
+    bool detectCurve(
+        const SensorData& data, float speedKmh,
+        float turnRateThreshold = CURVE_SHARP_START_RATE_DPS);
     float getCurveAngle();
     void resetCurveDetection();
-    
-    // Straßenqualitäts-Metriken
-    float calculateRoadQuality(float speedKmh = -1.0f);
+
+    // Straßenqualitäts-Metriken. Rückgabe kleiner null bedeutet "kein
+    // gültiger Messwert"; dieser Fall darf nicht als Zahl protokolliert
+    // werden.
+    float calculateRoadQuality(float speedKmh);
     float getSmoothness();
-    bool detectPothole(const SensorData& data, float threshold = 2.0);
+    bool detectPothole(
+        const SensorData& data, float speedKmh, float threshold = 2.0);
     
     // Status und Diagnose
     void printSystemStatus();

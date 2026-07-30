@@ -271,6 +271,15 @@ und alle relevanten SD-Zeiten werden mit Summe und Anzahl protokolliert;
 verfehlte 10-Hz-Sensor- und 5-Hz-GPS-Termine besitzen eigene Sitzungszähler.
 Ein nach dem Motor-Aus-Marker beobachteter ECU-Ausfall bleibt beim
 anschließenden Wiederanlauf als abgeschlossener Meilenstein gespeichert.
+Der Kontrolllauf `20260730_101000_5901D247` bestätigte diesen Wiederanlauf.
+Firmware 1.5.26 entfernt zusätzlich die zweite Zeitbegrenzung in Sensor- und
+GPS-Logger, damit jeder vom Hauptzeitplan erzeugte Datensatz gespeichert wird.
+Firmware 1.5.27 sichert bei einem vorübergehenden SD-Ausfall noch im RAM
+liegende Sensorzeilen in einer separaten Recovery-Datei und setzt die Messung
+in einer per Ereignis verknüpften Sitzung fort. Außerdem ergänzt sie für
+langgezogene Kurven einen kumulativen Erkennungspfad; die öffentliche
+OSRM-Kartenzuordnung diente nur zur Offline-Kalibrierung der Schwellen und ist
+keine Laufzeitabhängigkeit der Firmware.
 
 #### Firmware
 

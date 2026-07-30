@@ -19,6 +19,15 @@ struct RuntimeTimingDiagnostics {
     uint32_t totalSDDurationMs = 0;
     uint32_t sdDurationCount = 0;
     uint32_t sdStallCount = 0;
+    // Der Sammelflush über alle offenen Dateien wird zusätzlich als ein
+    // Vorgang gemessen. Die Einzelmessungen je Datei erklären eine lange
+    // Hauptschleifenpause sonst nicht: 1.5.24 zeigte 225 ms Schleifenmaximum
+    // bei nur 67 ms größter Einzeloperation.
+    uint32_t lastFlushCycleMs = 0;
+    uint32_t maxFlushCycleMs = 0;
+    uint32_t totalFlushCycleMs = 0;
+    uint32_t flushCycleCount = 0;
+    uint32_t flushCycleStallCount = 0;
     uint32_t sensorSampleCount = 0;
     uint32_t sensorMissedSlots = 0;
     uint32_t gpsSnapshotCount = 0;
@@ -39,6 +48,7 @@ public:
     void recordLoopInterval(uint32_t durationMs);
     void recordWebDuration(uint32_t durationMs);
     void recordSDDuration(uint32_t durationMs);
+    void recordFlushCycle(uint32_t durationMs);
     void recordSensorSchedule(uint32_t elapsedMs, uint32_t intervalMs);
     void recordGPSSchedule(uint32_t elapsedMs, uint32_t intervalMs);
     RuntimeTimingDiagnostics getTiming() const { return timing; }

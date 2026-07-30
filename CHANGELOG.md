@@ -7,6 +7,10 @@ und dieses Projekt hält sich an [Semantic Versioning](https://semver.org/spec/v
 
 ## [Unveröffentlicht]
 
+Derzeit keine zusätzlichen Änderungen.
+
+## [1.5.27] - 2026-07-30
+
 ### Behoben
 - BNO055-Erkennung liest jetzt die Chip-ID `0xA0`, statt leere
   I²C-Schreibtransaktionen zu senden, die in der Logic-8-Aufnahme den
@@ -20,26 +24,119 @@ und dieses Projekt hält sich an [Semantic Versioning](https://semver.org/spec/v
 - Der Webbutton zum Starten einer Aufzeichnung wartet nicht mehr auf alle
   SD-Dateioperationen. Die Dateien werden über mehrere Hauptschleifen
   vorbereitet und Startfehler erscheinen auf der Statusseite
+- Langgezogene Kurven benötigen nicht mehr zwingend eine momentane Drehrate
+  von mindestens 8 Grad pro Sekunde. Zusätzlich zum schnellen Einstieg
+  startet ein Kurvenkandidat nach mindestens 8 Grad Netto-Kursänderung und
+  20 Metern Fahrt innerhalb von zehn Sekunden. Die Schwellen wurden gegen die
+  per OSRM auf das Straßennetz abgeglichene Überlandfahrt
+  `20260730_095603_A41A2450` festgelegt.
+- Einzelne kleine Gegenbewegungen des NDOF-Headings verwerfen einen
+  Langkurvenkandidaten nicht mehr. Ein Richtungswechsel ab fünf Grad trennt
+  dagegen die beiden Hälften einer S-Kurve.
+- Kurven enden erst nach zwei Sekunden unter 0,8 Grad pro Sekunde. Eine
+  Abtastlücke über 500 ms verwirft den offenen Zustand, statt aus zeitlich
+  weit getrennten Headings ein Ereignis abzuleiten.
+- Ein SD-Schreibfehler verwirft den noch nicht geschriebenen Sensorpuffer
+  nicht mehr sofort. Nach erfolgreichem Wiedereinbinden wird der vollständige
+  Puffer in einer separaten `road_sensor_recovered_*.csv` innerhalb der
+  Ursprungssitzung gesichert.
+- Nach einem vorübergehenden SD-Ausfall während einer laufenden Messung startet
+  automatisch eine neue Sitzung. Das Ereignis
+  `SD_RECOVERY_CONTINUATION` verknüpft sie mit Ursprungssitzung, Fehlergrund,
+  Ausfalldauer und Anzahl geretteter Pufferzeilen.
+- Aktive und fehlerhaft beendete Sitzungen werden im NVS markiert. Nach Reset
+  oder Spannungsverlust wird der Verweis beim nächsten manuellen Messstart
+  protokolliert; eine Messung startet nach einem Neustart nicht selbsttätig.
+- Ein SD-Fehler während eines ausdrücklich angeforderten Stopps löst keine
+  unerwartete automatische Folgemessung aus.
 
 ### Geändert
 - Weboberfläche, OLED, NVS-Metadaten und CSV-Spalten sind auf den aktiven
-  NDOF-Modus abgestimmt
-- I²C-Operationen werden nach 20 ms abgebrochen
+  NDOF-Modus abgestimmt.
+- I²C-Operationen werden nach 20 ms abgebrochen.
 - Die fest verdrahtete BNO055-Adresse ist verbindlich `0x29`; der automatische
-  Fallback auf `0x28` entfällt
+  Fallback auf `0x28` entfällt.
 - Die periodische Gesundheitsprüfung liest die Chip-ID nur noch einmal pro
-  Fünf-Sekunden-Zyklus
-- Sitzungsnamen erhalten einen Zufallsanteil; wiederholte FAT-Verzeichnissuchen
-  nach freien Dateinamen entfallen
+  Fünf-Sekunden-Zyklus.
+- Sitzungsnamen erhalten einen Zufallsanteil; wiederholte FAT-
+  Verzeichnissuchen nach freien Dateinamen entfallen.
+- Firmwareversion auf 1.5.27 und CSV-Schemakennung auf
+  `1.5.27-quality-v9` angehoben.
+- Die Statusseite zeigt Sicherung und Fortsetzung nach einem SD-Fehler
+  ausdrücklich an.
+- Der interaktive SD-Hotplug-Test startet eine echte Messung, hält mindestens
+  eine Sensorzeile im RAM und bestätigt nach Entfernen und Wiedereinsetzen der
+  Karte sowohl Pufferrettung als auch automatische Folgesitzung. Er ist
+  einzeln über `sdrecovery` aufrufbar.
 
 ### Dokumentation
 - Hardwarebeschreibung auf den tatsächlichen LOLIN S3 Mini mit 4 MB Flash
-  umgestellt
-- Verbindliche GPIO-Belegung mit dem Firmwarecode abgeglichen
-- Versorgung des PZSMOCN-SD-Moduls auf 3,3 V korrigiert
+  umgestellt.
+- Verbindliche GPIO-Belegung mit dem Firmwarecode abgeglichen.
+- Versorgung des PZSMOCN-SD-Moduls auf 3,3 V korrigiert.
 - Unbenutzte BNO055- und GPS-Pins sowie CAN-Aufbau und Versorgung eindeutig
-  dokumentiert
-- Unsichere pauschale Angaben zu CAN-Versorgung und Busterminierung entfernt
+  dokumentiert.
+- Unsichere pauschale Angaben zu CAN-Versorgung und Busterminierung entfernt.
+
+### Grundlage
+- Die Kartenzuordnung der Fahrt `20260730_095603_A41A2450` erreichte über elf
+  überlappende OSRM-Abschnitte eine mittlere Matching-Konfidenz von 0,978.
+  Von 37 kartenseitig erkannten Kurvenabschnitten lagen 13 ohne zeitnahes
+  Firmwareereignis; besonders betroffen waren 9 bis 23 Sekunden lange Kurven
+  mit nur etwa 1,3 bis 4,0 Grad pro Sekunde.
+- Die abgebrochene Sitzung `20260730_093525_F94C8878` endete ohne
+  `END`-Metadaten. Die folgende Sitzung startete ohne Neustart bereits mit
+  einem SD-Fehler und 48 verworfenen Zeilen. Damit ist ein SD-Schreibfehler
+  beim Fünf-Sekunden-Sensorflush als Abbruchursache belegt.
+
+## [1.5.26] - 2026-07-30
+
+### Behoben
+- Doppelte Taktung von Sensor- und GPS-Aufzeichnung beseitigt. Hauptschleife
+  und `SDLogger` besaßen zwei unabhängige Gatter derselben Periode, die
+  gegeneinander schwebten. Verworfene Datensätze wurden dem Aufrufer als
+  Erfolg gemeldet und blieben in der Diagnose unsichtbar: In
+  `20260730_071913_9B018397` fehlten 183 GPS- und 41 Sensorzeilen, gemeldet
+  wurden vier verfehlte GPS-Slots. Das zunächst halbierte Schutzgatter
+  verwarf im Kontrolllauf `20260730_101000_5901D247` weiterhin 21 GPS- und
+  72 Sensorzeilen. Sensor- und GPS-Logger besitzen deshalb kein eigenes
+  Zeitgatter mehr; die phasenerhaltende Hauptschleife ist alleiniger
+  Taktgeber.
+- Straßenqualität und Fahrbahnereignisse sind an eine nachgewiesene
+  Fahrzeuggeschwindigkeit gebunden. Der bisherige Stillstandszweig war
+  unerreichbar, weil der Aufrufer bei ungültiger GPS-Geschwindigkeit `-1`
+  übergab, GPS-Geschwindigkeit aber erst ab 6 km/h als gültig gilt. Im
+  belegten Stillstand entstanden dadurch 106 von 265 Qualitätswerten unter
+  99,0 sowie drei Schlagloch- und ein Kurvenereignis.
+- Die Spalte `Schwere` enthält bei Schlaglöchern die gemessene
+  Stoßbeschleunigung und bei Kurven den aufsummierten Winkel. Allgemeine
+  Systemereignisse behalten den neutralen Wert null.
+- Die starre 180-Grad-Grenze für Kurven entfällt. Sie hätte reale
+  Kreisverkehre und Wendemanöver verworfen; Kursdrift im Stand wird bereits
+  durch den verbindlichen Bewegungsnachweis verhindert.
+
+### Geändert
+- Firmwareversion auf 1.5.26 und CSV-Schemakennung auf
+  `1.5.26-quality-v8` angehoben. Die Metadatendatei
+  enthält zusätzlich `FlushLastMs`, `FlushMaxMs`, `FlushTotalMs`,
+  `FlushCycles` und `FlushStalls`.
+- Der Sammelflush über alle offenen Dateien wird zusätzlich zu den
+  Einzelmessungen je Datei als ein Vorgang gemessen. Ohne diese
+  Aggregatmessung war eine Hauptschleifenpause nicht zuordenbar: 1.5.24
+  zeigte 225 ms Schleifenmaximum bei nur 67 ms größter Einzeloperation.
+- Straßenqualität wird im Stillstand nicht mehr geschrieben. Ein
+  Rückgabewert kleiner null bedeutet „kein Messwert“ und erzeugt keine
+  CSV-Zeile.
+- Neue verbindliche Geschwindigkeitsauflösung in der Hauptschleife: frische
+  OBD-Geschwindigkeit, dann gefilterte GPS-Geschwindigkeit, sonst unbekannt.
+  Unbekannt wird als negativer Wert weitergegeben, nicht als null.
+
+### Bestätigt
+- Der Kontrolllauf `20260730_101000_5901D247` bestätigte den vollständigen
+  ECU-Wiederanlauf mit 1.5.25 sowie die Geschwindigkeitsfreigabe: Im Stand
+  entstanden keine Straßenqualitäts- oder Fahrbahnereigniszeilen.
+- Die vollständige Sensor- und GPS-Aufzeichnung ohne zweites Loggergatter
+  muss noch mit 1.5.26 am Gerät bestätigt werden.
 
 ## [1.5.25] - 2026-07-30
 
@@ -52,9 +149,10 @@ und dieses Projekt hält sich an [Semantic Versioning](https://semver.org/spec/v
   ausgewertet. Ein früherer transienter ECU-Ausfall kann den Schritt daher
   nicht vorzeitig erfüllen.
 
-### Geändert
-- CSV-Schemakennung auf `1.5.25-quality-v7` aktualisiert; die Spaltenstruktur
-  bleibt gegenüber 1.5.24 unverändert.
+### Bestätigt
+- Der Wiederanlauflauf `20260730_101000_5901D247` erkannte erste Zündung,
+  ersten Motorstart, ECU-Ausfall, erneute Zündung und zweiten Motorstart
+  vollständig.
 
 ## [1.5.24] - 2026-07-30
 

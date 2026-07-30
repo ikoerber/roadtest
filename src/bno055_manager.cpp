@@ -1,5 +1,8 @@
 #include "bno055_manager.h"
 
+// Liefert ROAD_EVENT_MIN_SPEED_KMH.
+#include "hardware_config.h"
+
 // Globale Instanz
 BNO055Manager bnoManager;
 
@@ -14,6 +17,11 @@ BNO055Manager::BNO055Manager()
       headingInitialized(false), inCurve(false), curveStartHeading(0),
       accumulatedCurveAngle(0), lastCompletedCurveAngle(0),
       curveStartTime(0), curveQuietSince(0), lastCurveEvent(0),
+      curveDirection(0), curveCandidateActive(false),
+      curveCandidateDirection(0), curveCandidateAngle(0),
+      curveCandidateDistanceM(0), curveCandidateStartTime(0),
+      curveCandidateLastTurnTime(0), curveReversalAngle(0),
+      curveReversalStartTime(0),
       potholeArmed(false), potholeStartTime(0), lastPotholeEvent(0) {
     
     currentVibration = {0, 0, 0, 0};
@@ -129,6 +137,15 @@ void BNO055Manager::end() {
     hasRoadQuality = false;
     headingInitialized = false;
     inCurve = false;
+    curveDirection = 0;
+    curveCandidateActive = false;
+    curveCandidateDirection = 0;
+    curveCandidateAngle = 0;
+    curveCandidateDistanceM = 0;
+    curveCandidateStartTime = 0;
+    curveCandidateLastTurnTime = 0;
+    curveReversalAngle = 0;
+    curveReversalStartTime = 0;
     potholeArmed = false;
 }
 
@@ -531,8 +548,17 @@ VibrationMetrics BNO055Manager::analyzeVibration() {
     return currentVibration;
 }
 
-bool BNO055Manager::detectCurve(const SensorData& data, float turnRateThreshold) {
+bool BNO055Manager::detectCurve(
+    const SensorData& data, float speedKmh, float turnRateThreshold) {
     if (!initialized || data.timestamp == 0) return false;
+
+    // Ohne nachgewiesene Fahrzeugbewegung gibt es keine Kurve. Der Zustand
+    // wird vollständig verworfen, damit beim Anfahren nicht der veraltete
+    // Kurs der Standphase als Kursänderung erscheint.
+    if (!(speedKmh >= ROAD_EVENT_MIN_SPEED_KMH)) {
+        resetCurveDetection();
+        return false;
+    }
 
     if (!headingInitialized) {
         lastHeading = data.heading;
@@ -543,50 +569,183 @@ bool BNO055Manager::detectCurve(const SensorData& data, float turnRateThreshold)
 
     unsigned long deltaTime = data.timestamp - lastHeadingTime;
     if (deltaTime == 0) return false;
+    if (deltaTime > CURVE_MAX_SAMPLE_GAP_MS) {
+        // Nach einer längeren Abtastlücke ist nicht bekannt, auf welchem
+        // Verlauf die Kursänderung entstand. Nicht aus zwei weit
+        // auseinanderliegenden Punkten ein scheinbar präzises
+        // Kurvenereignis ableiten.
+        inCurve = false;
+        curveDirection = 0;
+        curveQuietSince = 0;
+        accumulatedCurveAngle = 0;
+        curveCandidateActive = false;
+        curveCandidateAngle = 0;
+        curveCandidateDistanceM = 0;
+        curveReversalAngle = 0;
+        lastHeading = data.heading;
+        lastHeadingTime = data.timestamp;
+        return false;
+    }
 
     float headingDelta = data.heading - lastHeading;
     while (headingDelta > 180.0f) headingDelta -= 360.0f;
     while (headingDelta < -180.0f) headingDelta += 360.0f;
 
-    float turnRate = fabs(headingDelta) * 1000.0f / deltaTime;
+    const float absoluteHeadingDelta = fabs(headingDelta);
+    const float turnRate =
+        absoluteHeadingDelta * 1000.0f / deltaTime;
+    const int8_t turnDirection =
+        headingDelta > 0.0f ? 1 : (headingDelta < 0.0f ? -1 : 0);
+    const float intervalDistanceM =
+        speedKmh / 3.6f * (static_cast<float>(deltaTime) / 1000.0f);
     bool curveCompleted = false;
 
     if (!inCurve) {
-        if (turnRate >= turnRateThreshold &&
-            data.timestamp - lastCurveEvent >= 1000) {
+        const bool meaningfulTurn =
+            turnDirection != 0 && turnRate >= CURVE_LONG_MIN_RATE_DPS;
+
+        if (meaningfulTurn) {
+            const bool candidateExpired =
+                curveCandidateActive &&
+                (data.timestamp - curveCandidateStartTime >
+                     CURVE_LONG_MAX_WINDOW_MS ||
+                 data.timestamp - curveCandidateLastTurnTime >
+                     CURVE_END_QUIET_MS);
+            if (!curveCandidateActive || candidateExpired) {
+                curveCandidateActive = true;
+                curveCandidateDirection = turnDirection;
+                curveCandidateAngle = absoluteHeadingDelta;
+                curveCandidateDistanceM = intervalDistanceM;
+                curveCandidateStartTime = data.timestamp - deltaTime;
+            } else {
+                // Vor dem Kurvenstart zählt die Netto-Richtungsänderung.
+                // Einzelne kleine Gegenbewegungen des magnetischen Headings
+                // löschen damit nicht mehr den gesamten Kandidaten.
+                const float signedCandidateAngle =
+                    curveCandidateDirection * curveCandidateAngle +
+                    headingDelta;
+                if (signedCandidateAngle > 0.0f) {
+                    curveCandidateDirection = 1;
+                    curveCandidateAngle = signedCandidateAngle;
+                } else if (signedCandidateAngle < 0.0f) {
+                    curveCandidateDirection = -1;
+                    curveCandidateAngle = -signedCandidateAngle;
+                } else {
+                    curveCandidateAngle = 0;
+                }
+                curveCandidateDistanceM += intervalDistanceM;
+            }
+            curveCandidateLastTurnTime = data.timestamp;
+        } else if (curveCandidateActive &&
+                   data.timestamp - curveCandidateLastTurnTime >=
+                       CURVE_END_QUIET_MS) {
+            curveCandidateActive = false;
+            curveCandidateAngle = 0;
+            curveCandidateDistanceM = 0;
+        }
+
+        const bool sharpStart =
+            turnRate >= turnRateThreshold &&
+            data.timestamp - lastCurveEvent >= 1000;
+        const bool longStart =
+            curveCandidateActive &&
+            curveCandidateAngle >= CURVE_LONG_START_ANGLE_DEG &&
+            curveCandidateDistanceM >= CURVE_LONG_MIN_DISTANCE_M &&
+            data.timestamp - curveCandidateStartTime <=
+                CURVE_LONG_MAX_WINDOW_MS;
+
+        if (sharpStart || longStart) {
             inCurve = true;
-            curveStartHeading = lastHeading;
-            accumulatedCurveAngle = headingDelta;
-            curveStartTime = data.timestamp;
+            curveDirection =
+                curveCandidateActive
+                    ? curveCandidateDirection
+                    : turnDirection;
+            curveStartHeading = data.heading -
+                curveDirection * curveCandidateAngle;
+            accumulatedCurveAngle =
+                curveDirection *
+                (curveCandidateActive
+                     ? curveCandidateAngle
+                     : absoluteHeadingDelta);
+            curveStartTime =
+                curveCandidateActive
+                    ? curveCandidateStartTime
+                    : data.timestamp - deltaTime;
             curveQuietSince = 0;
+            curveReversalAngle = 0;
+            curveReversalStartTime = 0;
+            curveCandidateActive = false;
+            curveCandidateAngle = 0;
+            curveCandidateDistanceM = 0;
         }
     } else {
-        accumulatedCurveAngle += headingDelta;
+        if (turnRate >= CURVE_END_RATE_DPS && turnDirection != 0) {
+            if (turnDirection == curveDirection) {
+                accumulatedCurveAngle += headingDelta;
+                curveQuietSince = 0;
+                curveReversalAngle = 0;
+                curveReversalStartTime = 0;
+            } else {
+                if (curveReversalAngle == 0) {
+                    curveReversalStartTime = data.timestamp - deltaTime;
+                }
+                curveReversalAngle += absoluteHeadingDelta;
 
-        if (turnRate < turnRateThreshold * 0.4f) {
+                // Eine ausreichend große Gegenkurve schließt die bisherige
+                // Richtung ab und startet ohne blinden Zwischenraum die
+                // nächste Hälfte einer S-Kurve.
+                if (curveReversalAngle >= CURVE_REVERSAL_ANGLE_DEG) {
+                    lastCompletedCurveAngle =
+                        fabs(accumulatedCurveAngle);
+                    curveCompleted =
+                        lastCompletedCurveAngle >=
+                        CURVE_MIN_EVENT_ANGLE_DEG;
+                    if (curveCompleted) {
+                        lastCurveEvent = data.timestamp;
+                    }
+
+                    curveDirection = turnDirection;
+                    accumulatedCurveAngle =
+                        curveDirection * curveReversalAngle;
+                    curveStartHeading = data.heading -
+                        accumulatedCurveAngle;
+                    curveStartTime = curveReversalStartTime;
+                    curveQuietSince = 0;
+                    curveReversalAngle = 0;
+                    curveReversalStartTime = 0;
+                }
+            }
+        } else {
+            curveReversalAngle = 0;
+            curveReversalStartTime = 0;
             if (curveQuietSince == 0) {
                 curveQuietSince = data.timestamp;
             }
 
-            if (data.timestamp - curveQuietSince >= 500) {
+            if (data.timestamp - curveQuietSince >= CURVE_END_QUIET_MS) {
                 lastCompletedCurveAngle = fabs(accumulatedCurveAngle);
-                curveCompleted = lastCompletedCurveAngle >= 10.0f;
+                curveCompleted =
+                    lastCompletedCurveAngle >= CURVE_MIN_EVENT_ANGLE_DEG;
                 inCurve = false;
+                curveDirection = 0;
                 curveQuietSince = 0;
                 if (curveCompleted) {
                     lastCurveEvent = data.timestamp;
                 }
             }
-        } else {
-            curveQuietSince = 0;
         }
 
         // Verhindert einen dauerhaft offenen Kurvenzustand.
-        if (inCurve && data.timestamp - curveStartTime > 30000) {
+        if (inCurve &&
+            data.timestamp - curveStartTime > CURVE_MAX_DURATION_MS) {
             lastCompletedCurveAngle = fabs(accumulatedCurveAngle);
-            curveCompleted = lastCompletedCurveAngle >= 10.0f;
+            curveCompleted =
+                lastCompletedCurveAngle >= CURVE_MIN_EVENT_ANGLE_DEG;
             inCurve = false;
+            curveDirection = 0;
             curveQuietSince = 0;
+            curveReversalAngle = 0;
+            curveReversalStartTime = 0;
             if (curveCompleted) {
                 lastCurveEvent = data.timestamp;
             }
@@ -609,14 +768,30 @@ void BNO055Manager::resetCurveDetection() {
     lastCompletedCurveAngle = 0;
     curveQuietSince = 0;
     headingInitialized = false;
+    curveDirection = 0;
+    curveCandidateActive = false;
+    curveCandidateDirection = 0;
+    curveCandidateAngle = 0;
+    curveCandidateDistanceM = 0;
+    curveCandidateStartTime = 0;
+    curveCandidateLastTurnTime = 0;
+    curveReversalAngle = 0;
+    curveReversalStartTime = 0;
 }
 
 float BNO055Manager::calculateRoadQuality(float speedKmh) {
     if (!initialized) return 0;
 
-    // Im Stillstand keine Fahrzeugbewegung als Straßenqualität bewerten.
-    if (speedKmh >= 0.0f && speedKmh < 3.0f && hasRoadQuality) {
-        return lastRoadQuality;
+    // Straßenqualität ohne nachgewiesene Fahrzeugbewegung ist kein Messwert.
+    // Der frühere Zweig verglich gegen 3 km/h, war aber unerreichbar: Der
+    // Aufrufer übergab bei ungültiger GPS-Geschwindigkeit -1, und
+    // GPS-Geschwindigkeit gilt erst ab 6 km/h als gültig. Dadurch wurde im
+    // belegten Stillstand Leerlaufvibration als Straßenlage bewertet
+    // (20260730_071913_9B018397: 106 von 265 Werten unter 99,0, Minimum
+    // 60,1). Ein negativer Rückgabewert bedeutet "kein Messwert" und darf
+    // nicht als Zahl protokolliert werden.
+    if (!(speedKmh >= ROAD_EVENT_MIN_SPEED_KMH)) {
+        return -1.0f;
     }
 
     VibrationMetrics vib = analyzeVibration();
@@ -651,8 +826,17 @@ float BNO055Manager::getSmoothness() {
     return 1.0f / (1.0f + vib.rmsAccel);
 }
 
-bool BNO055Manager::detectPothole(const SensorData& data, float threshold) {
+bool BNO055Manager::detectPothole(
+    const SensorData& data, float speedKmh, float threshold) {
     if (!initialized || data.timestamp == 0) return false;
+
+    // Ein Schlagloch setzt überfahrene Fahrbahn voraus. Ohne nachgewiesene
+    // Bewegung wird die halbfertige Erkennung verworfen, damit ein im Stand
+    // begonnener Ausschlag nicht beim Anfahren als Ereignis abschließt.
+    if (!(speedKmh >= ROAD_EVENT_MIN_SPEED_KMH)) {
+        potholeArmed = false;
+        return false;
+    }
 
     const unsigned long now = data.timestamp;
     if (!potholeArmed && now - lastPotholeEvent >= 1200 &&

@@ -7,10 +7,10 @@
 // Zentrale Pin-Konfiguration für das Straßenqualitäts-Messsystem
 // Alle Hardware-spezifischen Pin-Zuordnungen sind hier definiert
 
-#define ROADTEST_FIRMWARE_VERSION "1.5.25"
+#define ROADTEST_FIRMWARE_VERSION "1.5.27"
 #define ROADTEST_FIRMWARE_FILE_NAME \
     "roadtest_" ROADTEST_FIRMWARE_VERSION ".bin"
-#define ROADTEST_CSV_SCHEMA_VERSION "1.5.25-quality-v7"
+#define ROADTEST_CSV_SCHEMA_VERSION "1.5.27-quality-v9"
 #define ROADTEST_VEHICLE_PROFILE "Porsche Carrera S 2012 PDK"
 
 // -----------------------------------------------------------------------------
@@ -122,6 +122,32 @@ extern const int GPS_BAUD_RATE;    // 9600    - GPS Baudrate
 // unabhängig von dieser Schwelle gezählt.
 #define RUNTIME_STALL_THRESHOLD_MS            250UL
 
+// Straßenqualität und Fahrbahnereignisse benötigen nachgewiesene
+// Fahrzeugbewegung. Ohne belegte Geschwindigkeit entsteht kein Messwert und
+// kein Ereignis; im Stand erzeugte Leerlaufvibration ist keine Straßenlage.
+// Der Sitzungslauf 20260730_071913_9B018397 protokollierte im belegten
+// Stillstand drei Schlaglöcher und eine Kurve mit 625 Grad.
+#define ROAD_EVENT_MIN_SPEED_KMH               5.0f
+
+// Zweistufige Kurvenerkennung:
+// - schnelle Kurven starten weiterhin unmittelbar über die Drehrate;
+// - langgezogene Kurven werden über kumulierten Winkel und gefahrenen Weg
+//   erkannt. Die Werte wurden gegen die per OSRM auf das Straßennetz
+//   abgeglichene Fahrt 20260730_095603_A41A2450 geprüft.
+// Eine Richtungsumkehr von mindestens fünf Grad trennt S-Kurven zuverlässig,
+// während kleinere Gegenbewegungen als Heading-Rauschen behandelt werden.
+#define CURVE_SHARP_START_RATE_DPS             8.0f
+#define CURVE_LONG_MIN_RATE_DPS                0.8f
+#define CURVE_LONG_START_ANGLE_DEG             8.0f
+#define CURVE_LONG_MIN_DISTANCE_M             20.0f
+#define CURVE_LONG_MAX_WINDOW_MS           10000UL
+#define CURVE_MAX_SAMPLE_GAP_MS               500UL
+#define CURVE_END_RATE_DPS                     0.8f
+#define CURVE_END_QUIET_MS                  2000UL
+#define CURVE_MIN_EVENT_ANGLE_DEG             10.0f
+#define CURVE_REVERSAL_ANGLE_DEG               5.0f
+#define CURVE_MAX_DURATION_MS              60000UL
+
 // Task-Watchdog: Ein hängender loop() führt zum Neustart statt zu einem
 // stummen Gerät auf der Strecke. Grosszügig bemessen, damit langsame
 // SD-Schreibvorgänge und OTA-Uploads nicht fälschlich auslösen.
@@ -139,7 +165,7 @@ extern const int GPS_BAUD_RATE;    // 9600    - GPS Baudrate
 
 // Sensor-Konfiguration  
 #define VIBRATION_THRESHOLD 2.0     // Vibrations-Schwellwert (m/s²)
-#define CURVE_THRESHOLD     5.0     // Kurven-Erkennungs-Schwellwert (°)
+#define CURVE_THRESHOLD     CURVE_MIN_EVENT_ANGLE_DEG
 
 // System-Timing
 #define SENSOR_READ_INTERVAL    100 // BNO055 Leseintervall (ms)

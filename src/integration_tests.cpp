@@ -676,6 +676,16 @@ bool IntegrationTests::testSDCardHotplug() {
         addTestResult("SD-Karten Hotplug", false, 0, "SD-Karte nicht vorhanden");
         return false;
     }
+
+    if (sdLogger.isLogging() || sdLogger.isLoggingStartPending()) {
+        Serial.println(
+            "❌ Test benötigt einen gestoppten Logger; laufende Messung "
+            "zuerst regulär beenden");
+        addTestResult(
+            "SD-Karten Hotplug", false, 0,
+            "Laufende Messung verhindert isolierten Recovery-Test");
+        return false;
+    }
     
     // 2. Schreibe Test-Datei
     String testFileName = "/hotplug_test.txt";
@@ -689,6 +699,31 @@ bool IntegrationTests::testSDCardHotplug() {
         testFile.close();
         Serial.println("✅ Test-Datei geschrieben");
     }
+
+    // Eine echte Messung mit mindestens einer noch nicht geflushten
+    // Sensorzeile starten. Damit prüft der Hotplug-Test nicht nur die
+    // Karteninitialisierung, sondern exakt den Wiederanlaufpfad, der bei
+    // 20260730_093525_F94C8878 fehlte.
+    const bool measurementStarted = sdLogger.startLogging();
+    SensorData recoverySample = {};
+    recoverySample.timestamp = millis();
+    const bool sampleBuffered =
+        measurementStarted &&
+        sdLogger.logSensorData(recoverySample);
+    if (!sampleBuffered) {
+        Serial.println(
+            "❌ Recovery-Testmessung oder Sensorpuffer konnte nicht "
+            "vorbereitet werden");
+        if (sdLogger.isLogging()) {
+            sdLogger.stopLogging();
+        }
+        addTestResult(
+            "SD-Karten Hotplug", false, millis() - startTime,
+            "Recovery-Testmessung konnte nicht vorbereitet werden");
+        return false;
+    }
+    Serial.println(
+        "✅ Testmessung aktiv; eine Sensorzeile wartet im RAM-Puffer");
     
     // 3. Fordere Benutzer auf, Karte zu entfernen
     Serial.println("\n>>> Bitte SD-Karte JETZT entfernen und Enter drücken <<<");
@@ -699,13 +734,7 @@ bool IntegrationTests::testSDCardHotplug() {
     
     // 4. Prüfe ob Karte entfernt wurde
     delay(500);
-    bool cardRemoved = !SD.exists(testFileName);
-    if (!cardRemoved) {
-        // Versuche aktiv zu erkennen
-        sdLogger.end();
-        delay(100);
-        cardRemoved = !sdLogger.begin(spiSD);
-    }
+    const bool cardRemoved = !sdLogger.checkHealth();
     
     if (cardRemoved) {
         Serial.println("✅ SD-Karte entfernt erkannt");
@@ -729,9 +758,6 @@ bool IntegrationTests::testSDCardHotplug() {
     for (int attempt = 0; attempt < 3; attempt++) {
         Serial.printf("Initialisierungs-Versuch %d...\n", attempt + 1);
         
-        sdLogger.end();
-        delay(500);
-        
         if (sdLogger.begin(spiSD)) {
             reInitSuccess = true;
             break;
@@ -742,6 +768,35 @@ bool IntegrationTests::testSDCardHotplug() {
     if (reInitSuccess) {
         Serial.println("✅ SD-Karte erfolgreich neu initialisiert");
         details += "Re-Init OK, ";
+
+        // begin() hat den automatischen Wiederanlauf angefordert. Wie in der
+        // normalen Hauptschleife je Durchlauf genau einen Dateischritt
+        // ausführen.
+        for (uint8_t step = 0;
+             step < 20 && sdLogger.isLoggingStartPending();
+             ++step) {
+            sdLogger.processLoggingStart();
+            delay(0);
+        }
+        const bool automaticContinuation =
+            sdLogger.isLogging() &&
+            sdLogger.getRecoveryStatus().indexOf(
+                "Wiederanlauf erfolgreich") >= 0;
+        if (automaticContinuation) {
+            Serial.println(
+                "✅ Gepufferte Zeile gesichert und Messung automatisch "
+                "fortgesetzt");
+            details += "Puffer-Recovery und Folgesitzung OK, ";
+        } else {
+            Serial.println(
+                "❌ Automatische Recovery-Folgesitzung wurde nicht bestätigt");
+            details += "Folgesitzung fehlt, ";
+            testPassed = false;
+        }
+
+        if (sdLogger.isLogging()) {
+            sdLogger.stopLogging();
+        }
         
         // 7. Prüfe ob Test-Datei noch vorhanden
         if (SD.exists(testFileName)) {
@@ -755,6 +810,10 @@ bool IntegrationTests::testSDCardHotplug() {
         Serial.println("❌ SD-Karte Re-Initialisierung fehlgeschlagen");
         testPassed = false;
         details += "Re-Init fehlgeschlagen";
+    }
+
+    if (!cardRemoved || !measurementStarted || !sampleBuffered) {
+        testPassed = false;
     }
     
     uint32_t duration = millis() - startTime;

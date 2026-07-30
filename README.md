@@ -2,9 +2,11 @@
 
 Ein fortschrittliches Embedded-System zur Messung und Bewertung von Straßenqualität für kurvenreiche Motorradstrecken.
 
-Aktueller Firmwarestand: **1.5.25**. Der Stand ist ein Hardware- und
-Fahrzeugteststand; der korrigierte Recovery- und Abtasttest mit 1.5.25 steht
-noch aus.
+Aktueller Firmwarestand: **1.5.27**. Der Stand ist ein Hardware- und
+Fahrzeugteststand. 1.5.27 ergänzt die Erkennung langgezogener Kurven und setzt
+eine laufende Messung nach einem vorübergehenden SD-Fehler in einer
+verknüpften Folgesitzung fort. Beide Änderungen müssen noch am Gerät bestätigt
+werden.
 
 ## 📋 Überblick
 
@@ -20,6 +22,7 @@ Das System erfasst Bewegungsdaten, GPS-Position und CAN-Bus-Signale, um die Qual
 - **Real-Time Straßenqualitäts-Bewertung** (0-100 Punkte)
 - **Multi-Sensor-Fusion** (BNO055 + GPS + CAN)
 - **Robustes SD-Karten-Logging** mit Buffer-Overflow-Schutz
+- **SD-Wiederanlauf** mit Recovery-Datei und verknüpfter Fortsetzungssitzung
 - **Optionales steckbares Live-Display** auf 128x64 OLED mit Auto-Rotation
 - **Eigenes ROADTEST-WLAN** mit Statusseite, Kalibrierassistent und Browser-OTA
 - **Kontrollierte Messfahrten** mit Start, sicherem Ende und Zusammenfassung
@@ -290,7 +293,7 @@ vorherigen OBD-Zustand wieder her und schließt alle SD-Dateien.
 ### Geführte Recovery-Kontrolle im Browser
 
 Die GPS-/OBD-Vergleichsfahrt aus 1.5.22 ist bestanden und deshalb nicht mehr
-Teil der Testseite. Firmware 1.5.25 führt unter `/acceptance` nur noch durch
+Teil der Testseite. Seit Firmware 1.5.25 führt `/acceptance` nur noch durch
 den kurzen ECU-Recovery-Kontrolltest:
 
 1. 60 Sekunden echte Listen-Only-Phase bei ausgeschalteter Zündung
@@ -307,6 +310,33 @@ Schrittwechsel geladen. Bleibt die HTTP-Bestätigung aus, wird der Knopf nach
 fünf Sekunden erneut bedienbar. Eine frische OBD-Drehzahl bestätigt den
 zweiten Motorstart außerdem unabhängig vom Browsermarker. Während dieses
 Tests ist keine Fahrt und keine Bedienung während der Fahrt nötig.
+
+### Abnahme von Firmware 1.5.27
+
+Die neuen Funktionen werden in drei getrennten, kurzen Schritten geprüft:
+
+1. **Vollständigkeit im Stand:** Eine normale Aufzeichnung zwei Minuten laufen
+   lassen und regulär beenden. Im `END`-Datensatz von `road_meta_...csv`
+   müssen `SensorSamples` und `GPSSnapshots` zu den jeweiligen CSV-Datenzeilen
+   passen; `SensorMissedSlots`, `GPSMissedSlots` und `SDDropped` sollen null
+   bleiben.
+2. **SD-Wiederanlauf auf dem Arbeitstisch:** Bei stehendem Fahrzeug und
+   getrennter Fahrzeug-CAN-Verbindung am seriellen Monitor `sdrecovery`
+   eingeben. Die MicroSD-Karte ausschließlich nach der angezeigten
+   Aufforderung entfernen und wieder einsetzen. Der Test startet selbst eine
+   Messung, hält eine Sensorzeile im RAM und erwartet danach eine
+   `road_sensor_recovered_*.csv` in der Ursprungssitzung sowie das Ereignis
+   `SD_RECOVERY_CONTINUATION` in der automatisch gestarteten Folgesitzung.
+3. **Kurvenfahrt:** Eine etwa 10- bis 15-minütige Überlandfahrt mit mindestens
+   zwei langgezogenen Kurven und einer S-Kurve normal aufzeichnen. Während der
+   Fahrt sind keine Testknöpfe erforderlich. Anschließend Kurvenereignisse,
+   GPS-Spur und Fehlalarme auf geraden Abschnitten vergleichen.
+
+Der SD-Ausfalltest ist bewusst ein kontrollierter Hardwaretest. Er darf nicht
+während einer Fahrt, eines OTA-Uploads oder bei angeschlossenem Fahrzeug-CAN
+durchgeführt werden. GPS- und OBD-Daten, die genau während einer entfernten
+Karte entstehen, können nicht nachträglich rekonstruiert werden; das
+Recovery-Ereignis dokumentiert deshalb zusätzlich die Ausfalldauer.
 
 ### Testberichte
 
@@ -662,11 +692,40 @@ Buslast steht in [OPTIMIERUNGEN.md](OPTIMIERUNGEN.md).
 
 ## 📈 Version History
 
+### v1.5.27 - Langkurven und SD-Messungswiederanlauf
+- ✅ Zweistufige Kurvenerkennung: unmittelbarer Start bei hoher Drehrate und
+  kumulativer Start über Netto-Kursänderung und gefahrenen Weg
+- ✅ Zwei Sekunden Abschlussruhe sowie Richtungswechseltrennung für S-Kurven
+- ✅ Abtastlücken über 500 ms erzeugen keine scheinbar präzisen Kurven
+- ✅ Gepufferte Sensorzeilen bleiben bei einem vorübergehenden SD-Fehler im
+  RAM und werden in einer eigenen Recovery-Datei der Ursprungssitzung gesichert
+- ✅ Nach erfolgreichem Wiedereinbinden startet automatisch eine neue,
+  per `SD_RECOVERY_CONTINUATION` verknüpfte Sitzung
+- ✅ Nicht sauber abgeschlossene Sitzungen werden im NVS erkannt; nach einem
+  Neustart beginnt eine Messung weiterhin nur auf ausdrücklichen Start
+- ✅ Der serielle SD-Hotplug-Test prüft nun eine laufende Messung,
+  Pufferrettung und automatische Folgesitzung gemeinsam
+- ⚠️ Langkurven- und SD-Wiederanlaufverhalten noch am Gerät zu bestätigen
+
+### v1.5.26 - Vollständige Aufzeichnung und gültige Fahrbahnereignisse
+- ✅ Sensor- und GPS-Logger besitzen kein zweites Zeitgatter mehr; die
+  phasenerhaltende Hauptschleife ist alleiniger Taktgeber
+- ✅ Sammelflush zusätzlich als Gesamtvorgang gemessen
+  (`FlushLastMs`/`FlushMaxMs`/`FlushTotalMs`/`FlushCycles`/`FlushStalls`)
+- ✅ Straßenqualität und Fahrbahnereignisse an nachgewiesene
+  Fahrzeuggeschwindigkeit gebunden; im Stillstand entsteht kein Messwert
+- ✅ Ereignisschwere enthält Stoßbeschleunigung beziehungsweise Kurvenwinkel
+- ✅ Keine starre 180°-Grenze, die reale Kreisverkehre oder Wendemanöver
+  verwirft
+- ⚠️ Vollständigkeit der gespeicherten Zeilen noch am Gerät zu bestätigen
+
 ### v1.5.25 - Stabiler Recovery-Meilenstein
 - ✅ Ein erkannter ECU-Ausfall bleibt auch nach erfolgreicher Wiederverbindung
   als abgeschlossener Abnahmeschritt erhalten
 - ✅ Keine Rückkehr zu „ECU-Ausfall abwarten“ nach erneutem Einschalten
 - ✅ Ausfallbewertung beginnt exakt beim Motor-Aus-Marker
+- ✅ Wiederanlauf mit beiden Zündungs- und Motorstartschritten im Test
+  `20260730_101000_5901D247` bestätigt
 
 ### v1.5.24 - Kritische Datenqualitätskorrekturen
 - ✅ `NewFix` zählt GNSS-Zeitepochen statt mehrfacher NMEA-Positionscommits

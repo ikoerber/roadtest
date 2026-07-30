@@ -2,6 +2,7 @@
 #define SD_LOGGER_H
 
 #include <Arduino.h>
+#include <Preferences.h>
 #include <SD.h>
 #include <SPI.h>
 #include "bno055_manager.h"
@@ -119,6 +120,7 @@ private:
     bool initialized;
     bool cardAvailable;
     bool logging;
+    bool stopping;
     LoggingStartState loggingStartState;
     String lastStartError;
     
@@ -149,9 +151,7 @@ private:
     LogStats stats;
     
     // Timing
-    unsigned long lastSensorLog;
     unsigned long lastRoadLog;
-    unsigned long lastGPSLog;
     unsigned long lastFlush;
     unsigned long lastMetadataLog;
     unsigned long sessionStartTime;
@@ -177,6 +177,24 @@ private:
     char writeBuffer[BUFFER_SIZE];
     int bufferIndex;
     uint32_t bufferedRecordCount;
+
+    // Wiederanlauf nach SD-Ausfall. Sensorzeilen bleiben bei einem
+    // vorübergehenden Kartenfehler im RAM und werden nach dem erneuten
+    // Einbinden in eine eindeutig gekennzeichnete Recovery-Datei geschrieben.
+    // Eine neue Sitzung setzt die Messung anschließend automatisch fort und
+    // verweist per Ereignis auf die unterbrochene Ursprungssitzung.
+    bool recoveryResumePending;
+    bool recoveryMarkerPending;
+    bool recoveryBufferPending;
+    bool recoveryStateLoaded;
+    String recoveryOriginalSessionId;
+    String recoveryFailureReason;
+    String recoveryFailureUTC;
+    unsigned long recoveryFailureTime;
+    uint32_t recoveryBufferedRecordsAtFailure;
+    uint32_t recoveryRecoveredRecords;
+    String recoveryBufferFileName;
+    String lastRecoveryStatus;
     
     // Buffer-Overflow Schutz Funktionen
     size_t getAvailableBufferSpace() const;
@@ -190,8 +208,14 @@ private:
     void handleCardFailure(const char* reason, uint32_t droppedRecords = 0);
     bool writeHeader(File& file, LogType type);
     bool writeRideSummaryFile();
+    bool recoverBufferedSensorData();
     bool flushBuffer();
     void failLoggingStart(const String& reason);
+    void loadPersistentRecoveryState();
+    void persistActiveSession();
+    void persistFailureState(const String& reason);
+    void clearPersistentRecoveryState();
+    void finishRecoveryMarker();
     String formatTimestamp();
     String formatUTC();
     
@@ -221,6 +245,11 @@ public:
         return loggingStartState != LoggingStartState::IDLE;
     }
     String getLastStartError() const { return lastStartError; }
+    String getRecoveryStatus() const { return lastRecoveryStatus; }
+    bool isRecoveryPending() const {
+        return recoveryResumePending || recoveryMarkerPending ||
+               recoveryBufferPending;
+    }
     RideSummary getRideSummary() const;
     String getSessionId() const { return sessionId; }
     
@@ -252,8 +281,8 @@ public:
     bool logRoadMetrics(const RoadMetrics& metrics);
     
     // Ereignisse loggen
-    bool logEvent(const String& eventType, const String& description, 
-                  float lat = 0, float lon = 0);
+    bool logEvent(const String& eventType, const String& description,
+                  float lat = 0, float lon = 0, float severity = 0);
     bool logPothole(float severity, float lat = 0, float lon = 0);
     bool logCurve(float angle, float radius, float lat = 0, float lon = 0);
     

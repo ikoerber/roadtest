@@ -459,6 +459,10 @@ String WebManager::buildStatusPage() {
     page += F(" Zeichen");
     page += F("</td></tr><tr><td>SD-Karte</td><td>");
     page += sdLogger.isReady() ? F("OK") : F("Fehler");
+    if (sdLogger.getRecoveryStatus().length() > 0) {
+        page += F("</td></tr><tr><td>SD-Wiederanlauf</td><td>");
+        page += escapeHTML(sdLogger.getRecoveryStatus());
+    }
     page += F("</td></tr><tr><td>Aufzeichnung</td><td>");
     if (sdLogger.isLoggingStartPending()) {
         page += F("wird vorbereitet");
@@ -625,7 +629,10 @@ String WebManager::buildStatusPage() {
         page += F("</td></tr></table>");
         if (ride.interrupted) {
             page += F("<p class='warn'>Die Aufzeichnung wurde wegen eines "
-                      "SD-Fehlers abgebrochen.</p>");
+                      "SD-Fehlers unterbrochen. ROADTEST bindet die Karte "
+                      "automatisch wieder ein und sichert gepufferte Daten. "
+                      "Trat der Fehler während der Fahrt auf, folgt eine "
+                      "verknüpfte Fortsetzungssitzung.</p>");
         }
     } else {
         page += F("<p class='hint'>Noch keine Messfahrt in dieser Sitzung.</p>");
