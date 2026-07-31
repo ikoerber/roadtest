@@ -419,6 +419,25 @@ memory        # Memory-Leak Detection (2 Min)
 diag          # System-Diagnose mit allen Metriken
 ```
 
+## 🗺️ Kartenauswertung
+
+`tools/export_geojson.py` wandelt eine Messsitzung in GeoJSON zum Hineinziehen
+in [geojson.io](https://geojson.io):
+
+```bash
+python3 tools/export_geojson.py testdata/20260730_095603_A41A2450
+python3 tools/export_geojson.py testdata/20260730_095603_A41A2450 --modus geschwindigkeit
+```
+
+Die Strecke wird nach Straßenqualität eingefärbt — oder wahlweise nach der
+Abweichung zwischen GPS- und OBD-Geschwindigkeit. Dazu kommen Schlaglöcher als
+Marker nach Schwere, Kurven als tatsächlich gefahrener Bogen, die
+Referenzintervalle des Beifahrer-Kurventests und ein Sitzungskopf mit allen
+Kennzahlen.
+
+Damit wird sichtbar, **wo** die Fahrbahn schlecht war und welche markierte
+Kurve die Firmware erkannt hat — beides steht in den CSV-Dateien nur als Zahl.
+
 ## 📊 Datenformat & Ausgabe
 
 ### CSV-Datenlogging

@@ -15,6 +15,7 @@ produktionsreif. Bekannte Einschränkungen stehen weiter unten.
 | `pio device monitor` | Seriellen Monitor mit den Einstellungen aus `platformio.ini` öffnen |
 | `pio run -t clean` | PlatformIO-Buildartefakte löschen |
 | `pio test -e native` | Hosttests der hardwarefreien Auswertelogik ausführen |
+| `python3 tools/export_geojson.py <Sitzung>` | Messsitzung als Karte für geojson.io exportieren |
 
 Die Web-OTA-Datei entsteht unter:
 
@@ -191,6 +192,37 @@ pio run
 pio test -e native
 git diff --check
 ```
+
+## Auswertung als Karte
+
+`tools/export_geojson.py` wandelt eine Messsitzung in GeoJSON. Die Datei wird
+per Drag-and-drop in <https://geojson.io> geöffnet; die Einfärbung folgt der
+simplestyle-Spezifikation, alle übrigen Werte erscheinen beim Anklicken.
+
+```bash
+python3 tools/export_geojson.py testdata/20260730_095603_A41A2450
+python3 tools/export_geojson.py testdata/20260730_095603_A41A2450 --modus geschwindigkeit
+```
+
+Ebenen: Strecke nach Straßenqualität oder nach der Abweichung zwischen GPS-
+und OBD-Geschwindigkeit eingefärbt, Schlaglöcher als Marker nach Schwere,
+Kurven als tatsächlicher Bogen (ab Schema 1.5.28 mit Anfangs- und Endzeit,
+sonst als Punkt), Referenzintervalle des Beifahrer-Kurventests sowie ein
+Sitzungskopf mit Firmware, Kennzahlen und Laufzeitdiagnose.
+
+Verbindliche Regeln der Auswertung:
+
+- Nur nachgewiesen gültige Positionen werden verwendet.
+- Über eine Qualitäts- oder Zeitlücke hinweg wird keine Linie gezogen.
+- Ereignisse ohne eigene Position werden über die Zeit aus der GPS-Spur
+  verortet; die von der Firmware geschriebene Koordinate 0/0 gilt als
+  unbekannt und wird nicht übernommen.
+- Unbekannte Werte erscheinen als `null`, niemals als 0.
+
+Die Breitengrade sind als `float32` gespeichert und dadurch in rund 0,33-m-
+Stufen gerastert. Treppenstufen in der Karte bei langsamer Fahrt stammen aus
+diesem Datentyp, nicht aus dem GPS-Empfang. Der Hinweis steht auch in den
+Eigenschaften des Sitzungskopfes.
 
 ## Aktueller Teststand
 
