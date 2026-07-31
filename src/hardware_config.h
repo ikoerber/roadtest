@@ -129,6 +129,25 @@ extern const int GPS_BAUD_RATE;    // 9600    - GPS Baudrate
 // Stillstand drei Schlaglöcher und eine Kurve mit 625 Grad.
 #define ROAD_EVENT_MIN_SPEED_KMH               5.0f
 
+// Schlaglocherkennung: Ein Ereignis besteht aus einem Ausschlag nach unten,
+// gefolgt von einem Ausschlag nach oben innerhalb des Erkennungsfensters.
+// Die Sperrzeit verhindert, dass ein Nachschwingen als zweites Schlagloch
+// gezählt wird. Werte bisher als Zahlen im Erkennungscode.
+#define ROAD_POTHOLE_WINDOW_MS               600UL
+#define ROAD_POTHOLE_REARM_MS               1200UL
+
+// Straßenqualität: Normierung auf eine Referenzgeschwindigkeit.
+//
+// Achtung, gemessene Einschränkung: Die Klemmung wirkt nur zwischen
+// 30/1,5 = 20 km/h und 30/0,7 = 42,9 km/h. Oberhalb davon ist der Faktor
+// konstant 0,7, die Normierung also wirkungslos. In der Fahrt
+// 20260730_084245_54526FA7 mit Median 167 km/h betraf das die gesamte
+// Strecke. Die Konstanten sind hier benannt, damit diese Grenze sichtbar und
+// testbar ist; die Auslegung selbst ist unverändert.
+#define ROAD_QUALITY_REFERENCE_SPEED_KMH      30.0f
+#define ROAD_QUALITY_SPEED_FACTOR_MIN          0.7f
+#define ROAD_QUALITY_SPEED_FACTOR_MAX          1.5f
+
 // Zweistufige Kurvenerkennung:
 // - schnelle Kurven starten weiterhin unmittelbar über die Drehrate;
 // - langgezogene Kurven werden über kumulierten Winkel und gefahrenen Weg

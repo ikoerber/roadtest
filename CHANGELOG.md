@@ -51,6 +51,56 @@ Derzeit keine zusätzlichen Änderungen.
   parametriert, damit Kurven- und Oberflächenmodell nicht gleichzeitig
   verändert werden.
 
+### Testbarkeit
+- Die Auswertelogik der Kurvenerkennung liegt jetzt in
+  `src/curve_detector.{h,cpp}` und ist frei von Arduino-, Sensor- und
+  Zeitabhängigkeiten. `BNO055Manager` bildet nur noch die Sensorwerte auf die
+  Eingangsstruktur ab; das Verhalten ist unverändert. Zeitangaben verwenden
+  `uint32_t` statt `unsigned long`, damit Host und Ziel dasselbe
+  Überlaufverhalten zeigen.
+- Neue PlatformIO-Umgebung `native` mit 15 Hosttests
+  (`pio test -e native`, Laufzeit unter einer Sekunde). Sie belegen keinen
+  Firmware-Flash — relevant, weil der Messbuild bei 95,5 Prozent steht und die
+  On-Device-Suite allein 55,6 kByte belegt.
+- Abgedeckt sind scharfe und langgezogene Kurven, S-Kurvengruppierung,
+  Gyro-Vorrang und Kurs-Rückfall, Zeitlücken, Rückstellung, die Grenzen von
+  `CURVE_MIN_EVENT_ANGLE_DEG` sowie zwei Regressionsschutztests gegen
+  Ereignisse im Stillstand — der Fall, der in `20260730_071913_9B018397`
+  eine Kurve mit 625 Grad erzeugte.
+- Enthalten ist eine Wiedergabe der realen Fahrt `20260730_095603_A41A2450`
+  aus `testdata/`. Damit sind Parameteränderungen der Kurvenerkennung ohne
+  Ausfahrt bewertbar.
+- Fünf Mutationstests belegen, dass die Suite Parameteränderungen tatsächlich
+  erkennt. Ein erster Durchlauf tat das nicht; Schwellwertgrenzfälle und ein
+  fester Erwartungswert für die Wiedergabe wurden daraufhin ergänzt.
+- Ebenso ausgelagert: Vibrationsanalyse, Straßenqualität und
+  Schlaglocherkennung nach `src/road_metrics.{h,cpp}`. Die bisherigen
+  Zahlenliterale der Schlaglocherkennung und der Geschwindigkeitsnormierung
+  stehen jetzt als benannte Konstanten in `hardware_config.h`
+  (`ROAD_POTHOLE_WINDOW_MS`, `ROAD_POTHOLE_REARM_MS`,
+  `ROAD_QUALITY_REFERENCE_SPEED_KMH`, `ROAD_QUALITY_SPEED_FACTOR_MIN/MAX`).
+- 22 weitere Hosttests in `test/test_road_metrics/`. Zwei davon halten die
+  gemessene Einschränkung fest, dass die Geschwindigkeitsnormierung nur
+  zwischen 20 und 42,9 km/h wirkt und oberhalb davon konstant ist. Die
+  Auslegung selbst bleibt unverändert; die Grenze ist damit sichtbar und
+  eine Änderung erzwingt eine bewusste Entscheidung.
+- Wiedergaben aus `testdata/`: der belegte Standlauf
+  `20260730_101000_5901D247` muss null Qualitätswerte und null Schlaglöcher
+  erzeugen, die Fahrt `20260730_095603_A41A2450` ist auf 5.856
+  Qualitätswerte, Mittel 84,2, Minimum 33,2 und sieben Schlaglöcher
+  festgeschrieben.
+- Elf Mutationstests über beide Einheiten belegen, dass die Suite
+  Parameteränderungen erkennt.
+- Die Portierung ist als wortgetreu nachgewiesen: Die Rümpfe von
+  `detectCurve`, `addCurveSample`, `completeCurve`, `analyzeVibration`,
+  `calculateRoadQuality`, `getSmoothness` und `detectPothole` stimmen nach
+  Normalisierung von Namen und Typen mit dem Stand vor der Auslagerung
+  überein.
+- `[platformio] default_envs = lolin_s3_mini` ergänzt, damit `pio run` nicht
+  versucht, die Testumgebung zu linken.
+- Kosten: 580 Byte Flash für die zusätzliche Indirektion, RAM um 8 Byte
+  geringer.
+
 ## [1.5.27] - 2026-07-30
 
 ### Behoben

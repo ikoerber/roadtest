@@ -14,6 +14,7 @@ produktionsreif. Bekannte Einschränkungen stehen weiter unten.
 | `pio run -t upload` | Firmware über USB-CDC flashen |
 | `pio device monitor` | Seriellen Monitor mit den Einstellungen aus `platformio.ini` öffnen |
 | `pio run -t clean` | PlatformIO-Buildartefakte löschen |
+| `pio test -e native` | Hosttests der hardwarefreien Auswertelogik ausführen |
 
 Die Web-OTA-Datei entsteht unter:
 
@@ -154,10 +155,37 @@ Die Integrationstests sind Firmwaretests mit realer Hardware und teilweise
 interaktiven Schritten. Es gibt derzeit keine belastbare automatisierte
 Coverage-Zahl. Keine erfundenen Qualitäts- oder Abdeckungswerte dokumentieren.
 
+## Hosttests
+
+Die Auswertelogik der Kurvenerkennung liegt in `src/curve_detector.{h,cpp}`,
+die der Fahrbahnbewertung in `src/road_metrics.{h,cpp}`. Beide Einheiten sind
+frei von Arduino-, Sensor- und Zeitabhängigkeiten. `BNO055Manager` reicht nur
+noch die Sensorwerte durch. Getestet wird über die Umgebung `native` auf dem
+Entwicklungsrechner:
+
+```bash
+pio test -e native
+```
+
+Diese Tests belegen keinen Byte Firmware-Flash und laufen in unter zwei
+Sekunden. `test/test_curve_detector/` prüft Kurvenerkennung,
+`test/test_road_metrics/` Vibrationsanalyse, Straßenqualität und
+Schlaglocherkennung. Beide enthalten Regressionsschutztests gegen Ereignisse
+im Stillstand sowie Wiedergaben realer Fahrten aus `testdata/`.
+
+Die Wiedergaben sind auf feste Kennzahlen festgeschrieben. Ändern sie sich,
+ist das kein Testfehler, sondern eine Verhaltensänderung: prüfen, begründen
+und den Festwert bewusst nachziehen.
+
+Neue Schwellwerte gehören mit einem Fall knapp darüber und knapp darunter
+abgesichert. Ein Mutationstest beim Aufbau der Suite zeigte, dass weit von
+der Schwelle entfernte Testfälle eine Parameteränderung nicht bemerken.
+
 Vor einem Commit mindestens ausführen:
 
 ```bash
 pio run
+pio test -e native
 git diff --check
 ```
 

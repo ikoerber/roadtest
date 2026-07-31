@@ -7,6 +7,8 @@
 #include <utility/imumaths.h>
 #include <Preferences.h>
 #include "hardware_config.h"
+#include "curve_detector.h"
+#include "road_metrics.h"
 
 // Betriebsmodus des BNO055.
 //
@@ -107,87 +109,13 @@ struct SensorData {
     unsigned long timestamp; // ms
 };
 
-// Vibrations-Analyse
-struct VibrationMetrics {
-    float rmsAccel;     // RMS Beschleunigung
-    float maxShock;     // Maximaler Stoß
-    float frequency;    // Dominante Frequenz
-    uint32_t shockCount; // Anzahl Stöße über Schwellwert
-};
-
-enum class CurveDetectionMode : uint8_t {
-    SHARP,
-    LONG
-};
-
-enum class CurveCompletionReason : uint8_t {
-    QUIET,
-    REVERSAL,
-    TIMEOUT
-};
-
-enum CurveQualityFlag : uint16_t {
-    CURVE_QUALITY_GYRO_PRIMARY = 1U << 0,
-    CURVE_QUALITY_HEADING_FALLBACK = 1U << 1,
-    CURVE_QUALITY_HEADING_MISMATCH = 1U << 2,
-    CURVE_QUALITY_FEW_SAMPLES = 1U << 3
-};
-
-struct CurveEvent {
-    bool valid;
-    unsigned long startTimeMs;
-    unsigned long endTimeMs;
-    unsigned long durationMs;
-    uint32_t groupId;
-    int8_t direction;
-    float angleDeg;
-    float headingAngleDeg;
-    float distanceM;
-    float meanSpeedKmh;
-    float maxSpeedKmh;
-    float meanYawRateDps;
-    float maxYawRateDps;
-    float radiusM;
-    float meanLateralAccel;
-    float maxLateralAccel;
-    uint16_t sampleCount;
-    uint16_t qualityFlags;
-    CurveDetectionMode detectionMode;
-    CurveCompletionReason completionReason;
-
-    CurveEvent()
-        : valid(false), startTimeMs(0), endTimeMs(0), durationMs(0),
-          groupId(0), direction(0), angleDeg(0), headingAngleDeg(0),
-          distanceM(0), meanSpeedKmh(0), maxSpeedKmh(0),
-          meanYawRateDps(0), maxYawRateDps(0), radiusM(0),
-          meanLateralAccel(0), maxLateralAccel(0), sampleCount(0),
-          qualityFlags(0), detectionMode(CurveDetectionMode::LONG),
-          completionReason(CurveCompletionReason::QUIET) {}
-};
+// VibrationMetrics steht in road_metrics.h; CurveDetectionMode,
+// CurveCompletionReason, CurveQualityFlag und CurveEvent stehen in
+// curve_detector.h. Beide Einheiten sind frei von Arduino- und
+// Sensorabhängigkeiten und dadurch auf dem Entwicklungsrechner testbar.
 
 class BNO055Manager {
 private:
-    struct CurveAccumulator {
-        bool active;
-        unsigned long startTimeMs;
-        unsigned long lastTurnTimeMs;
-        int8_t direction;
-        float signedAngleDeg;
-        float signedHeadingAngleDeg;
-        float distanceM;
-        float speedSumKmh;
-        float maxSpeedKmh;
-        float yawRateSumDps;
-        float maxYawRateDps;
-        float lateralAccelSum;
-        float maxLateralAccel;
-        uint16_t sampleCount;
-        uint16_t gyroSampleCount;
-        CurveDetectionMode detectionMode;
-
-        void clear();
-    };
-
     Adafruit_BNO055* sensor;
     bool initialized;
     bool selfTestPassed;
@@ -204,46 +132,12 @@ private:
     adafruit_bno055_offsets_t calibrationOffsets;
     Preferences preferences;  // NVS für persistente Speicherung
     
-    // Daten-Puffer für Analyse
-    static const int BUFFER_SIZE = 10;  // 1 Sekunde bei 10 Hz
-    float accelBuffer[BUFFER_SIZE];
-    int bufferIndex;
-    int bufferCount;
-    
-    // Vibrations-Analyse
-    float vibrationThreshold;
-    VibrationMetrics currentVibration;
-    float lastRoadQuality;
-    bool hasRoadQuality;
-    
-    // Orientierungs-Tracking
-    float lastHeading;
-    unsigned long lastHeadingTime;
-    bool headingInitialized;
-    float lastCompletedCurveAngle;
-    unsigned long curveQuietSince;
-    unsigned long lastCurveEvent;
-    CurveAccumulator curveCandidate;
-    CurveAccumulator activeCurve;
-    CurveAccumulator curveReversal;
-    uint32_t nextCurveGroupId;
-    uint32_t activeCurveGroupId;
+    // Fahrbahnbewertung und Kurvenerkennung. Die gesamte Auswertelogik liegt
+    // in RoadMetricsAnalyzer und CurveDetector und ist dort ohne Hardware
+    // testbar; dieser Manager reicht nur noch die Sensorwerte durch.
+    RoadMetricsAnalyzer roadMetrics;
+    CurveDetector curveDetector;
 
-    void addCurveSample(
-        CurveAccumulator& accumulator, unsigned long intervalStartMs,
-        unsigned long intervalEndMs, float signedTurnDeltaDeg,
-        float headingDeltaDeg, float speedKmh, float yawRateDps,
-        bool gyroPrimary);
-    bool completeCurve(
-        const CurveAccumulator& accumulator, unsigned long endTimeMs,
-        uint32_t groupId, CurveCompletionReason reason,
-        CurveEvent& completedEvent);
-
-    // Schlagloch-Erkennung
-    bool potholeArmed;
-    unsigned long potholeStartTime;
-    unsigned long lastPotholeEvent;
-    
 public:
     // Der ADR-Pin ist im vorhandenen Aufbau fest mit 3,3 V verbunden.
     BNO055Manager();
@@ -302,7 +196,9 @@ public:
     VibrationMetrics analyzeVibration();
     void processSample(const SensorData& data);
     void updateVibrationBuffer(float accelZ);
-    void setVibrationThreshold(float threshold) { vibrationThreshold = threshold; }
+    void setVibrationThreshold(float threshold) {
+        roadMetrics.setVibrationThreshold(threshold);
+    }
     
     // Kurven- und Fahrbahnereigniserkennung.
     //

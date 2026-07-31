@@ -50,6 +50,10 @@ npm-debug.log*
 # Test files
 test_*
 *_test.*
+# Die PlatformIO-Testsuite unter test/ ist davon ausgenommen: Sie gehoert
+# zum Projekt. Ohne diese Zeile greift test_* auch auf
+# test/test_curve_detector/test_curve_detector.cpp.
+!test/**
 
 # Documentation build
 docs/_build/
