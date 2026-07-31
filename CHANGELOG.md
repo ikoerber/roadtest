@@ -7,7 +7,22 @@ und dieses Projekt hält sich an [Semantic Versioning](https://semver.org/spec/v
 
 ## [Unveröffentlicht]
 
-Derzeit keine zusätzlichen Änderungen.
+### Geändert
+- Beifahrer-Kurventest auf eine Bildschirmseite ohne Scrollen umgestellt. Der
+  Rahmen ist `100dvh` hoch, die Knopffläche nimmt den Rest ein und die Knöpfe
+  wachsen mit der verfügbaren Höhe. Selbst im Querformat bleiben rund 79 Pixel
+  je Knopfreihe, deutlich über der Mindestgröße für Tippziele.
+- Alle sechs Referenzarten stehen in fester 2x3-Anordnung: linke Spalte
+  Linkskurven, rechte Spalte Rechtskurven. Erledigte Arten verschwinden nicht
+  mehr, sondern werden nur deaktiviert. Zuvor verschoben sich dadurch die
+  Positionen der übrigen Knöpfe während der Fahrt - der Beifahrer greift aber
+  nach Position, nicht nach Text.
+- Jeder Knopf trägt seinen eigenen Fortschritt, der Kopf die Gesamtzahl
+  erfasster Referenzen.
+- Während eines laufenden Intervalls bleibt unverändert nur der Endknopf
+  sichtbar; ein versehentlicher zweiter Start ist ausgeschlossen.
+- Erklärtexte auf das Nötige gekürzt. Die Seite belegt dadurch 3.660 Byte
+  weniger Flash: 1.248.338 statt 1.251.998 Byte, 95,2 statt 95,5 Prozent.
 
 ## [1.5.28] - 2026-07-31
 

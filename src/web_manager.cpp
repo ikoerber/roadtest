@@ -50,6 +50,35 @@ String escapeJSON(String value) {
     return value;
 }
 
+// Ein Referenzknopf des Beifahrer-Kurventests.
+//
+// Erledigte Typen bleiben sichtbar und werden nur deaktiviert. Würden sie
+// verschwinden, verschöben sich im fahrenden Fahrzeug die Positionen der
+// übrigen Knöpfe - der Beifahrer greift aber nach Position, nicht nach Text.
+void appendCurveButton(
+    String& page, const char* typ, const char* beschriftung,
+    uint16_t erledigt, uint16_t benoetigt) {
+    const bool fertig = erledigt >= benoetigt;
+    page += F("<form method='POST' action='/curve-test/reference-start'>"
+              "<input type='hidden' name='type' value='");
+    page += typ;
+    page += F("'><button type='submit'");
+    if (fertig) {
+        page += F(" class='done' disabled");
+    }
+    page += F("><i>");
+    page += beschriftung;
+    page += F("</i><em>");
+    if (fertig) {
+        page += F("fertig");
+    } else {
+        page += String(erledigt);
+        page += F("/");
+        page += String(benoetigt);
+    }
+    page += F("</em></button></form>");
+}
+
 void appendCalibrationStep(
     String& page, uint8_t number, const char* title, const char* scoreLabel,
     uint8_t score, CalibrationStepState state, const char* instruction) {
@@ -838,68 +867,92 @@ String WebManager::buildCurveTestPage(const String& message) {
     const RideSummary ride = sdLogger.getRideSummary();
     const OBDLiveData obd = canReader.getOBDData();
     const GPSData gps = gpsManager.getCurrentData(false);
-    const uint16_t curveWideCount =
-        curveLeftWideCount + curveRightWideCount;
-    const uint16_t curveNormalCount =
-        curveLeftNormalCount + curveRightNormalCount;
-    const bool curveReferencesComplete =
-        curveStraightCount >= 1 &&
-        curveLeftWideCount >= 2 && curveRightWideCount >= 2 &&
-        curveLeftNormalCount >= 2 && curveRightNormalCount >= 2 &&
-        curveSCount >= 3;
+    const uint16_t curveDone =
+        (curveStraightCount > 1 ? 1 : curveStraightCount) +
+        (curveLeftWideCount > 2 ? 2 : curveLeftWideCount) +
+        (curveRightWideCount > 2 ? 2 : curveRightWideCount) +
+        (curveLeftNormalCount > 2 ? 2 : curveLeftNormalCount) +
+        (curveRightNormalCount > 2 ? 2 : curveRightNormalCount) +
+        (curveSCount > 3 ? 3 : curveSCount);
+    const bool curveReferencesComplete = curveDone >= 12;
 
     String page;
-    page.reserve(8600);
+    page.reserve(7600);
+
+    // Ein Bildschirm ohne Scrollen: Der Rahmen ist 100dvh hoch, die
+    // Knopfflaeche nimmt den Rest ein und die Knoepfe wachsen mit. Dadurch
+    // passt die Seite auf jedes Geraet, ohne feste Groessen zu raten.
     page += F(
         "<!doctype html><html lang='de'><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1,"
         "viewport-fit=cover'><title>ROADTEST · Kurventest</title><style>"
         ":root{--road:#111713;--paper:#f0eddf;--acid:#dcf34f;"
-        "--orange:#ff6b35;--mint:#33d69f;--muted:#777d75;--red:#c53b33}"
-        "*{box-sizing:border-box}body{margin:0;background:var(--road);"
-        "color:var(--paper);font-family:'Trebuchet MS','Avenir Next',sans-serif}"
-        "body:before{content:'';position:fixed;inset:0;pointer-events:none;"
-        "background:repeating-linear-gradient(115deg,transparent 0 56px,"
-        "rgba(255,255,255,.025) 57px 59px)}main{width:min(48rem,100%);"
-        "margin:auto;padding:1rem 1rem 3rem}header{padding:1rem 0 1.25rem;"
-        "border-bottom:2px solid #485048}.brand{font-size:.72rem;font-weight:900;"
-        "letter-spacing:.2em;color:var(--acid)}h1{font-size:clamp(2.8rem,13vw,"
-        "5.7rem);line-height:.82;letter-spacing:-.065em;margin:1rem 0 .8rem}"
-        ".lead{max-width:37rem;color:#b9c0b8;line-height:1.48;margin:0}"
-        ".notice{margin:1rem 0;padding:1rem;border:2px solid var(--orange);"
-        "background:#2a1c15}.dash{display:grid;grid-template-columns:repeat(2,"
-        "1fr);gap:.55rem;margin:1rem 0}.metric{border:1px solid #465047;"
-        "padding:.75rem;background:#18201b}.metric span{display:block;"
-        "color:#8f9b91;font-size:.62rem;font-weight:900;letter-spacing:.12em;"
-        "text-transform:uppercase}.metric b{display:block;font-size:1.12rem;"
-        "margin-top:.3rem}.task{margin:1.4rem 0;padding:1.15rem;background:"
-        "var(--paper);color:var(--road);box-shadow:8px 8px 0 var(--acid)}"
-        ".step{font-size:.7rem;font-weight:900;letter-spacing:.17em;color:"
-        "#596158}.task h2{font-size:clamp(1.65rem,7vw,2.5rem);line-height:1;"
-        "margin:.45rem 0}.task p{line-height:1.5;margin:.5rem 0;color:#4e554f}"
-        ".buttons{display:grid;gap:.75rem;margin-top:1.15rem}form{margin:0}"
-        "button{width:100%;min-height:7rem;border:3px solid var(--road);"
-        "background:var(--acid);color:var(--road);font:900 1.35rem "
-        "'Trebuchet MS','Avenir Next',sans-serif;padding:1rem;"
-        "box-shadow:0 7px 0 #000;touch-action:manipulation}"
-        "button:active{transform:translateY(5px);box-shadow:0 2px 0 #000}"
-        "button.end{min-height:9rem;background:var(--orange);font-size:1.7rem}"
-        "button.finish{background:var(--mint)}button.stop{background:var(--red);"
-        "color:white;min-height:5rem}.pair{display:grid;grid-template-columns:"
-        "1fr 1fr;gap:.75rem}.progress{display:grid;grid-template-columns:"
-        "repeat(4,1fr);gap:.35rem;margin:1rem 0}.progress div{text-align:center;"
-        "padding:.55rem .2rem;border:1px solid #465047;color:#aab2aa}"
-        ".progress b{display:block;color:white;font-size:1.2rem}.connection{"
-        "font-size:.8rem;color:#8f9b91}.connection.bad{color:#ff867b;font-weight:"
-        "900}.foot{border-top:1px solid #465047;margin-top:1.6rem;padding-top:"
-        "1rem;color:#9aa39a;line-height:1.5;font-size:.85rem}a{color:var(--acid);"
-        "font-weight:900}@media(min-width:42rem){.dash{grid-template-columns:"
-        "repeat(4,1fr)}}@media(max-width:24rem){.pair{grid-template-columns:1fr}}"
-        "</style></head><body><main><header><div class='brand'>ROADTEST / "
-        "BEIFAHRER-MODUS</div><h1>Kurven<br>fangen.</h1><p class='lead'>"
-        "Nur der Beifahrer bedient diese Seite. Markiert wird genau am "
-        "physischen Beginn und Ende des Straßenverlaufs — nicht schon bei "
-        "der Planung der nächsten Kurve.</p></header>");
+        "--orange:#ff6b35;--mint:#33d69f;--red:#c53b33}"
+        "*{box-sizing:border-box}html,body{height:100%}"
+        "body{margin:0;background:var(--road);color:var(--paper);"
+        "font-family:'Trebuchet MS','Avenir Next',sans-serif;"
+        "height:100dvh;display:flex;flex-direction:column;overflow:hidden;"
+        "padding:env(safe-area-inset-top) env(safe-area-inset-right) "
+        "env(safe-area-inset-bottom) env(safe-area-inset-left)}"
+        "header{display:flex;justify-content:space-between;align-items:baseline;"
+        "padding:.5rem .7rem;border-bottom:2px solid #485048;flex:0 0 auto}"
+        ".brand{font-size:.66rem;font-weight:900;letter-spacing:.18em;"
+        "color:var(--acid)}.count{font-size:.95rem;font-weight:900}"
+        ".dash{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;"
+        "background:#465047;flex:0 0 auto}.metric{background:#18201b;"
+        "padding:.35rem .4rem;text-align:center}.metric span{display:block;"
+        "color:#8f9b91;font-size:.55rem;font-weight:900;letter-spacing:.08em;"
+        "text-transform:uppercase}.metric b{display:block;font-size:.95rem}"
+        ".notice{margin:.4rem .7rem;padding:.5rem;border:2px solid var(--orange);"
+        "background:#2a1c15;font-size:.8rem;flex:0 0 auto}"
+        ".grid{flex:1 1 auto;display:grid;grid-template-columns:1fr 1fr;"
+        "gap:.4rem;padding:.4rem;min-height:0}"
+        ".grid.one{grid-template-columns:1fr}form{margin:0;display:flex}"
+        "button{flex:1;width:100%;border:3px solid var(--road);"
+        "background:var(--acid);color:var(--road);font-family:inherit;"
+        "display:flex;flex-direction:column;align-items:center;"
+        "justify-content:center;gap:.15rem;padding:.3rem;"
+        "box-shadow:0 5px 0 #000;touch-action:manipulation}"
+        "button i{font-style:normal;font-weight:900;font-size:clamp(.85rem,"
+        "3.6vw,1.25rem);line-height:1.05;text-align:center}"
+        "button em{font-style:normal;font-weight:900;font-size:.7rem;"
+        "opacity:.62}button:active{transform:translateY(4px);"
+        "box-shadow:0 1px 0 #000}button.done{background:#2b332c;"
+        "color:#79836f;box-shadow:none;border-color:#2b332c}"
+        "button.end{background:var(--orange)}button.end i{font-size:clamp("
+        "1.4rem,7vw,2.4rem)}button.start{background:var(--acid)}"
+        "button.finish{background:var(--mint)}"
+        ".foot{flex:0 0 auto;display:flex;justify-content:space-between;"
+        "align-items:center;gap:.5rem;padding:.35rem .7rem;font-size:.7rem;"
+        "color:#9aa39a;border-top:1px solid #465047}"
+        ".foot.bad{color:#ff867b;font-weight:900}a{color:var(--acid);"
+        "font-weight:900;text-decoration:none}"
+        ".foot form{display:inline}.foot button{border:none;background:none;"
+        "box-shadow:none;color:var(--red);font-weight:900;font-size:.7rem;"
+        "padding:0;width:auto;flex:0}"
+        "</style></head><body>");
+
+    page += F("<header><div class='brand'>ROADTEST / BEIFAHRER</div>"
+              "<div class='count'>");
+    page += String(curveDone);
+    page += F("/12</div></header>");
+
+    page += F("<section class='dash'><div class='metric'><span>Aufz.</span>"
+              "<b id='recording'>");
+    page += recording ? F("AN") : (preparing ? F("…") : F("AUS"));
+    page += F("</b></div><div class='metric'><span>Tempo</span><b id='speed'>");
+    if (obd.speedValid) {
+        page += String(obd.speedKmh);
+    } else if (gps.speed_valid) {
+        page += String(gps.speed_kmh, 0);
+    } else {
+        page += F("–");
+    }
+    page += F("</b></div><div class='metric'><span>Kurven</span><b id='curves'>");
+    page += String(ride.curveCount);
+    page += F("</b></div><div class='metric'><span>km</span><b id='distance'>");
+    page += String(ride.distanceKm, 1);
+    page += F("</b></div></section>");
 
     if (message.length() > 0) {
         page += F("<div class='notice'>");
@@ -907,153 +960,55 @@ String WebManager::buildCurveTestPage(const String& message) {
         page += F("</div>");
     }
 
-    page += F("<section class='dash'><div class='metric'><span>Aufzeichnung"
-              "</span><b id='recording'>");
-    page += recording ? F("AKTIV") : (preparing ? F("STARTET") : F("AUS"));
-    page += F("</b></div><div class='metric'><span>Geschwindigkeit</span><b "
-              "id='speed'>");
-    if (obd.speedValid) {
-        page += String(obd.speedKmh) + " km/h";
-    } else if (gps.speed_valid) {
-        page += String(gps.speed_kmh, 1) + " km/h";
-    } else {
-        page += F("–");
-    }
-    page += F("</b></div><div class='metric'><span>Firmware-Kurven</span><b "
-              "id='curves'>");
-    page += String(ride.curveCount);
-    page += F("</b></div><div class='metric'><span>Strecke</span><b "
-              "id='distance'>");
-    page += String(ride.distanceKm, 2);
-    page += F(" km</b></div></section><section class='progress'>");
-    page += F("<div>Gerade<b>");
-    page += String(curveStraightCount);
-    page += F("/1</b></div><div>Weit<b>");
-    page += String(curveWideCount);
-    page += F("/4</b></div><div>Normal<b>");
-    page += String(curveNormalCount);
-    page += F("/4</b></div><div>S-Kurve<b>");
-    page += String(curveSCount);
-    page += F("/3</b></div></section>");
-
     if (!curveTestActive) {
-        page += F("<section class='task'><div class='step'>START</div>"
-                  "<h2>Alles aus einer Hand</h2><p>Dieser Knopf startet die "
-                  "Aufzeichnung. Eine vorher separat gestartete Messung ist "
-                  "nicht nötig.</p><form method='POST' action='/curve-test/start'>"
-                  "<button type='submit'>Kurventest & Aufzeichnung starten"
-                  "</button></form></section>");
+        page += F("<div class='grid one'><form method='POST' action="
+                  "'/curve-test/start'><button class='start' type='submit'>"
+                  "<i>KURVENTEST STARTEN</i><em>startet auch die Aufzeichnung"
+                  "</em></button></form></div>");
     } else if (!recording) {
-        page += F("<section class='task'><div class='step'>VORBEREITUNG</div>"
-                  "<h2>Dateien werden geöffnet</h2><p>Noch nicht losfahren. "
-                  "Die Seite wechselt automatisch, sobald die Messung bereit "
-                  "ist.</p></section>");
+        page += F("<div class='grid one'><button class='done' disabled>"
+                  "<i>DATEIEN WERDEN GEÖFFNET</i><em>noch nicht losfahren</em>"
+                  "</button></div>");
     } else if (curveReferenceActive) {
-        page += F("<section class='task'><div class='step'>REFERENZ LÄUFT</div>"
-                  "<h2>");
-        page += getCurveReferenceName(curveReferenceType);
-        page += F("</h2><p>Am tatsächlichen Ende des geraden Abschnitts oder "
-                  "der Kurve drücken. Alle Startknöpfe bleiben bis dahin "
-                  "ausgeblendet.</p><form method='POST' action="
+        // Waehrend eines laufenden Intervalls bleibt nur der Endknopf. Ein
+        // versehentlicher zweiter Start ist damit ausgeschlossen.
+        page += F("<div class='grid one'><form method='POST' action="
                   "'/curve-test/reference-end'><button class='end' type="
-                  "'submit'>JETZT ENDE MARKIEREN</button></form></section>");
+                  "'submit'><i>ENDE MARKIEREN</i><em>");
+        page += getCurveReferenceName(curveReferenceType);
+        page += F("</em></button></form></div>");
+    } else if (curveReferencesComplete) {
+        page += F("<div class='grid one'><form method='POST' action="
+                  "'/curve-test/end'><button class='finish' type='submit'>"
+                  "<i>TEST BEENDEN &amp; SPEICHERN</i><em>alle 12 Referenzen "
+                  "erfasst</em></button></form></div>");
     } else {
-        if (!curveReferencesComplete) {
-            page += F("<p class='lead'>Wähle immer die Kurve, die als Nächstes "
-                      "tatsächlich kommt. Die Reihenfolge ist frei; erledigte "
-                      "Richtungen verschwinden automatisch.</p>");
-        }
-        if (curveStraightCount < 1) {
-            page += F("<section class='task'><div class='step'>OFFEN / GERADE "
-                      "REFERENZ</div><h2>45–60 Sekunden gerade</h2><p>Erst am "
-                      "Beginn eines wirklich geraden Abschnitts drücken. Die "
-                      "Gerade kann zu jedem Zeitpunkt der Fahrt markiert "
-                      "werden.</p><form method='POST' action="
-                      "'/curve-test/reference-start'><input type='hidden' "
-                      "name='type' value='straight'><button type='submit'>"
-                      "GERADE BEGINNT JETZT</button></form></section>");
-        }
-        if (curveLeftWideCount < 2 || curveRightWideCount < 2) {
-            page += F("<section class='task'><div class='step'>OFFEN / WEITE "
-                      "KURVEN · LINKS ");
-            page += String(curveLeftWideCount);
-            page += F("/2 · RECHTS ");
-            page += String(curveRightWideCount);
-            page += F("/2</div><h2>Langgezogene Bögen</h2><p>Am wirklichen "
-                      "Einlenkpunkt drücken; ideal sind ungefähr zehn Sekunden "
-                      "oder länger.</p><div class='buttons pair'>");
-            if (curveLeftWideCount < 2) {
-                page += F("<form method='POST' action="
-                          "'/curve-test/reference-start'><input type='hidden' "
-                          "name='type' value='left-wide'><button type='submit'>"
-                          "← WEIT LINKS BEGINNT</button></form>");
-            }
-            if (curveRightWideCount < 2) {
-                page += F("<form method='POST' action="
-                          "'/curve-test/reference-start'><input type='hidden' "
-                          "name='type' value='right-wide'><button type='submit'>"
-                          "WEIT RECHTS BEGINNT →</button></form>");
-            }
-            page += F("</div></section>");
-        }
-        if (curveLeftNormalCount < 2 || curveRightNormalCount < 2) {
-            page += F("<section class='task'><div class='step'>OFFEN / NORMAL "
-                      "ODER ENG · LINKS ");
-            page += String(curveLeftNormalCount);
-            page += F("/2 · RECHTS ");
-            page += String(curveRightNormalCount);
-            page += F("/2</div><h2>Deutliches Einlenken</h2><p>Normale oder "
-                      "engere Straßenkurven markieren. Sicher und normal "
-                      "fahren; keine besonderen Manöver provozieren.</p><div "
-                      "class='buttons pair'>");
-            if (curveLeftNormalCount < 2) {
-                page += F("<form method='POST' action="
-                          "'/curve-test/reference-start'><input type='hidden' "
-                          "name='type' value='left-normal'><button type='submit'>"
-                          "← NORMAL LINKS BEGINNT</button></form>");
-            }
-            if (curveRightNormalCount < 2) {
-                page += F("<form method='POST' action="
-                          "'/curve-test/reference-start'><input type='hidden' "
-                          "name='type' value='right-normal'><button type='submit'>"
-                          "NORMAL RECHTS BEGINNT →</button></form>");
-            }
-            page += F("</div></section>");
-        }
-        if (curveSCount < 3) {
-            page += F("<section class='task'><div class='step'>OFFEN / S-KURVEN · ");
-            page += String(curveSCount);
-            page += F("/3</div><h2>Beide Hälften als ein Intervall</h2><p>Vor "
-                      "der ersten Hälfte starten und erst nach der zweiten "
-                      "Hälfte beenden.</p><form method='POST' action="
-                      "'/curve-test/reference-start'><input type='hidden' "
-                      "name='type' value='s-curve'><button type='submit'>"
-                      "S-KURVE BEGINNT JETZT</button></form></section>");
-        }
-        if (curveReferencesComplete) {
-            page += F("<section class='task'><div class='step'>VOLLSTÄNDIG</div>"
-                      "<h2>Referenzen im Kasten</h2><p>Wenn es sich anbietet, "
-                      "kann die Fahrt noch einige Minuten ohne Bedienung "
-                      "weiterlaufen. Danach Dateien sauber schließen.</p>"
-                      "<form method='POST' action='/curve-test/end'><button "
-                      "class='finish' type='submit'>TEST BEENDEN & SPEICHERN"
-                      "</button></form></section>");
-        }
+        // Feste Anordnung: linke Spalte Linkskurven, rechte Spalte
+        // Rechtskurven. Die Position eines Knopfes aendert sich waehrend der
+        // gesamten Fahrt nicht.
+        page += F("<div class='grid'>");
+        appendCurveButton(page, "straight", "GERADE", curveStraightCount, 1);
+        appendCurveButton(page, "s-curve", "S-KURVE", curveSCount, 3);
+        appendCurveButton(
+            page, "left-wide", "&#8592; WEIT", curveLeftWideCount, 2);
+        appendCurveButton(
+            page, "right-wide", "WEIT &#8594;", curveRightWideCount, 2);
+        appendCurveButton(
+            page, "left-normal", "&#8592; NORMAL", curveLeftNormalCount, 2);
+        appendCurveButton(
+            page, "right-normal", "NORMAL &#8594;", curveRightNormalCount, 2);
+        page += F("</div>");
     }
 
-    if (curveTestActive && !curveReferenceActive &&
-        !curveReferencesComplete) {
-        page += F("<details><summary>Test vorzeitig beenden</summary><form "
-                  "method='POST' action='/curve-test/end'><button class='stop' "
-                  "type='submit'>Vorzeitig beenden und Dateien schließen"
-                  "</button></form></details>");
+    page += F("<div class='foot'><span id='connection'>Marker am echten "
+              "Anfang und Ende</span>");
+    if (curveTestActive && !curveReferenceActive && !curveReferencesComplete) {
+        page += F("<form method='POST' action='/curve-test/end'><button "
+                  "type='submit'>abbrechen</button></form>");
+    } else {
+        page += F("<a href='/'>Status</a>");
     }
-    page += F("<p id='connection' class='connection'>Statusverbindung aktiv"
-              "</p><p class='foot'>Keine Bedienung durch den Fahrer. Die "
-              "Marker werden ohne sofortigen SD-Flush geschrieben, damit der "
-              "Knopfdruck keine künstliche Messpause erzeugt.<br><br><a "
-              "href='/'>← Systemstatus</a></p></main><script>const initial="
-              "{active:");
+    page += F("</div><script>const initial={active:");
     page += curveTestActive ? F("true") : F("false");
     page += F(",recording:");
     page += recording ? F("true") : F("false");
@@ -1062,20 +1017,21 @@ String WebManager::buildCurveTestPage(const String& message) {
     page += F("};function t(id,v){const e=document.getElementById(id);if(e)e."
               "textContent=v}async function poll(){try{const r=await fetch("
               "'/curve-test/status',{cache:'no-store'});if(!r.ok)throw 0;const "
-              "s=await r.json();t('recording',s.recording?'AKTIV':(s.preparing?"
-              "'STARTET':'AUS'));const v=s.obdSpeed>=0?s.obdSpeed:s.gpsSpeed;"
-              "t('speed',v>=0?v+' km/h':'–');t('curves',s.detectedCurves);"
-              "t('distance',s.distanceKm."
-              "toFixed(2)+' km');const c=document.getElementById('connection');"
-              "c.textContent='Statusverbindung aktiv';c.className='connection';"
+              "s=await r.json();t('recording',s.recording?'AN':(s.preparing?"
+              "'…':'AUS'));const v=s.obdSpeed>=0?s.obdSpeed:s.gpsSpeed;"
+              "t('speed',v>=0?Math.round(v):'–');t('curves',s.detectedCurves);"
+              "t('distance',s.distanceKm.toFixed(1));const c=document."
+              "getElementById('connection');c.textContent='Marker am echten "
+              "Anfang und Ende';c.parentElement.className='foot';"
               "if(s.active!==initial.active||s.recording!==initial.recording||"
               "s.referenceActive!==initial.reference)location.reload()}catch(e){"
               "const c=document.getElementById('connection');c.textContent="
-              "'Statusverbindung unterbrochen';c.className='connection bad'}}"
-              "poll();setInterval(poll,2000);document.querySelectorAll('form')."
-              "forEach(f=>f.addEventListener('submit',()=>{const b=f.querySelector"
-              "('button');if(b){b.disabled=true;b.textContent='WIRD GESPEICHERT …'"
-              "}}));</script></body></html>");
+              "'Statusverbindung unterbrochen';c.parentElement.className="
+              "'foot bad'}}poll();setInterval(poll,2000);document."
+              "querySelectorAll('form').forEach(f=>f.addEventListener('submit',"
+              "()=>{const b=f.querySelector('button');if(b){b.disabled=true;"
+              "const i=b.querySelector('i');if(i)i.textContent='…'}}));"
+              "</script></body></html>");
     return page;
 }
 
