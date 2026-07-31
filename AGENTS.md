@@ -14,6 +14,7 @@ produktionsreif. Bekannte Einschränkungen stehen weiter unten.
 | `pio run -t upload` | Firmware über USB-CDC flashen |
 | `pio device monitor` | Seriellen Monitor mit den Einstellungen aus `platformio.ini` öffnen |
 | `pio run -t clean` | PlatformIO-Buildartefakte löschen |
+| `pio test -e native` | Hosttests der hardwarefreien Auswertelogik ausführen |
 
 Die Web-OTA-Datei entsteht unter:
 
@@ -39,7 +40,10 @@ src/CANController.{h,cpp}       Abstraktion des CAN-Controllers
 src/can_reader.{h,cpp}          CAN-Empfang und erlaubte OBD-Service-01-PIDs
 src/vehicle_data_discovery.*    Dreiphasige Fahrzeugdaten-Erkennung
 src/sd_logger.{h,cpp}           Sitzungsbezogene CSV-Aufzeichnung
-src/road_quality.h              Fahrbahn- und Kurvenmetriken
+src/curve_detector.{h,cpp}      Kurvenerkennung, hardwarefrei und hosttestbar
+src/road_metrics.{h,cpp}        Vibration, Straßenqualität, Schlaglöcher;
+                                ebenfalls hardwarefrei und hosttestbar
+src/road_quality.h              Datenstruktur RoadMetrics für Auswertungen
 src/oled_manager.{h,cpp}        Optionale Statusanzeige
 src/web_manager.{h,cpp}         ROADTEST-WLAN, Statusseite und Browser-OTA
 src/runtime_diagnostics.{h,cpp} Laufzeit-, Web- und SD-Pausendiagnose
@@ -154,17 +158,44 @@ Die Integrationstests sind Firmwaretests mit realer Hardware und teilweise
 interaktiven Schritten. Es gibt derzeit keine belastbare automatisierte
 Coverage-Zahl. Keine erfundenen Qualitäts- oder Abdeckungswerte dokumentieren.
 
+## Hosttests
+
+Die Auswertelogik der Kurvenerkennung liegt in `src/curve_detector.{h,cpp}`,
+die der Fahrbahnbewertung in `src/road_metrics.{h,cpp}`. Beide Einheiten sind
+frei von Arduino-, Sensor- und Zeitabhängigkeiten. `BNO055Manager` reicht nur
+noch die Sensorwerte durch. Getestet wird über die Umgebung `native` auf dem
+Entwicklungsrechner:
+
+```bash
+pio test -e native
+```
+
+Diese Tests belegen keinen Byte Firmware-Flash und laufen in unter zwei
+Sekunden. `test/test_curve_detector/` prüft Kurvenerkennung,
+`test/test_road_metrics/` Vibrationsanalyse, Straßenqualität und
+Schlaglocherkennung. Beide enthalten Regressionsschutztests gegen Ereignisse
+im Stillstand sowie Wiedergaben realer Fahrten aus `testdata/`.
+
+Die Wiedergaben sind auf feste Kennzahlen festgeschrieben. Ändern sie sich,
+ist das kein Testfehler, sondern eine Verhaltensänderung: prüfen, begründen
+und den Festwert bewusst nachziehen.
+
+Neue Schwellwerte gehören mit einem Fall knapp darüber und knapp darunter
+abgesichert. Ein Mutationstest beim Aufbau der Suite zeigte, dass weit von
+der Schwelle entfernte Testfälle eine Parameteränderung nicht bemerken.
+
 Vor einem Commit mindestens ausführen:
 
 ```bash
 pio run
+pio test -e native
 git diff --check
 ```
 
 ## Aktueller Teststand
 
 - Firmware 1.5.28 baut erfolgreich für `lolin_s3_mini`.
-- Letzter Build: 71.060 Byte RAM (21,7 %) und 1.251.418 Byte Flash (95,5 %).
+- Letzter Build: 71.052 Byte RAM (21,7 %) und 1.251.998 Byte Flash (95,5 %).
 - BNO055-Selbsttest, SD-Logging, WLAN, optionales OLED und MCP2515-
   Grundkommunikation wurden am System geprüft.
 - Am Porsche Carrera S, Baujahr 2012, PDK wurden standardisierte Antworten von

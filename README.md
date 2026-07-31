@@ -319,8 +319,8 @@ verursacht.
 ### Abnahme von Firmware 1.5.28
 
 Die Probefahrt sollte 20 bis 30 Minuten dauern. Ein geeigneter Abschnitt
-enthält eine gut erkennbare Gerade sowie bekannte weite, normale und
-wechselnde Kurven in beliebiger Reihenfolge. Nach der Fahrt werden geprüft:
+enthält zunächst eine gut erkennbare Gerade und danach bekannte weite,
+normale und wechselnde Kurven. Nach der Fahrt werden geprüft:
 
 - Anteil automatisch erkannter Kurven an den Referenzintervallen
 - automatische Kurven außerhalb aller Referenzen als mögliche Fehlalarme
@@ -333,13 +333,6 @@ Die Straßenqualitätsbewertung bleibt in dieser Version absichtlich
 unverändert. Ihre nächste Parametrierung folgt getrennt aus denselben
 Rohdaten, damit Änderungen an Kurven- und Oberflächenmodell eindeutig
 bewertbar bleiben.
-
-### Separater SD-Wiederanlauftest
-
-Der weiterhin verfügbare serielle Befehl `sdrecovery` prüft auf dem
-Arbeitstisch die Pufferrettung und die verknüpfte Folgesitzung. Dabei muss das
-Fahrzeug-CAN getrennt sein. Die MicroSD-Karte ausschließlich nach der
-angezeigten Aufforderung entfernen und wieder einsetzen.
 
 Der SD-Ausfalltest ist bewusst ein kontrollierter Hardwaretest. Er darf nicht
 während einer Fahrt, eines OTA-Uploads oder bei angeschlossenem Fahrzeug-CAN
@@ -393,6 +386,26 @@ gestartet werden:
 Die Integration-Test-Suite enthält Mehrmodul-, Korrelations-, Recovery-,
 Belastungs- und Speichertests. Für sie existiert derzeit keine belastbare
 automatisierte Coverage-Zahl.
+
+### Hosttests ohne Hardware
+
+Die Auswertelogik der Kurvenerkennung (`src/curve_detector.{h,cpp}`) und der
+Fahrbahnbewertung (`src/road_metrics.{h,cpp}`) ist frei von Arduino-, Sensor-
+und Zeitabhängigkeiten. Sie wird auf dem Entwicklungsrechner getestet:
+
+```bash
+pio test -e native
+```
+
+37 Tests, Laufzeit unter zwei Sekunden, ohne Firmware-Flash zu belegen.
+Geprüft werden unter anderem scharfe und langgezogene Kurven,
+S-Kurvengruppierung, Gyro-Vorrang und Kurs-Rückfall, Schwellwertgrenzen,
+Stoßzählung und Sperrzeiten. Dazu kommen Wiedergaben realer Fahrten aus
+`testdata/`: Der belegte Standlauf muss null Ereignisse erzeugen, die
+Überlandfahrt ist auf feste Kennzahlen festgeschrieben.
+
+Ändert sich eine dieser Kennzahlen, ist das kein Testfehler, sondern eine
+Verhaltensänderung — prüfen, begründen und den Festwert bewusst nachziehen.
 
 ### Test-Kommandos (Serial Monitor)
 ```bash
@@ -700,6 +713,17 @@ Der priorisierte Backlog für gleichmäßigere Sensorabtastung und geringere
 Buslast steht in [OPTIMIERUNGEN.md](OPTIMIERUNGEN.md).
 
 ## 📈 Version History
+
+### v1.5.28 - Einbaulagenunabhängige Drehrate und Hosttests
+- ✅ Fahrzeug-Drehrate aus der Projektion des Gyroskopvektors auf die
+  Schwerkraftrichtung; keine feste Sensorachse als Hochachse vorausgesetzt
+- ✅ Strukturierte Kurvenereignisse mit Beginn, Ende, Richtung, Radius,
+  Querbeschleunigung, S-Kurven-Gruppierung und Qualitätsflags
+- ✅ Geführte Beifahrerseite `/curve-test` für Referenzintervalle
+- ✅ `KurvenProKm` wird aus tatsächlichen Kurven und geprüfter GPS-Strecke gefüllt
+- ✅ Auswertelogik von Kurven und Fahrbahn hardwarefrei ausgelagert und mit
+  37 Hosttests abgedeckt (`pio test -e native`, ohne Firmware-Flash)
+- ⚠️ Wirksamkeit am Gerät noch nicht bestätigt
 
 ### v1.5.27 - Langkurven und SD-Messungswiederanlauf
 - ✅ Zweistufige Kurvenerkennung: unmittelbarer Start bei hoher Drehrate und

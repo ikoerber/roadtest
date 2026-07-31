@@ -40,7 +40,10 @@ src/CANController.{h,cpp}       Abstraktion des CAN-Controllers
 src/can_reader.{h,cpp}          CAN-Empfang und erlaubte OBD-Service-01-PIDs
 src/vehicle_data_discovery.*    Dreiphasige Fahrzeugdaten-Erkennung
 src/sd_logger.{h,cpp}           Sitzungsbezogene CSV-Aufzeichnung
-src/road_quality.h              Fahrbahn- und Kurvenmetriken
+src/curve_detector.{h,cpp}      Kurvenerkennung, hardwarefrei und hosttestbar
+src/road_metrics.{h,cpp}        Vibration, Straßenqualität, Schlaglöcher;
+                                ebenfalls hardwarefrei und hosttestbar
+src/road_quality.h              Datenstruktur RoadMetrics für Auswertungen
 src/oled_manager.{h,cpp}        Optionale Statusanzeige
 src/web_manager.{h,cpp}         ROADTEST-WLAN, Statusseite und Browser-OTA
 src/runtime_diagnostics.{h,cpp} Laufzeit-, Web- und SD-Pausendiagnose
@@ -192,7 +195,7 @@ git diff --check
 ## Aktueller Teststand
 
 - Firmware 1.5.28 baut erfolgreich für `lolin_s3_mini`.
-- Letzter Build: 71.060 Byte RAM (21,7 %) und 1.251.418 Byte Flash (95,5 %).
+- Letzter Build: 71.052 Byte RAM (21,7 %) und 1.251.998 Byte Flash (95,5 %).
 - BNO055-Selbsttest, SD-Logging, WLAN, optionales OLED und MCP2515-
   Grundkommunikation wurden am System geprüft.
 - Am Porsche Carrera S, Baujahr 2012, PDK wurden standardisierte Antworten von
