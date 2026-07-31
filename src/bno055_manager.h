@@ -212,6 +212,10 @@ public:
         const SensorData& data, float speedKmh, CurveEvent& completedEvent,
         float turnRateThreshold = CURVE_SHARP_START_RATE_DPS);
     float getCurveAngle();
+
+    // Schließt eine noch laufende Kurve ab. Beim Stoppen einer Messfahrt
+    // verbindlich aufzurufen, sonst geht die letzte Kurve verloren.
+    bool finishCurveDetection(CurveEvent& completedEvent);
     void resetCurveDetection();
 
     // Straßenqualitäts-Metriken. Rückgabe kleiner null bedeutet "kein

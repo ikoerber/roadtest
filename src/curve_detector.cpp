@@ -28,9 +28,27 @@ void CurveDetector::Accumulator::clear() {
     detectionMode = CurveDetectionMode::LONG;
 }
 
+bool CurveDetector::finish(CurveEvent& completedEvent) {
+    completedEvent = CurveEvent();
+    // Als Endzeit gilt die letzte tatsächliche Drehstichprobe, nicht der
+    // Zeitpunkt des Stoppens. Ein bereits laufendes Ruhefenster ist
+    // aussagekräftiger, weil dort die Drehung nachweislich endete.
+    const uint32_t endTimeMs =
+        curveQuietSince != 0 ? curveQuietSince : activeCurve.lastTurnTimeMs;
+    const bool completed = complete(
+        activeCurve, endTimeMs, activeCurveGroupId,
+        CurveCompletionReason::SESSION_END, completedEvent);
+    reset();
+    if (completed) {
+        lastCompletedCurveAngle = completedEvent.angleDeg;
+    }
+    return completed;
+}
+
 void CurveDetector::reset() {
     lastCompletedCurveAngle = 0;
     curveQuietSince = 0;
+    quietNetAngleDeg = 0.0f;
     headingInitialized = false;
     curveCandidate.clear();
     activeCurve.clear();
@@ -252,15 +270,17 @@ bool CurveDetector::update(
             curveReversal.clear();
             activeCurveGroupId = 0;
         }
-    } else if (meaningfulTurn) {
-        if (turnDirection == activeCurve.direction) {
+    } else {
+        // Die Stichprobe zuerst einsortieren, danach das Ruhefenster
+        // fortschreiben. Beides war früher verschränkt; dadurch setzte jede
+        // einzelne Rauschspitze in Kurvenrichtung das Fenster zurück.
+        if (meaningfulTurn && turnDirection == activeCurve.direction) {
             addSample(
                 activeCurve, sample.timestampMs - deltaTime,
                 sample.timestampMs, selectedDeltaDeg, headingDelta,
                 sample.speedKmh, selectedRateDps, gyroPrimary);
-            curveQuietSince = 0;
             curveReversal.clear();
-        } else {
+        } else if (meaningfulTurn) {
             addSample(
                 curveReversal, sample.timestampMs - deltaTime,
                 sample.timestampMs, selectedDeltaDeg, headingDelta,
@@ -284,22 +304,35 @@ bool CurveDetector::update(
                         : CurveDetectionMode::LONG;
                 curveReversal.clear();
                 curveQuietSince = 0;
+                quietNetAngleDeg = 0.0f;
                 lastHeading = sample.headingDeg;
                 lastHeadingTime = sample.timestampMs;
                 return completed;
             }
+        } else {
+            curveReversal.clear();
         }
-    } else {
-        curveReversal.clear();
+
+        // Das Ruhefenster läuft durchgehend mit und wird nur von einer
+        // tatsächlichen Netto-Kursänderung verworfen. Über die Fensterlänge
+        // entspricht das einer mittleren Drehrate; symmetrisches Rauschen
+        // hebt sich in der Summe auf, eine echte Kurve nicht.
         if (curveQuietSince == 0) {
-            curveQuietSince = sample.timestampMs;
+            curveQuietSince = sample.timestampMs - deltaTime;
+            quietNetAngleDeg = 0.0f;
         }
-        if (sample.timestampMs - curveQuietSince >= CURVE_END_QUIET_MS) {
+        quietNetAngleDeg += selectedDeltaDeg;
+        if (std::fabs(quietNetAngleDeg) >= CURVE_QUIET_MIN_NET_ANGLE_DEG) {
+            curveQuietSince = 0;
+            quietNetAngleDeg = 0.0f;
+        } else if (
+            sample.timestampMs - curveQuietSince >= CURVE_END_QUIET_MS) {
             const bool completed = complete(
                 activeCurve, curveQuietSince, activeCurveGroupId,
                 CurveCompletionReason::QUIET, completedEvent);
             activeCurve.clear();
             curveQuietSince = 0;
+            quietNetAngleDeg = 0.0f;
             activeCurveGroupId = 0;
             lastHeading = sample.headingDeg;
             lastHeadingTime = sample.timestampMs;
@@ -315,6 +348,7 @@ bool CurveDetector::update(
             CurveCompletionReason::TIMEOUT, completedEvent);
         activeCurve.clear();
         curveQuietSince = 0;
+        quietNetAngleDeg = 0.0f;
         curveReversal.clear();
         activeCurveGroupId = 0;
         lastHeading = sample.headingDeg;

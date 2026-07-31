@@ -5,6 +5,58 @@ Alle wichtigen Änderungen am ESP32-S3 Straßenqualitäts-Messsystem werden in d
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt hält sich an [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.29] - 2026-07-31
+
+Auswertung der fünf Beifahrer-Referenzfahrten vom 31.07.2026 mit zusammen
+55 von Hand markierten Referenzkurven.
+
+### Behoben
+- Eine beim Stoppen noch laufende Kurve wird abgeschlossen und protokolliert,
+  statt verloren zu gehen. Das Ruhefenster über `CURVE_END_QUIET_MS` läuft
+  nach dem Messende nicht mehr ab; in `20260731_152148_452707FB` fehlte
+  dadurch eine eindeutige Kurve mit 44 Grad Kursänderung bei 55 bis 72 km/h
+  und Drehraten bis 18 Grad/s vollständig. Der neue Abschlussgrund heißt
+  `SESSION_END`. Die Spaltenbelegung der CSV-Dateien bleibt unverändert;
+  `ROADTEST_CSV_SCHEMA_VERSION` steht deshalb weiter auf
+  `1.5.28-quality-v10`. In der Spalte `CompletionReason` kann jetzt der
+  zusätzliche Wert `SESSION_END` stehen.
+- Die Kurvenerkennung wird beim Messstart zurückgestellt. Ein vor dem Start
+  begonnener Verlauf lief bisher in die Sitzung hinein; in
+  `20260731_152148_452707FB` begann das erste Ereignis 2,2 Sekunden vor dem
+  Sitzungsbeginn.
+
+### Geändert
+- Das Ruhefenster der Kurvenerkennung bewertet die Netto-Kursänderung im
+  Fenster statt einzelner Stichproben. `CURVE_LONG_MIN_RATE_DPS` von
+  0,8 Grad/s liegt unter dem Rauschband der Gierrate unter Fahrt - auf
+  nachgewiesen gerader Strecke wurden bis zu 1,5 Grad/s gemessen. Jede
+  Rauschspitze in Kurvenrichtung setzte das Fenster zurück, sodass Ereignisse
+  über mehrere Kurven hinweg zusammenliefen. Neu gilt eine Kurve nur dann als
+  fortgesetzt, wenn sie im Ruhefenster mindestens
+  `CURVE_QUIET_MIN_NET_ANGLE_DEG` netto weiterdreht; über die Fensterlänge
+  entspricht das einer mittleren Drehrate von 1,0 Grad/s. Symmetrisches
+  Rauschen hebt sich dabei auf, eine echte langgezogene Kurve nicht.
+- Wirkung auf den Wiedergabestand der fünf Referenzfahrten: Der Anteil der
+  Ereignisdauer, der von echten Drehstichproben belegt ist, steigt von 67 auf
+  90 Prozent. Ereignisse unter 60 Prozent Abdeckung fallen von 47 auf 7. Die
+  Zahl der Ereignisse steigt von 128 auf 158, weil zusammengelaufene
+  Ereignisse sich wieder auftrennen. Radius, Dauer und Mittelwerte beschreiben
+  damit wieder eine einzelne Kurve.
+- Trefferquote gegen die 55 Referenzkurven: 52 statt 53. Die drei fehlenden
+  Referenzen drehen netto 5,7, 6,4 und 10,0 Grad und liegen damit unter
+  `CURVE_MIN_EVENT_ANGLE_DEG`; zwei davon wurden zuvor nur getroffen, weil
+  zusammengelaufene Nachbarereignisse ihr Zeitfenster zufällig überlappten.
+  Der Rückgang ist keine Verschlechterung der Erkennung, sondern der Wegfall
+  zufälliger Überlappungen.
+
+### Hinzugefügt
+- Hosttest `test_wiedergabe_referenzfahrten`: spielt alle fünf
+  Referenzfahrten durch die Erkennung und schreibt Trefferzahl,
+  Ereigniszahl und die Zahl der Ereignisse mit geringer Zeitabdeckung als
+  Festwerte fest.
+- Hosttests für das entrauschte Ruhefenster mit je einem Fall knapp über und
+  knapp unter der Fortsetzungsschwelle sowie für `CurveDetector::finish()`.
+
 ## [Unveröffentlicht]
 
 ### Geändert

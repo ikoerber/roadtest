@@ -7,7 +7,7 @@
 // Zentrale Pin-Konfiguration für das Straßenqualitäts-Messsystem
 // Alle Hardware-spezifischen Pin-Zuordnungen sind hier definiert
 
-#define ROADTEST_FIRMWARE_VERSION "1.5.28"
+#define ROADTEST_FIRMWARE_VERSION "1.5.29"
 #define ROADTEST_FIRMWARE_FILE_NAME \
     "roadtest_" ROADTEST_FIRMWARE_VERSION ".bin"
 #define ROADTEST_CSV_SCHEMA_VERSION "1.5.28-quality-v10"
@@ -163,6 +163,17 @@ extern const int GPS_BAUD_RATE;    // 9600    - GPS Baudrate
 #define CURVE_MAX_SAMPLE_GAP_MS               500UL
 #define CURVE_END_RATE_DPS                     0.8f
 #define CURVE_END_QUIET_MS                  2000UL
+// Netto-Kursänderung, die das Ruhefenster als echte Kurvenfortsetzung
+// wertet. CURVE_LONG_MIN_RATE_DPS allein reicht dafür nicht: Auf
+// nachgewiesen gerader Strecke rauscht die Gierrate um bis zu 1,5 Grad/s
+// (Sitzung 20260731_155106_3AEFA823, Kurs konstant 19,8 Grad). Jede
+// Rauschspitze in Kurvenrichtung setzte das Ruhefenster zurück, sodass
+// Ereignisse über mehrere Kurven hinweg zusammenliefen - 58 von 174
+// Ereignissen des 31.07.2026 deckten unter 60 Prozent ihrer Dauer mit
+// echten Drehstichproben ab. Über die Fensterlänge gemessen entspricht der
+// Wert einer mittleren Drehrate von 1 Grad/s; Rauschen hebt sich dabei auf,
+// eine echte langgezogene Kurve nicht.
+#define CURVE_QUIET_MIN_NET_ANGLE_DEG          2.0f
 #define CURVE_MIN_EVENT_ANGLE_DEG             10.0f
 #define CURVE_REVERSAL_ANGLE_DEG               5.0f
 #define CURVE_MAX_DURATION_MS              60000UL

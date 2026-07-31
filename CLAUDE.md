@@ -1,7 +1,7 @@
 # ROADTEST Firmware
 
 ESP32-S3-Firmware zur Aufzeichnung von BNO055-, GPS-, Straßenqualitäts- und
-standardisierten OBD-II-Daten. Aktueller Firmwarestand: **1.5.28**.
+standardisierten OBD-II-Daten. Aktueller Firmwarestand: **1.5.29**.
 
 Der aktuelle Stand ist ein Hardware- und Fahrzeugteststand, nicht abschließend
 produktionsreif. Bekannte Einschränkungen stehen weiter unten.
@@ -181,6 +181,15 @@ Die Wiedergaben sind auf feste Kennzahlen festgeschrieben. Ändern sie sich,
 ist das kein Testfehler, sondern eine Verhaltensänderung: prüfen, begründen
 und den Festwert bewusst nachziehen.
 
+`test_wiedergabe_referenzfahrten` misst die Kurvenerkennung gegen die
+55 von Hand markierten Referenzkurven der fünf Beifahrerfahrten vom
+31.07.2026. Neben der Trefferzahl ist die Zahl der Ereignisse mit einer
+Zeitabdeckung unter 60 Prozent festgeschrieben: Ereignisse, deren Dauer nur
+zu einem kleinen Teil aus echten Drehstichproben besteht, umfassen mehrere
+Kurven, und ihr Radius beschreibt dann nichts Bestimmtes mehr. Dieser
+Prüfstand ist die Messgrundlage für weitere Parameteränderungen an der
+Kurvenerkennung.
+
 Neue Schwellwerte gehören mit einem Fall knapp darüber und knapp darunter
 abgesichert. Ein Mutationstest beim Aufbau der Suite zeigte, dass weit von
 der Schwelle entfernte Testfälle eine Parameteränderung nicht bemerken.
@@ -226,8 +235,16 @@ Eigenschaften des Sitzungskopfes.
 
 ## Aktueller Teststand
 
-- Firmware 1.5.28 baut erfolgreich für `lolin_s3_mini`.
-- Letzter Build: 71.052 Byte RAM (21,7 %) und 1.251.998 Byte Flash (95,5 %).
+- Firmware 1.5.29 baut erfolgreich für `lolin_s3_mini`.
+- Letzter Build: 71.060 Byte RAM (21,7 %) und 1.249.050 Byte Flash (95,3 %).
+- Am 31.07.2026 liefen fünf Beifahrer-Referenzfahrten mit 1.5.28 und je zwölf
+  markierten Referenzintervallen. Sie sind der Prüfstand der Kurvenerkennung.
+- Zwei SD-Abbrüche desselben Tages wurden verlustfrei aufgefangen:
+  `20260731_142359_514EDDF4` mit 38 von 38 geretteten Pufferzeilen nach
+  81 Sekunden Ausfall und `20260731_160032_3D732AD1` mit 17 von 17 nach
+  11 Sekunden. Die Fortsetzung schloss zeitlich lückenlos und ohne Dublette
+  an. Die abgebrochene Sitzung bleibt jedoch ohne END-Record und ohne
+  Zusammenfassung; deren Kennzahlen sind nachträglich zu rekonstruieren.
 - BNO055-Selbsttest, SD-Logging, WLAN, optionales OLED und MCP2515-
   Grundkommunikation wurden am System geprüft.
 - Am Porsche Carrera S, Baujahr 2012, PDK wurden standardisierte Antworten von
@@ -295,10 +312,11 @@ werden nicht gleichzeitig neu parametriert.
   auch nach erfolgreicher Wiedererkennung als abgeschlossener Abnahmeschritt
   erhalten.
 
-Nächster sinnvoller Schritt: 20- bis 30-minütige Überlandfahrt mit 1.5.28 und
-der Beifahrerseite `/curve-test`: eine gerade Referenz, vier weite, vier
-normale beziehungsweise enge und drei S-Kurven. Der vollständige
-ECU-Recovery-Ablauf muss dabei nicht erneut durchgeführt werden.
+Die Beifahrerfahrten dieser Art sind am 31.07.2026 fünfmal gelaufen und
+liegen als Prüfstand in `testdata/` vor. Nächster sinnvoller Schritt ist eine
+Bestätigungsfahrt mit 1.5.29 und `/curve-test`, um die geschärften
+Ereignisgrenzen und den Abschluss beim Messende am Gerät zu belegen. Der
+vollständige ECU-Recovery-Ablauf muss dabei nicht erneut durchgeführt werden.
 
 ### GPS
 
@@ -334,7 +352,23 @@ Positionssprungbewertung und ereignisorientiertes Logging bleiben offen.
   1.5.28 verwendet dafür die auf die Schwerkraftrichtung projizierte
   Gyroskop-Drehrate, protokolliert vollständige Ereignisintervalle und nutzt
   das relative Heading als gekennzeichneten Rückfall und Qualitätsvergleich.
-  Wirksamkeit und Fehlalarmrate müssen mit der Beifahrerfahrt bestätigt werden.
+  Die fünf Beifahrerfahrten vom 31.07.2026 bestätigten den Gyro-Pfad: kein
+  einziger Heading-Rückfall in 174 Ereignissen, 96 Prozent der markierten
+  Referenzkurven erkannt.
+- 1.5.29 schärft die Ereignisgrenzen. Das Ruhefenster bewertet die
+  Netto-Kursänderung statt einzelner Stichproben, weil die Gierrate unter
+  Fahrt über `CURVE_LONG_MIN_RATE_DPS` hinaus rauscht und Ereignisse dadurch
+  über mehrere Kurven hinweg zusammenliefen. Eine beim Stoppen laufende
+  Kurve wird als `SESSION_END` abgeschlossen statt verworfen, und der
+  Detektor wird beim Messstart zurückgestellt. Wirksamkeit am Gerät noch
+  nicht bestätigt.
+- Offen bleiben zwei bekannte Fehlalarmquellen: Kurvenereignisse im Stand und
+  beim Rangieren, weil das Geschwindigkeitsgatter nur die Momentangeschwindig-
+  keit prüft und GPS-Drift bis 8 km/h ausweisen kann, sowie langgezogene
+  Autobahnbögen mit über 300 Meter Radius. Für beide ist die
+  Querbeschleunigung beziehungsweise ein Mindestfahrweg der geeignete
+  Diskriminator; beides ist über `test_wiedergabe_referenzfahrten` zu messen,
+  bevor es geändert wird.
 - Ein vorübergehender SD-Ausfall wird in derselben Gerätesitzung automatisch
   durch eine separate Puffer-Recovery-Datei und eine neue, verknüpfte
   Messsitzung behandelt. Nach Reset oder Spannungsverlust bleibt ein

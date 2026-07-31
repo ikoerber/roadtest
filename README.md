@@ -2,10 +2,11 @@
 
 Ein fortschrittliches Embedded-System zur Messung und Bewertung von Straßenqualität für kurvenreiche Motorradstrecken.
 
-Aktueller Firmwarestand: **1.5.28**. Der Stand ist ein Hardware- und
+Aktueller Firmwarestand: **1.5.29**. Der Stand ist ein Hardware- und
 Fahrzeugteststand. 1.5.28 misst Kurven über eine einbaulagenunabhängige
 Gyroskopprojektion, protokolliert Radius und vollständige Ereignisintervalle
-und stellt dafür einen geführten Beifahrertest bereit.
+und stellt dafür einen geführten Beifahrertest bereit. 1.5.29 schärft die
+Ereignisgrenzen anhand der fünf Referenzfahrten vom 31.07.2026.
 
 ## 📋 Überblick
 
@@ -732,6 +733,18 @@ Der priorisierte Backlog für gleichmäßigere Sensorabtastung und geringere
 Buslast steht in [OPTIMIERUNGEN.md](OPTIMIERUNGEN.md).
 
 ## 📈 Version History
+
+### v1.5.29 - Scharfe Kurvenintervalle und Abschluss beim Messende
+- ✅ Ruhefenster bewertet die Netto-Kursänderung statt einzelner Stichproben;
+  Gierratenrauschen hält eine Kurve nicht mehr offen
+- ✅ Zeitabdeckung der Ereignisse steigt im Wiedergabestand von 67 auf
+  90 Prozent, Ereignisse unter 60 Prozent Abdeckung fallen von 47 auf 7
+- ✅ Eine beim Stoppen laufende Kurve wird als `SESSION_END` abgeschlossen
+  statt verworfen
+- ✅ Kurvenerkennung wird beim Messstart zurückgestellt
+- ✅ Wiedergabe aller fünf Referenzfahrten als Hosttest mit festgeschriebener
+  Trefferzahl gegen 55 von Hand markierte Referenzkurven
+- ⚠️ Wirksamkeit am Gerät noch nicht bestätigt
 
 ### v1.5.28 - Einbaulagenunabhängige Drehrate und Hosttests
 - ✅ Fahrzeug-Drehrate aus der Projektion des Gyroskopvektors auf die

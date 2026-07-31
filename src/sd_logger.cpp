@@ -1,5 +1,6 @@
 #include "sd_logger.h"
 #include "road_quality.h"
+#include "bno055_manager.h"
 #include "gps_manager.h"
 #include "runtime_diagnostics.h"
 #include <esp_system.h>
@@ -410,6 +411,10 @@ void SDLogger::processLoggingStart() {
         canSessionStartDiagnostics = CANHardwareDiagnostics{};
     }
     runtimeDiagnostics.resetSession();
+    // Ohne Rückstellung überlebt ein vor dem Messstart angefangener
+    // Kurvenverlauf den Sitzungsbeginn. In 20260731_152148_452707FB begann
+    // das erste Ereignis dadurch 2,2 s vor der Sitzung.
+    bnoManager.resetCurveDetection();
     logging = true;
     loggingStartState = LoggingStartState::IDLE;
     const bool startMetadataWritten = logSessionMetadata(
@@ -489,6 +494,19 @@ void SDLogger::stopLogging() {
 
     if (!logging) return;
     stopping = true;
+
+    // Eine noch laufende Kurve zuerst abschließen, solange die Sitzungs-
+    // dateien offen sind und bevor die Zusammenfassung berechnet wird. Das
+    // Ruhefenster der Erkennung läuft nach dem Stoppen nicht mehr ab; ohne
+    // diesen Schritt fehlt die letzte Kurve jeder Messfahrt.
+    CurveEvent finalCurve;
+    if (bnoManager.finishCurveDetection(finalCurve)) {
+        const GPSData finalGPS = gpsManager.getCurrentData();
+        logCurve(
+            finalCurve,
+            finalGPS.valid_fix ? finalGPS.latitude : 0.0f,
+            finalGPS.valid_fix ? finalGPS.longitude : 0.0f);
+    }
 
     rideSummary.durationSeconds = (millis() - sessionStartTime) / 1000;
     rideSummary.endUTC = formatUTC();
@@ -1917,6 +1935,8 @@ bool SDLogger::logCurve(
         completionReason = "REVERSAL";
     } else if (event.completionReason == CurveCompletionReason::TIMEOUT) {
         completionReason = "TIMEOUT";
+    } else if (event.completionReason == CurveCompletionReason::SESSION_END) {
+        completionReason = "SESSION_END";
     }
 
     String description =

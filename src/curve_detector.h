@@ -26,7 +26,8 @@ enum class CurveDetectionMode : uint8_t {
 enum class CurveCompletionReason : uint8_t {
     QUIET,
     REVERSAL,
-    TIMEOUT
+    TIMEOUT,
+    SESSION_END
 };
 
 enum CurveQualityFlag : uint16_t {
@@ -90,6 +91,15 @@ public:
         const CurveSample& sample, CurveEvent& completedEvent,
         float sharpStartRateDps = CURVE_SHARP_START_RATE_DPS);
 
+    // Schließt einen noch laufenden Kurvenverlauf ab und verwirft danach den
+    // Zustand. Liefert true, wenn dabei ein gültiges Ereignis entstand.
+    //
+    // Ohne diesen Aufruf geht die letzte Kurve einer Messfahrt verloren: Das
+    // Ruhefenster über CURVE_END_QUIET_MS läuft nach dem Stoppen nicht mehr
+    // ab. In der Fahrt 20260731_152148_452707FB fehlte dadurch eine
+    // eindeutige Kurve mit 44 Grad Kursänderung.
+    bool finish(CurveEvent& completedEvent);
+
     // Verwirft den gesamten Zustand. Ein angefangener Kurvenverlauf geht
     // dabei bewusst verloren.
     void reset();
@@ -135,6 +145,9 @@ private:
     bool headingInitialized = false;
     float lastCompletedCurveAngle = 0.0f;
     uint32_t curveQuietSince = 0;
+    // Netto-Kursänderung seit Beginn des laufenden Ruhefensters. Siehe
+    // CURVE_QUIET_MIN_NET_ANGLE_DEG.
+    float quietNetAngleDeg = 0.0f;
     uint32_t lastCurveEvent = 0;
     Accumulator curveCandidate{};
     Accumulator activeCurve{};

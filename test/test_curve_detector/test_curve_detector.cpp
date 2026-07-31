@@ -242,6 +242,132 @@ void test_grosse_zeitluecke_setzt_kurve_nicht_fort() {
     }
 }
 
+// --- Ruhefenster gegen Gierratenrauschen -----------------------------------
+//
+// Auf nachgewiesen gerader Strecke rauscht die Gierrate um mehr als
+// CURVE_LONG_MIN_RATE_DPS. Frueher setzte jede Spitze in Kurvenrichtung das
+// Ruhefenster zurueck; Ereignisse liefen dadurch ueber mehrere Kurven hinweg
+// zusammen. Entscheidend ist die Netto-Kursaenderung im Fenster, nicht die
+// einzelne Stichprobe.
+
+namespace {
+
+// Speist abwechselnd Werte ein, deren Betrag ueber CURVE_LONG_MIN_RATE_DPS
+// liegt, deren Summe sich aber aufhebt.
+void feedNoise(Feeder& f, uint32_t count, float amplitudeDps, float speedKmh) {
+    for (uint32_t i = 0; i < count; ++i) {
+        f.feed(1, (i % 2 == 0) ? amplitudeDps : -amplitudeDps, speedKmh);
+    }
+}
+
+}  // namespace
+
+void test_rauschen_haelt_kurve_nicht_offen() {
+    Feeder f;
+    f.feed(5, 0.0f, 50.0f);
+    f.feed(60, 15.0f, 50.0f);    // 90 Grad
+    feedNoise(f, 40, 1.5f, 50.0f);  // 4 s Rauschen ueber der Mindestdrehrate
+
+    TEST_ASSERT_EQUAL_UINT32(1, f.events.size());
+    TEST_ASSERT_EQUAL(
+        CurveCompletionReason::QUIET, f.events[0].completionReason);
+    TEST_ASSERT_FLOAT_WITHIN(4.0f, 90.0f, f.events[0].angleDeg);
+}
+
+// Zwei durch eine Rauschstrecke getrennte Kurven duerfen nicht zu einem
+// Ereignis verschmelzen. Genau das trat in den Fahrten des 31.07.2026 auf:
+// 47 von 128 Ereignissen deckten unter 60 Prozent ihrer Dauer mit echten
+// Drehstichproben ab.
+void test_rauschen_trennt_zwei_kurven() {
+    Feeder f;
+    f.feed(5, 0.0f, 50.0f);
+    f.feed(40, 15.0f, 50.0f);       // 60 Grad
+    feedNoise(f, 60, 1.5f, 50.0f);  // 6 s Rauschen
+    f.feed(40, 15.0f, 50.0f);       // erneut 60 Grad, gleiche Richtung
+    f.feed(30, 0.0f, 50.0f);
+
+    TEST_ASSERT_EQUAL_UINT32(2, f.events.size());
+    for (const CurveEvent& e : f.events) {
+        TEST_ASSERT_FLOAT_WITHIN(6.0f, 60.0f, e.angleDeg);
+    }
+}
+
+// Knapp ueber der Fortsetzungsschwelle: eine echte langgezogene Kurve haelt
+// das Ruhefenster offen. CURVE_QUIET_MIN_NET_ANGLE_DEG ueber
+// CURVE_END_QUIET_MS entspricht 1,0 Grad/s.
+void test_langsame_kurve_knapp_ueber_fortsetzungsschwelle_bleibt_offen() {
+    Feeder f;
+    f.feed(5, 0.0f, 72.0f);
+    f.feed(40, 4.0f, 72.0f);     // 16 Grad, qualifiziert die Kurve
+    f.feed(100, 1.4f, 72.0f);    // 10 s knapp ueber 1,0 Grad/s
+    f.feed(30, 0.0f, 72.0f);
+
+    TEST_ASSERT_EQUAL_UINT32(1, f.events.size());
+    // Der langsame Teil steckt mit im Ereignis, es wurde also nicht getrennt.
+    TEST_ASSERT_TRUE(f.events[0].angleDeg > 25.0f);
+}
+
+// Knapp darunter: der langsame Teil gilt als Ruhe, die Kurve schliesst ab.
+void test_langsame_kurve_knapp_unter_fortsetzungsschwelle_schliesst_ab() {
+    Feeder f;
+    f.feed(5, 0.0f, 72.0f);
+    f.feed(40, 4.0f, 72.0f);     // 16 Grad
+    f.feed(100, 0.9f, 72.0f);    // 10 s knapp unter 1,0 Grad/s
+    f.feed(30, 0.0f, 72.0f);
+
+    TEST_ASSERT_TRUE(f.events.size() >= 1);
+    TEST_ASSERT_EQUAL(
+        CurveCompletionReason::QUIET, f.events[0].completionReason);
+    TEST_ASSERT_FLOAT_WITHIN(4.0f, 16.0f, f.events[0].angleDeg);
+}
+
+// --- Abschluss beim Sitzungsende -------------------------------------------
+
+// In 20260731_152148_452707FB endete die Messfahrt zwei Sekunden nach einer
+// Kurve mit 44 Grad Kursaenderung. Das Ruhefenster lief nicht mehr ab, das
+// Ereignis fehlte vollstaendig.
+void test_finish_schliesst_laufende_kurve_ab() {
+    Feeder f;
+    f.feed(5, 0.0f, 50.0f);
+    f.feed(60, 15.0f, 50.0f);    // 90 Grad, danach sofort Sitzungsende
+    TEST_ASSERT_EQUAL_UINT32(0, f.events.size());
+
+    CurveEvent letzte;
+    TEST_ASSERT_TRUE(f.detector.finish(letzte));
+    TEST_ASSERT_TRUE(letzte.valid);
+    TEST_ASSERT_FLOAT_WITHIN(4.0f, 90.0f, letzte.angleDeg);
+    TEST_ASSERT_EQUAL(
+        CurveCompletionReason::SESSION_END, letzte.completionReason);
+    TEST_ASSERT_TRUE(letzte.durationMs > 0);
+}
+
+// Ohne laufende Kurve entsteht kein Ereignis, und ein zu kleiner Winkel
+// bleibt auch beim Abschluss unter der Meldeschwelle.
+void test_finish_ohne_kurve_liefert_nichts() {
+    Feeder f;
+    f.feed(30, 0.0f, 50.0f);
+    CurveEvent letzte;
+    TEST_ASSERT_FALSE(f.detector.finish(letzte));
+
+    Feeder g;
+    g.feed(5, 0.0f, 50.0f);
+    g.feed(20, 2.0f, 50.0f);     // 4 Grad, unter CURVE_MIN_EVENT_ANGLE_DEG
+    CurveEvent klein;
+    TEST_ASSERT_FALSE(g.detector.finish(klein));
+}
+
+// finish() verwirft den Zustand, damit die naechste Messfahrt nicht auf einem
+// alten Verlauf aufsetzt.
+void test_finish_verwirft_den_zustand() {
+    Feeder f;
+    f.feed(5, 0.0f, 50.0f);
+    f.feed(60, 15.0f, 50.0f);
+    CurveEvent letzte;
+    TEST_ASSERT_TRUE(f.detector.finish(letzte));
+    CurveEvent nochmal;
+    TEST_ASSERT_FALSE(f.detector.finish(nochmal));
+}
+
 // --- Rueckstellung ---------------------------------------------------------
 
 void test_reset_verwirft_laufenden_verlauf() {
@@ -403,8 +529,243 @@ void test_wiedergabe_echter_fahrt() {
     // Aendert sich der Wert, ist das kein Testfehler, sondern eine
     // Verhaltensaenderung: Sie ist zu pruefen, zu begruenden und der Festwert
     // hier bewusst nachzuziehen.
-    const size_t kErwarteteKurven = 32;
+    // Der Wert stieg mit 1.5.29 von 32 auf 42: Das Ruhefenster laesst sich
+    // nicht mehr von Rauschen offen halten, zusammengelaufene Ereignisse
+    // trennen sich wieder auf.
+    const size_t kErwarteteKurven = 42;
     TEST_ASSERT_EQUAL_UINT32(kErwarteteKurven, events.size());
+}
+
+// --- Wiedergabe der Referenzfahrten ----------------------------------------
+
+namespace {
+
+struct Referenzintervall {
+    uint32_t startMs;
+    uint32_t endeMs;
+    std::string typ;
+};
+
+// Zerlegt "Id=27;Type=RECHTS_NORMAL;StartMs=...;EndMs=..." in seine Felder.
+std::string descriptionField(const std::string& description,
+                             const std::string& key) {
+    std::stringstream ss(description);
+    std::string part;
+    while (std::getline(ss, part, ';')) {
+        const size_t pos = part.find('=');
+        if (pos != std::string::npos && part.substr(0, pos) == key) {
+            return part.substr(pos + 1);
+        }
+    }
+    return std::string();
+}
+
+// Wie loadCsv, ergaenzt aber leere Felder am Zeilenende. Die Ereignisdatei
+// laesst die Kurvenspalten bei Referenzmarkern leer; ohne Auffuellen fallen
+// genau diese Zeilen heraus.
+bool loadEventCsv(
+    const std::string& path, std::vector<std::string>& header,
+    std::vector<std::vector<std::string>>& rows) {
+    std::ifstream in(path);
+    if (!in.good()) return false;
+    std::string line;
+    if (!std::getline(in, line)) return false;
+    {
+        std::stringstream ss(line);
+        std::string cell;
+        while (std::getline(ss, cell, ',')) header.push_back(cell);
+    }
+    while (std::getline(in, line)) {
+        if (line.empty()) continue;
+        std::vector<std::string> cells;
+        std::stringstream ss(line);
+        std::string cell;
+        while (std::getline(ss, cell, ',')) cells.push_back(cell);
+        while (cells.size() < header.size()) cells.push_back("");
+        if (cells.size() == header.size()) rows.push_back(cells);
+    }
+    return !rows.empty();
+}
+
+struct Referenzergebnis {
+    size_t referenzen = 0;
+    size_t treffer = 0;
+    size_t ereignisse = 0;
+    size_t geringeAbdeckung = 0;
+};
+
+// Spielt eine Fahrt mit Beifahrer-Kurventest durch die Erkennung und misst
+// sie gegen die von Hand gesetzten Referenzintervalle.
+bool replayReferenceDrive(const std::string& session, Referenzergebnis& out) {
+    const std::string base = "testdata/" + session + "/";
+    const std::string sensorPath =
+        findFixture(base + "road_sensor_" + session + ".csv");
+    const std::string gpsPath =
+        findFixture(base + "road_gps_" + session + ".csv");
+    const std::string eventPath =
+        findFixture(base + "road_event_" + session + ".csv");
+    if (sensorPath.empty() || gpsPath.empty() || eventPath.empty()) {
+        return false;
+    }
+
+    std::vector<std::string> sh, gh, eh;
+    std::vector<std::vector<std::string>> sr, gr, er;
+    if (!loadCsv(sensorPath, sh, sr)) return false;
+    if (!loadCsv(gpsPath, gh, gr)) return false;
+    if (!loadEventCsv(eventPath, eh, er)) return false;
+
+    // Referenzmarker tragen Geraetezeit, die Ereignisspalte Sitzungszeit.
+    // Die Differenz ist der Versatz zwischen beiden Zeitbasen.
+    const int eKind = columnIndex(eh, "Ereignis");
+    const int eDesc = columnIndex(eh, "Beschreibung");
+    const int eTime = columnIndex(eh, "UptimeMs");
+    if (eKind < 0 || eDesc < 0 || eTime < 0) return false;
+
+    std::vector<Referenzintervall> referenzen;
+    for (const auto& r : er) {
+        if (r[eKind] != "CURVE_REFERENCE_END") continue;
+        const std::string typ = descriptionField(r[eDesc], "Type");
+        const std::string startText = descriptionField(r[eDesc], "StartMs");
+        const std::string endText = descriptionField(r[eDesc], "EndMs");
+        if (typ.empty() || startText.empty() || endText.empty()) continue;
+        const uint32_t endeGeraet =
+            static_cast<uint32_t>(std::strtoul(endText.c_str(), nullptr, 10));
+        const uint32_t versatz =
+            endeGeraet -
+            static_cast<uint32_t>(std::strtoul(r[eTime].c_str(), nullptr, 10));
+        if (typ == "GERADE") continue;  // Geraden sind keine Trefferpruefung
+        referenzen.push_back(
+            {static_cast<uint32_t>(
+                 std::strtoul(startText.c_str(), nullptr, 10)) - versatz,
+             endeGeraet - versatz, typ});
+    }
+    if (referenzen.empty()) return false;
+
+    const int gT = columnIndex(gh, "UptimeMs");
+    const int gV = columnIndex(gh, "SpeedValid");
+    const int gS = columnIndex(gh, "SpeedKmh");
+    if (gT < 0 || gV < 0 || gS < 0) return false;
+    std::vector<std::pair<uint32_t, float>> speeds;
+    for (const auto& r : gr) {
+        if (r[gV] != "1") continue;
+        speeds.push_back(
+            {static_cast<uint32_t>(std::strtoul(r[gT].c_str(), nullptr, 10)),
+             static_cast<float>(std::atof(r[gS].c_str()))});
+    }
+    if (speeds.empty()) return false;
+
+    const int sT = columnIndex(sh, "UptimeMs");
+    const int sH = columnIndex(sh, "Heading");
+    const int sY = columnIndex(sh, "YawRateDps");
+    const int sV = columnIndex(sh, "YawRateValid");
+    const int sC = columnIndex(sh, "CalGyro");
+    if (sT < 0 || sH < 0 || sY < 0 || sV < 0 || sC < 0) return false;
+
+    CurveDetector detector;
+    std::vector<CurveEvent> events;
+    size_t cursor = 0;
+    for (const auto& r : sr) {
+        const uint32_t t =
+            static_cast<uint32_t>(std::strtoul(r[sT].c_str(), nullptr, 10));
+        while (cursor + 1 < speeds.size() && speeds[cursor + 1].first <= t) {
+            ++cursor;
+        }
+        float speed = -1.0f;
+        const uint32_t st = speeds[cursor].first;
+        const uint32_t diff = t > st ? t - st : st - t;
+        if (diff <= 1500) speed = speeds[cursor].second;
+
+        CurveSample s;
+        s.timestampMs = t;
+        s.headingDeg = static_cast<float>(std::atof(r[sH].c_str()));
+        s.yawRateDps = static_cast<float>(std::atof(r[sY].c_str()));
+        s.yawRateValid = r[sV] == "1";
+        s.gyroCalibrated = std::atoi(r[sC].c_str()) == 3;
+        s.speedKmh = speed;
+
+        CurveEvent ev;
+        if (detector.update(s, ev)) events.push_back(ev);
+    }
+    CurveEvent letzte;
+    if (detector.finish(letzte)) events.push_back(letzte);
+
+    out.referenzen = referenzen.size();
+    out.ereignisse = events.size();
+    for (const Referenzintervall& ref : referenzen) {
+        for (const CurveEvent& e : events) {
+            if (e.startTimeMs < ref.endeMs && ref.startMs < e.endTimeMs) {
+                ++out.treffer;
+                break;
+            }
+        }
+    }
+    for (const CurveEvent& e : events) {
+        if (e.durationMs == 0) continue;
+        // Anteil der Ereignisdauer, der von echten Drehstichproben belegt ist.
+        const double abdeckung =
+            static_cast<double>(e.sampleCount) * kStepMs / e.durationMs;
+        if (abdeckung < 0.6) ++out.geringeAbdeckung;
+    }
+    return true;
+}
+
+}  // namespace
+
+// Misst die Erkennung gegen die von Hand gesetzten Referenzintervalle der
+// Beifahrerseite vom 31.07.2026.
+//
+// Zwei Kennzahlen sind festgeschrieben:
+//
+//   Treffer          - wieviele Referenzkurven ein Ereignis ueberlappt.
+//   geringeAbdeckung - Ereignisse, deren Dauer zu weniger als 60 Prozent von
+//                      echten Drehstichproben belegt ist. Solche Ereignisse
+//                      umfassen mehrere Kurven; Radius, Dauer und Mittelwerte
+//                      beschreiben dann keine einzelne Kurve mehr.
+//
+// Aendern sich die Werte, ist das kein Testfehler, sondern eine
+// Verhaltensaenderung: pruefen, begruenden und den Festwert nachziehen.
+void test_wiedergabe_referenzfahrten() {
+    const char* sessions[] = {
+        "20260731_151337_DAB245DC", "20260731_152148_452707FB",
+        "20260731_153224_503BD642", "20260731_153850_6C7F041E",
+        "20260731_155106_3AEFA823"};
+
+    Referenzergebnis gesamt;
+    size_t gefunden = 0;
+    for (const char* session : sessions) {
+        Referenzergebnis einzeln;
+        if (!replayReferenceDrive(session, einzeln)) continue;
+        ++gefunden;
+        gesamt.referenzen += einzeln.referenzen;
+        gesamt.treffer += einzeln.treffer;
+        gesamt.ereignisse += einzeln.ereignisse;
+        gesamt.geringeAbdeckung += einzeln.geringeAbdeckung;
+    }
+    if (gefunden == 0) {
+        TEST_IGNORE_MESSAGE("Messdaten nicht gefunden - Wiedergabe uebersprungen");
+        return;
+    }
+    TEST_ASSERT_EQUAL_UINT32(5, gefunden);
+
+    std::printf(
+        "\nReferenzfahrten: %zu Referenzkurven, %zu erkannt, %zu Ereignisse, "
+        "%zu mit Abdeckung unter 60 %%\n",
+        gesamt.referenzen, gesamt.treffer, gesamt.ereignisse,
+        gesamt.geringeAbdeckung);
+
+    TEST_ASSERT_EQUAL_UINT32(55, gesamt.referenzen);
+
+    // 52 von 55. Die drei fehlenden Referenzen drehen netto 5,7, 6,4 und
+    // 10,0 Grad und liegen damit unter CURVE_MIN_EVENT_ANGLE_DEG; sie sind
+    // von der Beifahrerseite als Kurve markiert, qualifizieren aber nach der
+    // geltenden Regel nicht. Vor 1.5.29 wurden zwei davon nur deshalb
+    // getroffen, weil zusammengelaufene Nachbarereignisse ihr Zeitfenster
+    // zufaellig ueberlappten.
+    TEST_ASSERT_EQUAL_UINT32(52, gesamt.treffer);
+
+    // Vor 1.5.29 lagen hier 47 von 128 Ereignissen.
+    TEST_ASSERT_EQUAL_UINT32(7, gesamt.geringeAbdeckung);
+    TEST_ASSERT_EQUAL_UINT32(158, gesamt.ereignisse);
 }
 
 int main(int, char**) {
@@ -422,7 +783,15 @@ int main(int, char**) {
     RUN_TEST(test_gyro_wird_bevorzugt_und_markiert);
     RUN_TEST(test_ohne_gyro_faellt_auf_kurs_zurueck);
     RUN_TEST(test_grosse_zeitluecke_setzt_kurve_nicht_fort);
+    RUN_TEST(test_rauschen_haelt_kurve_nicht_offen);
+    RUN_TEST(test_rauschen_trennt_zwei_kurven);
+    RUN_TEST(test_langsame_kurve_knapp_ueber_fortsetzungsschwelle_bleibt_offen);
+    RUN_TEST(test_langsame_kurve_knapp_unter_fortsetzungsschwelle_schliesst_ab);
+    RUN_TEST(test_finish_schliesst_laufende_kurve_ab);
+    RUN_TEST(test_finish_ohne_kurve_liefert_nichts);
+    RUN_TEST(test_finish_verwirft_den_zustand);
     RUN_TEST(test_reset_verwirft_laufenden_verlauf);
     RUN_TEST(test_wiedergabe_echter_fahrt);
+    RUN_TEST(test_wiedergabe_referenzfahrten);
     return UNITY_END();
 }

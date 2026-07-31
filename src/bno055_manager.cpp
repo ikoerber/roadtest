@@ -534,6 +534,14 @@ float BNO055Manager::getCurveAngle() {
     return initialized ? curveDetector.getLastCompletedAngle() : 0;
 }
 
+bool BNO055Manager::finishCurveDetection(CurveEvent& completedEvent) {
+    completedEvent = CurveEvent();
+    if (!initialized) {
+        return false;
+    }
+    return curveDetector.finish(completedEvent);
+}
+
 void BNO055Manager::resetCurveDetection() {
     curveDetector.reset();
 }
