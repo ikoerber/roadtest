@@ -12,7 +12,8 @@ namespace {
 constexpr const char* SD_RECOVERY_NVS_NAMESPACE = "rt_sd_rec";
 constexpr const char* SENSOR_CSV_HEADER =
     "UTC,UptimeMs,Heading,Pitch,Roll,AccelX,AccelY,AccelZ,"
-    "GyroX,GyroY,GyroZ,Temp,CalSystem,CalGyro,CalAccel,CalMag";
+    "GyroX,GyroY,GyroZ,GravX,GravY,GravZ,YawRateDps,YawRateValid,"
+    "Temp,CalSystem,CalGyro,CalAccel,CalMag";
 
 uint32_t sessionCounterDelta(uint32_t current, uint32_t start) {
     // Auch bei einem unerwarteten Zählerneustart oder 32-Bit-Überlauf niemals
@@ -963,7 +964,13 @@ bool SDLogger::writeHeader(File& file, LogType type) {
             break;
             
         case LOG_TYPE_EVENT:
-            header = "UTC,UptimeMs,Ereignis,Beschreibung,Latitude,Longitude,Schwere";
+            header =
+                "UTC,UptimeMs,Ereignis,Beschreibung,Latitude,Longitude,Schwere,"
+                "StartUptimeMs,EndUptimeMs,DurationMs,Direction,CurveGroupId,"
+                "AngleDeg,HeadingAngleDeg,DistanceM,MeanSpeedKmh,MaxSpeedKmh,"
+                "MeanYawRateDps,MaxYawRateDps,RadiusM,MeanLateralAccel,"
+                "MaxLateralAccel,Samples,DetectionMode,CompletionReason,"
+                "QualityFlags";
             break;
             
         case LOG_TYPE_ROAD:
@@ -1249,12 +1256,15 @@ bool SDLogger::logSensorData(const SensorData& data) {
 
     // Sichere Formatierung mit begrenzter Puffergröße
     char logBuffer[256]; // Maximale Zeilenlänge begrenzt
-    int written = snprintf(logBuffer, sizeof(logBuffer), 
-        "%s,%.1f,%.1f,%.1f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.1f,%d,%d,%d,%d\n",
+    int written = snprintf(logBuffer, sizeof(logBuffer),
+        "%s,%.1f,%.1f,%.1f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,"
+        "%.3f,%.3f,%.3f,%.3f,%d,%.1f,%d,%d,%d,%d\n",
         formatTimestamp().c_str(),
         data.heading, data.pitch, data.roll,
         data.accelX, data.accelY, data.accelZ,
         data.gyroX, data.gyroY, data.gyroZ,
+        data.gravX, data.gravY, data.gravZ,
+        data.yawRateDps, data.yawRateValid ? 1 : 0,
         data.temperature,
         data.calibration.system, data.calibration.gyro, 
         data.calibration.accel, data.calibration.mag);
@@ -1848,7 +1858,8 @@ bool SDLogger::logRoadMetrics(const RoadMetrics& metrics) {
 }
 
 bool SDLogger::logEvent(const String& eventType, const String& description,
-                       float lat, float lon, float severity) {
+                       float lat, float lon, float severity,
+                       bool flushImmediately) {
     if (!logging || !config.enableEventLog) return false;
     
     String logLine = formatTimestamp() + "," +
@@ -1856,13 +1867,16 @@ bool SDLogger::logEvent(const String& eventType, const String& description,
                     description + "," +
                     String(lat, 6) + "," +
                     String(lon, 6) + "," +
-                    String(severity, 2) + "\n";
+                    String(severity, 2) +
+                    ",,,,,,,,,,,,,,,,,,,\n";
     
     if (eventLogFile &&
         writeFileTimed(
             eventLogFile, logLine.c_str(), logLine.length()) ==
             logLine.length()) {
-        flushFileTimed(eventLogFile); // Ereignisse sofort speichern
+        if (flushImmediately) {
+            flushFileTimed(eventLogFile);
+        }
         stats.totalWrites++;
         stats.totalBytes += logLine.length();
         return true;
@@ -1887,15 +1901,68 @@ bool SDLogger::logPothole(float severity, float lat, float lon) {
     return logged;
 }
 
-bool SDLogger::logCurve(float angle, float radius, float lat, float lon) {
-    String desc = "Winkel: " + String(angle, 0) + "°";
-    if (radius > 0) {
-        desc += ", Radius: " + String(radius, 0) + "m";
+bool SDLogger::logCurve(
+    const CurveEvent& event, float lat, float lon) {
+    if (!logging || !config.enableEventLog || !event.valid) {
+        return false;
     }
-    
-    bool logged = logEvent("KURVE", desc, lat, lon, fabs(angle));
+
+    const char* direction =
+        event.direction > 0 ? "POSITIV"
+                            : (event.direction < 0 ? "NEGATIV" : "UNBEKANNT");
+    const char* detectionMode =
+        event.detectionMode == CurveDetectionMode::SHARP ? "SHARP" : "LONG";
+    const char* completionReason = "QUIET";
+    if (event.completionReason == CurveCompletionReason::REVERSAL) {
+        completionReason = "REVERSAL";
+    } else if (event.completionReason == CurveCompletionReason::TIMEOUT) {
+        completionReason = "TIMEOUT";
+    }
+
+    String description =
+        String("Winkel=") + String(event.angleDeg, 1) +
+        ";Radius=" + String(event.radiusM, 1) +
+        ";Gruppe=" + String(event.groupId);
+    String logLine = formatTimestamp() + ",KURVE," +
+                     description + "," +
+                     String(lat, 6) + "," +
+                     String(lon, 6) + "," +
+                     String(event.angleDeg, 2) + "," +
+                     String(event.startTimeMs) + "," +
+                     String(event.endTimeMs) + "," +
+                     String(event.durationMs) + "," +
+                     direction + "," +
+                     String(event.groupId) + "," +
+                     String(event.angleDeg, 2) + "," +
+                     String(event.headingAngleDeg, 2) + "," +
+                     String(event.distanceM, 2) + "," +
+                     String(event.meanSpeedKmh, 2) + "," +
+                     String(event.maxSpeedKmh, 2) + "," +
+                     String(event.meanYawRateDps, 3) + "," +
+                     String(event.maxYawRateDps, 3) + "," +
+                     String(event.radiusM, 2) + "," +
+                     String(event.meanLateralAccel, 3) + "," +
+                     String(event.maxLateralAccel, 3) + "," +
+                     String(event.sampleCount) + "," +
+                     detectionMode + "," +
+                     completionReason + "," +
+                     String(event.qualityFlags) + "\n";
+
+    bool logged =
+        eventLogFile &&
+        writeFileTimed(
+            eventLogFile, logLine.c_str(), logLine.length()) ==
+            logLine.length();
     if (logged) {
+        // Ein Ereignis wird sofort gesichert. Die Referenzmarker der
+        // Beifahrerseite verwenden dagegen bewusst gepuffertes Logging.
+        flushFileTimed(eventLogFile);
+        stats.totalWrites++;
+        stats.totalBytes += logLine.length();
         rideSummary.curveCount++;
+    } else {
+        handleCardFailure(
+            "Kurvenereignis konnte nicht geschrieben werden", 1);
     }
     return logged;
 }

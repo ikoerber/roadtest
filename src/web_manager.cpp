@@ -95,7 +95,19 @@ WebManager::WebManager()
       otaInProgress(false),
       otaUploadRejected(false),
       otaBlockedByMeasurement(false),
-      otaUploadFileName("") {}
+      otaUploadFileName(""),
+      curveTestActive(false),
+      curveTestStartMarkerPending(false),
+      curveReferenceActive(false),
+      curveReferenceType(CurveReferenceType::NONE),
+      curveReferenceId(0),
+      curveReferenceStartedAt(0),
+      curveStraightCount(0),
+      curveLeftWideCount(0),
+      curveRightWideCount(0),
+      curveLeftNormalCount(0),
+      curveRightNormalCount(0),
+      curveSCount(0) {}
 
 bool WebManager::begin() {
     if (initialized) {
@@ -155,94 +167,152 @@ bool WebManager::begin() {
         server.send(200, "text/html; charset=utf-8", buildCalibrationPage());
     });
 
-    server.on("/acceptance", HTTP_GET, [this]() {
+    server.on("/curve-test", HTTP_GET, [this]() {
         String message;
-        if (server.arg("blocked") == "1") {
-            message =
-                "Schritt nicht gespeichert. Bitte die angezeigte "
-                "Voraussetzung prüfen.";
-        } else if (server.arg("ended") == "1") {
-            message = "Kontrolltest beendet und Dateien geschlossen.";
+        if (server.arg("result") == "blocked") {
+            message = "Aktion nicht gespeichert. Bitte den angezeigten "
+                      "Schritt prüfen und erneut versuchen.";
+        } else if (server.arg("result") == "ended") {
+            message = "Kurventest beendet und Messdateien geschlossen.";
         }
         server.sendHeader("Cache-Control", "no-store");
         server.send(
             200, "text/html; charset=utf-8",
-            buildAcceptanceTestPage(message));
+            buildCurveTestPage(message));
     });
 
-    server.on("/acceptance/status", HTTP_GET, [this]() {
+    server.on("/curve-test/status", HTTP_GET, [this]() {
         server.sendHeader("Cache-Control", "no-store");
         server.send(
             200, "application/json; charset=utf-8",
-            buildAcceptanceStatusJSON());
+            buildCurveTestStatusJSON());
     });
 
-    server.on("/acceptance/start", HTTP_POST, [this]() {
+    server.on("/curve-test/start", HTTP_POST, [this]() {
         if (!authenticateOTA()) {
             return;
         }
-        const bool started = vehicleDataDiscovery.begin();
-        redirectAcceptance(!started);
+        if (vehicleDataDiscovery.isActive() || curveTestActive ||
+            !sdLogger.isReady() || sdLogger.isLogging() ||
+            sdLogger.isLoggingStartPending()) {
+            redirectCurveTest("blocked");
+            return;
+        }
+        if (!sdLogger.requestLoggingStart()) {
+            redirectCurveTest("blocked");
+            return;
+        }
+        curveTestActive = true;
+        curveTestStartMarkerPending = true;
+        curveReferenceActive = false;
+        curveReferenceType = CurveReferenceType::NONE;
+        curveReferenceStartedAt = 0;
+        curveStraightCount = 0;
+        curveLeftWideCount = 0;
+        curveRightWideCount = 0;
+        curveLeftNormalCount = 0;
+        curveRightNormalCount = 0;
+        curveSCount = 0;
+        redirectCurveTest();
     });
 
-    server.on("/acceptance/engine-start", HTTP_POST, [this]() {
+    server.on("/curve-test/reference-start", HTTP_POST, [this]() {
         if (!authenticateOTA()) {
             return;
         }
-        const bool marked =
-            vehicleDataDiscovery.markEngineStarted();
-        if (vehicleDataDiscovery.isActive() && sdLogger.isLogging()) {
-            sdLogger.logEvent(
-                "WEB_ACTION",
-                String("ENGINE_START;RESULT_") +
-                    (marked ? "OK" : "BLOCKED"));
+        const CurveReferenceType type =
+            parseCurveReferenceType(server.arg("type"));
+        if (!curveTestActive || !sdLogger.isLogging() ||
+            curveReferenceActive || type == CurveReferenceType::NONE) {
+            redirectCurveTest("blocked");
+            return;
         }
-        redirectAcceptance(!marked);
+        const uint32_t referenceId = curveReferenceId + 1;
+        const unsigned long startedAt = millis();
+        const String description =
+            String("Id=") + String(referenceId) +
+            ";Type=" + getCurveReferenceName(type);
+        if (!sdLogger.logEvent(
+                "CURVE_REFERENCE_START", description,
+                0, 0, 0, false)) {
+            redirectCurveTest("blocked");
+            return;
+        }
+        curveReferenceId = referenceId;
+        curveReferenceType = type;
+        curveReferenceStartedAt = startedAt;
+        curveReferenceActive = true;
+        redirectCurveTest();
     });
 
-    server.on("/acceptance/ignition-on", HTTP_POST, [this]() {
+    server.on("/curve-test/reference-end", HTTP_POST, [this]() {
         if (!authenticateOTA()) {
             return;
         }
-        const bool marked =
-            vehicleDataDiscovery.markIgnitionOn();
-        if (vehicleDataDiscovery.isActive() && sdLogger.isLogging()) {
-            sdLogger.logEvent(
-                "WEB_ACTION",
-                String("IGNITION_ON;RESULT_") +
-                    (marked ? "OK" : "BLOCKED"));
+        if (!curveTestActive || !sdLogger.isLogging() ||
+            !curveReferenceActive) {
+            redirectCurveTest("blocked");
+            return;
         }
-        redirectAcceptance(!marked);
+        const CurveReferenceType completedType = curveReferenceType;
+        const unsigned long endedAt = millis();
+        const String description =
+            String("Id=") + String(curveReferenceId) +
+            ";Type=" + getCurveReferenceName(completedType) +
+            ";StartMs=" + String(curveReferenceStartedAt) +
+            ";EndMs=" + String(endedAt) +
+            ";DurationMs=" +
+            String(endedAt - curveReferenceStartedAt);
+        if (!sdLogger.logEvent(
+                "CURVE_REFERENCE_END", description,
+                0, 0, 0, false)) {
+            redirectCurveTest("blocked");
+            return;
+        }
+        if (completedType == CurveReferenceType::STRAIGHT) {
+            curveStraightCount++;
+        } else if (completedType == CurveReferenceType::LEFT_WIDE) {
+            curveLeftWideCount++;
+        } else if (completedType == CurveReferenceType::RIGHT_WIDE) {
+            curveRightWideCount++;
+        } else if (completedType == CurveReferenceType::LEFT_NORMAL) {
+            curveLeftNormalCount++;
+        } else if (completedType == CurveReferenceType::RIGHT_NORMAL) {
+            curveRightNormalCount++;
+        } else if (completedType == CurveReferenceType::S_CURVE) {
+            curveSCount++;
+        }
+        curveReferenceActive = false;
+        curveReferenceType = CurveReferenceType::NONE;
+        curveReferenceStartedAt = 0;
+        redirectCurveTest();
     });
 
-    server.on("/acceptance/engine-stop", HTTP_POST, [this]() {
+    server.on("/curve-test/end", HTTP_POST, [this]() {
         if (!authenticateOTA()) {
             return;
         }
-        const bool marked =
-            vehicleDataDiscovery.markEngineStopped();
-        if (vehicleDataDiscovery.isActive() && sdLogger.isLogging()) {
-            sdLogger.logEvent(
-                "WEB_ACTION",
-                String("ENGINE_STOP;RESULT_") +
-                    (marked ? "OK" : "BLOCKED"));
-        }
-        redirectAcceptance(!marked);
-    });
-
-    server.on("/acceptance/end", HTTP_POST, [this]() {
-        if (!authenticateOTA()) {
-            return;
-        }
-        if (!vehicleDataDiscovery.isActive()) {
-            redirectAcceptance(true);
+        if (!curveTestActive || curveReferenceActive) {
+            redirectCurveTest("blocked");
             return;
         }
         if (sdLogger.isLogging()) {
-            sdLogger.logEvent("WEB_ACTION", "END;RESULT_OK");
+            sdLogger.logEvent(
+                "CURVE_TEST_END",
+                String("Straight=") + String(curveStraightCount) +
+                    ";LeftWide=" + String(curveLeftWideCount) +
+                    ";RightWide=" + String(curveRightWideCount) +
+                    ";LeftNormal=" + String(curveLeftNormalCount) +
+                    ";RightNormal=" + String(curveRightNormalCount) +
+                    ";S=" + String(curveSCount),
+                0, 0, 0, false);
+            sdLogger.stopLogging();
         }
-        vehicleDataDiscovery.end();
-        redirectAcceptance(false, true);
+        curveTestActive = false;
+        curveTestStartMarkerPending = false;
+        curveReferenceType = CurveReferenceType::NONE;
+        curveReferenceStartedAt = 0;
+        redirectCurveTest("ended");
     });
 
     server.on("/calibration/save", HTTP_POST, [this]() {
@@ -279,7 +349,7 @@ bool WebManager::begin() {
             server.send(
                 409, "text/html; charset=utf-8",
                 "<!doctype html><meta charset='utf-8'><h1>Start nicht möglich</h1>"
-                "<p>Der Fahrzeug- oder Abnahmetest verwaltet die laufende "
+                "<p>Der Fahrzeug- oder Kurventest verwaltet die laufende "
                 "Aufzeichnung bereits.</p><p><a href='/'>Zurück</a></p>");
             return;
         }
@@ -313,6 +383,17 @@ bool WebManager::begin() {
 
     server.on("/ride/stop", HTTP_POST, [this]() {
         if (!authenticateOTA()) {
+            return;
+        }
+        if (curveTestActive) {
+            if (curveReferenceActive) {
+                redirectCurveTest("blocked");
+                return;
+            }
+            sdLogger.stopLogging();
+            curveTestActive = false;
+            curveTestStartMarkerPending = false;
+            redirectCurveTest("ended");
             return;
         }
         if (vehicleDataDiscovery.isActive()) {
@@ -368,6 +449,20 @@ void WebManager::handleClient() {
     if (initialized) {
         const unsigned long startedAt = millis();
         server.handleClient();
+        if (curveTestActive && curveTestStartMarkerPending &&
+            sdLogger.isLogging() &&
+            sdLogger.logEvent(
+                "CURVE_TEST_START",
+                "Targets=Straight1;Wide4;Normal4;S3",
+                0, 0, 0, false)) {
+            curveTestStartMarkerPending = false;
+        } else if (curveTestActive && curveTestStartMarkerPending &&
+                   !sdLogger.isLogging() &&
+                   !sdLogger.isLoggingStartPending() &&
+                   sdLogger.getLastStartError().length() > 0) {
+            curveTestActive = false;
+            curveTestStartMarkerPending = false;
+        }
         runtimeDiagnostics.recordWebDuration(millis() - startedAt);
     }
 }
@@ -657,452 +752,333 @@ String WebManager::buildStatusPage() {
     }
 
     page += F("<p class='hint'>Start und Ende sind mit den Admin-Zugangsdaten geschützt.</p>"
-              "<a href='/acceptance'>Recovery-Kontrolltest</a>"
+              "<a href='/curve-test'>Beifahrer-Kurventest</a>"
               " &nbsp; <a href='/calibration'>Kalibrierung</a>"
               " &nbsp; <a href='/update'>Firmware aktualisieren</a>"
               "</body></html>");
     return page;
 }
 
-
-uint8_t WebManager::getAcceptanceStage() const {
-    if (!vehicleDataDiscovery.isActive()) {
-        return 0;
+const char* WebManager::getCurveReferenceName(
+    CurveReferenceType type) const {
+    switch (type) {
+        case CurveReferenceType::STRAIGHT:
+            return "GERADE";
+        case CurveReferenceType::LEFT_WIDE:
+            return "LINKS_WEIT";
+        case CurveReferenceType::RIGHT_WIDE:
+            return "RECHTS_WEIT";
+        case CurveReferenceType::LEFT_NORMAL:
+            return "LINKS_NORMAL";
+        case CurveReferenceType::RIGHT_NORMAL:
+            return "RECHTS_NORMAL";
+        case CurveReferenceType::S_CURVE:
+            return "S_KURVE";
+        default:
+            return "KEINE";
     }
-    if (!sdLogger.isLogging() ||
-        vehicleDataDiscovery.isPassiveCaptureActive()) {
-        return 1;
-    }
-
-    const unsigned long ignitionOn =
-        vehicleDataDiscovery.getIgnitionOnMarkedAt();
-    if (ignitionOn == 0) {
-        return 2;
-    }
-    const unsigned long ignitionDetection =
-        vehicleDataDiscovery.getDetectionAfterIgnitionOnMs();
-    if (ignitionDetection == UINT32_MAX) {
-        return 3;
-    }
-
-    const unsigned long engineStart =
-        vehicleDataDiscovery.getEngineStartMarkedAt();
-    if (engineStart == 0) {
-        return 4;
-    }
-    const unsigned long engineDetection =
-        vehicleDataDiscovery.getDetectionAfterEngineStartMs();
-    if (engineDetection == UINT32_MAX) {
-        return 5;
-    }
-    const unsigned long engineDetectedAt =
-        engineStart + engineDetection;
-    if (millis() - engineDetectedAt <
-        ACCEPTANCE_INITIAL_STAND_MS) {
-        return 6;
-    }
-
-    if (vehicleDataDiscovery.getEngineStopMarkedAt() == 0) {
-        const OBDLiveData obd = canReader.getOBDData();
-        return obd.speedValid &&
-                       obd.speedKmh <=
-                           GPS_DISTANCE_OBD_STATIONARY_KMH
-                   ? 8
-                   : 7;
-    }
-    // ECU-Ausfall ist ein abgeschlossener Meilenstein. Nach erfolgreicher
-    // Wiedererkennung darf die Seite nicht zurück zu "Ausfall abwarten"
-    // springen, nur weil der aktuelle ECU-Zustand wieder REACHABLE ist.
-    if (!vehicleDataDiscovery.hasObservedECULossAfterEngineStop()) {
-        return 9;
-    }
-
-    const unsigned long ignitionRestart =
-        vehicleDataDiscovery.getIgnitionRestartMarkedAt();
-    if (ignitionRestart == 0) {
-        return 10;
-    }
-    const unsigned long restartIgnitionDetection =
-        vehicleDataDiscovery.getDetectionAfterIgnitionRestartMs();
-    if (restartIgnitionDetection == UINT32_MAX) {
-        return 11;
-    }
-
-    const unsigned long engineRestart =
-        vehicleDataDiscovery.getEngineRestartMarkedAt();
-    if (engineRestart == 0) {
-        return 12;
-    }
-    const unsigned long restartEngineDetection =
-        vehicleDataDiscovery.getDetectionAfterEngineRestartMs();
-    if (restartEngineDetection == UINT32_MAX) {
-        return 13;
-    }
-    const unsigned long restartDetectedAt =
-        engineRestart + restartEngineDetection;
-    return millis() - restartDetectedAt <
-                   ACCEPTANCE_FINAL_STAND_MS
-               ? 14
-               : 15;
 }
 
-uint32_t WebManager::getAcceptanceCountdownSeconds(
-    uint8_t stage) const {
-    if (stage == 1) {
-        return vehicleDataDiscovery.getPassiveRemainingSeconds();
-    }
-    if (stage == 6) {
-        const unsigned long detectedAt =
-            vehicleDataDiscovery.getEngineStartMarkedAt() +
-            vehicleDataDiscovery.getDetectionAfterEngineStartMs();
-        const unsigned long elapsed = millis() - detectedAt;
-        return elapsed >= ACCEPTANCE_INITIAL_STAND_MS
-                   ? 0
-                   : (ACCEPTANCE_INITIAL_STAND_MS - elapsed + 999) /
-                         1000;
-    }
-    if (stage == 14) {
-        const unsigned long detectedAt =
-            vehicleDataDiscovery.getEngineRestartMarkedAt() +
-            vehicleDataDiscovery.getDetectionAfterEngineRestartMs();
-        const unsigned long elapsed = millis() - detectedAt;
-        return elapsed >= ACCEPTANCE_FINAL_STAND_MS
-                   ? 0
-                   : (ACCEPTANCE_FINAL_STAND_MS - elapsed + 999) /
-                         1000;
-    }
-    return 0;
+WebManager::CurveReferenceType WebManager::parseCurveReferenceType(
+    const String& value) const {
+    if (value == "straight") return CurveReferenceType::STRAIGHT;
+    if (value == "left-wide") return CurveReferenceType::LEFT_WIDE;
+    if (value == "right-wide") return CurveReferenceType::RIGHT_WIDE;
+    if (value == "left-normal") return CurveReferenceType::LEFT_NORMAL;
+    if (value == "right-normal") return CurveReferenceType::RIGHT_NORMAL;
+    if (value == "s-curve") return CurveReferenceType::S_CURVE;
+    return CurveReferenceType::NONE;
 }
 
-void WebManager::redirectAcceptance(bool blocked, bool ended) {
-    String location = "/acceptance";
-    if (blocked) {
-        location += "?blocked=1";
-    } else if (ended) {
-        location += "?ended=1";
+void WebManager::redirectCurveTest(const char* result) {
+    String location = "/curve-test";
+    if (result != nullptr) {
+        location += "?result=";
+        location += result;
     }
     server.sendHeader("Location", location, true);
     server.sendHeader("Cache-Control", "no-store");
     server.send(303, "text/plain; charset=utf-8", "");
 }
 
-String WebManager::buildAcceptanceStatusJSON() {
-    const uint8_t stage = getAcceptanceStage();
+String WebManager::buildCurveTestStatusJSON() {
     const OBDLiveData obd = canReader.getOBDData();
     const GPSData gps = gpsManager.getCurrentData(false);
     const RideSummary ride = sdLogger.getRideSummary();
     const LogStats sd = sdLogger.getStatistics();
-    const RuntimeTimingDiagnostics timing =
-        runtimeDiagnostics.getTiming();
-
     String json;
-    json.reserve(420);
-    json += F("{\"stage\":");
-    json += String(stage);
-    json += F(",\"countdown\":");
-    json += String(getAcceptanceCountdownSeconds(stage));
-    json += F(",\"phase\":\"");
-    json += escapeJSON(
-        vehicleDataDiscovery.isActive()
-            ? String(vehicleDataDiscovery.getPhaseName())
-            : String("bereit"));
-    json += F("\",\"ecu\":\"");
-    json += escapeJSON(
-        String(vehicleDataDiscovery.getECUStateName()));
+    json.reserve(360);
+    json += F("{\"active\":");
+    json += curveTestActive ? F("true") : F("false");
+    json += F(",\"recording\":");
+    json += sdLogger.isLogging() ? F("true") : F("false");
+    json += F(",\"preparing\":");
+    json += sdLogger.isLoggingStartPending() ? F("true") : F("false");
+    json += F(",\"referenceActive\":");
+    json += curveReferenceActive ? F("true") : F("false");
+    json += F(",\"reference\":\"");
+    json += getCurveReferenceName(curveReferenceType);
     json += F("\",\"obdSpeed\":");
     json += obd.speedValid ? String(obd.speedKmh) : String(-1);
     json += F(",\"gpsSpeed\":");
-    json += String(gps.speed_kmh, 1);
-    json += F(",\"gpsSpeedValid\":");
-    json += gps.speed_valid ? F("true") : F("false");
+    json += gps.speed_valid ? String(gps.speed_kmh, 1) : String(-1);
     json += F(",\"distanceKm\":");
     json += String(ride.distanceKm, 3);
+    json += F(",\"detectedCurves\":");
+    json += String(ride.curveCount);
     json += F(",\"sdErrors\":");
     json += String(sd.errorCount);
-    json += F(",\"maxPauseMs\":");
-    json += String(timing.maxLoopIntervalMs);
     json += F("}");
     return json;
 }
 
-String WebManager::buildAcceptanceTestPage(
-    const String& message) {
-    const uint8_t stage = getAcceptanceStage();
-    const bool active = vehicleDataDiscovery.isActive();
+String WebManager::buildCurveTestPage(const String& message) {
+    const bool recording = sdLogger.isLogging();
+    const bool preparing = sdLogger.isLoggingStartPending();
+    const RideSummary ride = sdLogger.getRideSummary();
     const OBDLiveData obd = canReader.getOBDData();
     const GPSData gps = gpsManager.getCurrentData(false);
-    const RideSummary ride = sdLogger.getRideSummary();
-    const RuntimeTimingDiagnostics timing =
-        runtimeDiagnostics.getTiming();
-
-    const char* eyebrow = "BEREIT";
-    const char* title = "Recovery-Kontrolle starten";
-    const char* instruction =
-        "Zündung und Motor ausgeschaltet lassen. Der Test beginnt mit "
-        "60 Sekunden echtem Listen-Only.";
-    const char* action = "/acceptance/start";
-    const char* button = "Kontrolltest starten";
-    bool showAction = true;
-
-    switch (stage) {
-        case 1:
-            eyebrow = "VORBEREITUNG";
-            title = "Passive Phase abwarten";
-            instruction =
-                "Die Firmware bereitet die Dateien vor und sendet 60 "
-                "Sekunden lang keine CAN-Anfrage.";
-            showAction = false;
-            break;
-        case 2:
-            eyebrow = "ZÜNDUNG";
-            title = "Zündung einschalten";
-            instruction =
-                "Knopf zuerst drücken. Danach nur die Zündung "
-                "einschalten, den Motor noch nicht starten.";
-            action = "/acceptance/ignition-on";
-            button = "Markieren · dann Zündung an";
-            break;
-        case 3:
-            eyebrow = "ECU";
-            title = "Erste ECU-Antwort abwarten";
-            instruction =
-                "Die Seite wechselt automatisch weiter, sobald eine "
-                "Antwort nach dem Marker vorliegt.";
-            showAction = false;
-            break;
-        case 4:
-            eyebrow = "MOTORSTART";
-            title = "Motor starten";
-            instruction =
-                "Knopf zuerst drücken und den Motor unmittelbar danach "
-                "starten.";
-            action = "/acceptance/engine-start";
-            button = "Markieren · dann Motor starten";
-            break;
-        case 5:
-            eyebrow = "MOTORLAUF";
-            title = "Drehzahlbestätigung abwarten";
-            instruction =
-                "Mindestens 300 U/min müssen als frischer OBD-Wert "
-                "erkannt werden.";
-            showAction = false;
-            break;
-        case 6:
-            eyebrow = "STABILITÄT";
-            title = "Eine Minute laufen lassen";
-            instruction =
-                "Fahrzeug bleibt vollständig stehen. Die kleine "
-                "Statusabfrage bleibt währenddessen aktiv.";
-            showAction = false;
-            break;
-        case 7:
-            eyebrow = "STILLSTAND";
-            title = "Auf OBD 0 km/h warten";
-            instruction =
-                "Der Ausschaltknopf erscheint erst bei einer frischen "
-                "Stillstandsbestätigung.";
-            showAction = false;
-            break;
-        case 8:
-            eyebrow = "AUSSCHALTEN";
-            title = "Motor und Zündung ausschalten";
-            instruction =
-                "Knopf zuerst drücken und das Fahrzeug unmittelbar "
-                "danach vollständig ausschalten.";
-            action = "/acceptance/engine-stop";
-            button = "Markieren · dann Motor und Zündung aus";
-            break;
-        case 9:
-            eyebrow = "RECOVERY";
-            title = "ECU-Verlust abwarten";
-            instruction =
-                "Der Zustand wechselt erst nach drei tatsächlich "
-                "fehlgeschlagenen OBD-Anfragen.";
-            showAction = false;
-            break;
-        case 10:
-            eyebrow = "WIEDERANLAUF";
-            title = "Zündung erneut einschalten";
-            instruction =
-                "Knopf zuerst drücken. Danach nur die Zündung "
-                "einschalten.";
-            action = "/acceptance/ignition-on";
-            button = "Markieren · dann Zündung erneut an";
-            break;
-        case 11:
-            eyebrow = "WIEDERVERBINDUNG";
-            title = "ECU-Antwort abwarten";
-            instruction =
-                "Die Wiedererkennung läuft ohne Firmware-Neustart.";
-            showAction = false;
-            break;
-        case 12:
-            eyebrow = "NEUSTART";
-            title = "Motor erneut starten";
-            instruction =
-                "Knopf zuerst drücken und den Motor unmittelbar danach "
-                "starten.";
-            action = "/acceptance/engine-start";
-            button = "Markieren · dann Motor neu starten";
-            break;
-        case 13:
-            eyebrow = "MOTORLAUF";
-            title = "Neue Drehzahlbestätigung abwarten";
-            instruction =
-                "Die Firmware wartet auf eine frische Drehzahl von "
-                "mindestens 300 U/min.";
-            showAction = false;
-            break;
-        case 14:
-            eyebrow = "ABSCHLUSSKONTROLLE";
-            title = "Zwei Minuten stabil laufen lassen";
-            instruction =
-                "Die Statusabfrage bleibt aktiv. Es dürfen keine langen "
-                "Messpausen oder GPS-Pufferverluste entstehen.";
-            showAction = false;
-            break;
-        case 15:
-            eyebrow = "FERTIG";
-            title = "Kontrolltest abschließen";
-            instruction =
-                "Alle vorgesehenen Recovery-Schritte sind vollständig.";
-            action = "/acceptance/end";
-            button = "Test abschließen und Dateien schließen";
-            break;
-    }
+    const uint16_t curveWideCount =
+        curveLeftWideCount + curveRightWideCount;
+    const uint16_t curveNormalCount =
+        curveLeftNormalCount + curveRightNormalCount;
+    const bool curveReferencesComplete =
+        curveStraightCount >= 1 &&
+        curveLeftWideCount >= 2 && curveRightWideCount >= 2 &&
+        curveLeftNormalCount >= 2 && curveRightNormalCount >= 2 &&
+        curveSCount >= 3;
 
     String page;
-    page.reserve(7200);
+    page.reserve(8600);
     page += F(
         "<!doctype html><html lang='de'><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1,"
-        "viewport-fit=cover'><title>ROADTEST · Recovery</title><style>"
-        ":root{--paper:#f1efe7;--ink:#17201b;--muted:#657069;"
-        "--lime:#d9ed58;--green:#087a46;--amber:#d88716;--red:#b93830}"
-        "*{box-sizing:border-box}body{margin:0;background:var(--paper);"
-        "color:var(--ink);font-family:'Avenir Next','Trebuchet MS',sans-serif}"
-        "main{width:min(42rem,100%);margin:auto;padding:1rem 1rem 3rem}"
-        "header{border-bottom:4px solid var(--ink);padding:.8rem 0 1rem}"
-        ".brand{font-size:.68rem;font-weight:900;letter-spacing:.18em}"
-        ".brand span{background:var(--lime);padding:.2rem .45rem}"
-        "h1{font-size:clamp(2.4rem,11vw,4.5rem);line-height:.88;"
-        "letter-spacing:-.06em;margin:1rem 0 .5rem}.lead{color:var(--muted);"
-        "line-height:1.45;margin:0}.notice{margin:1rem 0;padding:.8rem 1rem;"
-        "border-left:5px solid var(--amber);background:#fff5d9}"
-        ".metrics{display:grid;grid-template-columns:repeat(2,1fr);gap:.55rem;"
-        "margin:1rem 0}.metric{background:var(--ink);color:white;padding:.75rem}"
-        ".metric span{display:block;color:#aeb8b1;font-size:.62rem;"
-        "font-weight:900;letter-spacing:.12em;text-transform:uppercase}"
-        ".metric b{display:block;margin-top:.25rem;font-size:1.05rem}"
-        ".task{background:var(--ink);color:white;padding:1.15rem;"
-        "box-shadow:0 7px 0 var(--lime);margin:1.4rem 0}"
-        ".eyebrow{color:var(--lime);font-size:.68rem;font-weight:900;"
-        "letter-spacing:.16em}.task h2{font-size:1.55rem;margin:.3rem 0 .45rem}"
-        ".task p{margin:0;color:#cbd3cd;line-height:1.48}.timer{font:900 2rem "
-        "ui-monospace,monospace;color:var(--lime);margin-top:1rem}"
-        "form{margin:0}button{width:100%;min-height:5.4rem;margin-top:1.1rem;"
-        "border:3px solid var(--ink);background:var(--lime);color:var(--ink);"
-        "font:900 1.15rem 'Avenir Next','Trebuchet MS',sans-serif;"
-        "box-shadow:0 6px 0 #000;touch-action:manipulation;padding:1rem}"
-        "button:active{transform:translateY(4px);box-shadow:0 2px 0 #000}"
-        "button:disabled{background:#aaa;color:#666}.finish{background:var(--green);"
-        "color:white}.connection{font-size:.78rem;color:var(--muted);margin-top:1rem}"
-        ".connection.bad{color:var(--red);font-weight:900}details{margin-top:1.5rem;"
-        "border-top:1px solid #c9cbc4;padding-top:1rem}summary{color:var(--muted);"
-        "font-weight:800}.abort{background:var(--red);color:white;min-height:4.5rem}"
-        ".foot{border-top:1px solid #c9cbc4;margin-top:1.5rem;padding-top:1rem;"
-        "color:var(--muted);font-size:.84rem;line-height:1.45}a{color:#2468a2;"
-        "font-weight:800}@media(min-width:38rem){.metrics{grid-template-columns:"
-        "repeat(3,1fr)}}</style></head><body><main><header><div class='brand'>"
-        "<span>ROADTEST</span> / RECOVERY</div><h1>Kurz&shy;kontrolle</h1>"
-        "<p class='lead'>Kleine Statuspakete statt vollständiger "
-        "Seitenaktualisierung. Keine Bedienung während der Fahrt erforderlich."
-        "</p></header>");
+        "viewport-fit=cover'><title>ROADTEST · Kurventest</title><style>"
+        ":root{--road:#111713;--paper:#f0eddf;--acid:#dcf34f;"
+        "--orange:#ff6b35;--mint:#33d69f;--muted:#777d75;--red:#c53b33}"
+        "*{box-sizing:border-box}body{margin:0;background:var(--road);"
+        "color:var(--paper);font-family:'Trebuchet MS','Avenir Next',sans-serif}"
+        "body:before{content:'';position:fixed;inset:0;pointer-events:none;"
+        "background:repeating-linear-gradient(115deg,transparent 0 56px,"
+        "rgba(255,255,255,.025) 57px 59px)}main{width:min(48rem,100%);"
+        "margin:auto;padding:1rem 1rem 3rem}header{padding:1rem 0 1.25rem;"
+        "border-bottom:2px solid #485048}.brand{font-size:.72rem;font-weight:900;"
+        "letter-spacing:.2em;color:var(--acid)}h1{font-size:clamp(2.8rem,13vw,"
+        "5.7rem);line-height:.82;letter-spacing:-.065em;margin:1rem 0 .8rem}"
+        ".lead{max-width:37rem;color:#b9c0b8;line-height:1.48;margin:0}"
+        ".notice{margin:1rem 0;padding:1rem;border:2px solid var(--orange);"
+        "background:#2a1c15}.dash{display:grid;grid-template-columns:repeat(2,"
+        "1fr);gap:.55rem;margin:1rem 0}.metric{border:1px solid #465047;"
+        "padding:.75rem;background:#18201b}.metric span{display:block;"
+        "color:#8f9b91;font-size:.62rem;font-weight:900;letter-spacing:.12em;"
+        "text-transform:uppercase}.metric b{display:block;font-size:1.12rem;"
+        "margin-top:.3rem}.task{margin:1.4rem 0;padding:1.15rem;background:"
+        "var(--paper);color:var(--road);box-shadow:8px 8px 0 var(--acid)}"
+        ".step{font-size:.7rem;font-weight:900;letter-spacing:.17em;color:"
+        "#596158}.task h2{font-size:clamp(1.65rem,7vw,2.5rem);line-height:1;"
+        "margin:.45rem 0}.task p{line-height:1.5;margin:.5rem 0;color:#4e554f}"
+        ".buttons{display:grid;gap:.75rem;margin-top:1.15rem}form{margin:0}"
+        "button{width:100%;min-height:7rem;border:3px solid var(--road);"
+        "background:var(--acid);color:var(--road);font:900 1.35rem "
+        "'Trebuchet MS','Avenir Next',sans-serif;padding:1rem;"
+        "box-shadow:0 7px 0 #000;touch-action:manipulation}"
+        "button:active{transform:translateY(5px);box-shadow:0 2px 0 #000}"
+        "button.end{min-height:9rem;background:var(--orange);font-size:1.7rem}"
+        "button.finish{background:var(--mint)}button.stop{background:var(--red);"
+        "color:white;min-height:5rem}.pair{display:grid;grid-template-columns:"
+        "1fr 1fr;gap:.75rem}.progress{display:grid;grid-template-columns:"
+        "repeat(4,1fr);gap:.35rem;margin:1rem 0}.progress div{text-align:center;"
+        "padding:.55rem .2rem;border:1px solid #465047;color:#aab2aa}"
+        ".progress b{display:block;color:white;font-size:1.2rem}.connection{"
+        "font-size:.8rem;color:#8f9b91}.connection.bad{color:#ff867b;font-weight:"
+        "900}.foot{border-top:1px solid #465047;margin-top:1.6rem;padding-top:"
+        "1rem;color:#9aa39a;line-height:1.5;font-size:.85rem}a{color:var(--acid);"
+        "font-weight:900}@media(min-width:42rem){.dash{grid-template-columns:"
+        "repeat(4,1fr)}}@media(max-width:24rem){.pair{grid-template-columns:1fr}}"
+        "</style></head><body><main><header><div class='brand'>ROADTEST / "
+        "BEIFAHRER-MODUS</div><h1>Kurven<br>fangen.</h1><p class='lead'>"
+        "Nur der Beifahrer bedient diese Seite. Markiert wird genau am "
+        "physischen Beginn und Ende des Straßenverlaufs — nicht schon bei "
+        "der Planung der nächsten Kurve.</p></header>");
+
     if (message.length() > 0) {
         page += F("<div class='notice'>");
         page += escapeHTML(message);
         page += F("</div>");
     }
-    page += F("<section class='metrics'><div class='metric'><span>Phase</span>"
-              "<b id='phase'>");
-    page += active ? vehicleDataDiscovery.getPhaseName() : "bereit";
-    page += F("</b></div><div class='metric'><span>ECU</span><b id='ecu'>");
-    page += vehicleDataDiscovery.getECUStateName();
-    page += F("</b></div><div class='metric'><span>OBD-Speed</span><b id='obd'>");
-    page += obd.speedValid ? String(obd.speedKmh) + " km/h" : String("–");
-    page += F("</b></div><div class='metric'><span>GPS-Speed</span><b id='gps'>");
-    page += gps.speed_valid
-        ? String(gps.speed_kmh, 1) + " km/h"
-        : String(gps.speed_kmh, 1) + " roh";
-    page += F("</b></div><div class='metric'><span>Strecke</span><b id='distance'>");
-    page += String(ride.distanceKm, 3);
-    page += F(" km</b></div><div class='metric'><span>Max. Pause</span><b id='pause'>");
-    page += String(timing.maxLoopIntervalMs);
-    page += F(" ms</b></div></section><section class='task'><div class='eyebrow'>");
-    page += eyebrow;
-    page += F("</div><h2>");
-    page += title;
-    page += F("</h2><p>");
-    page += instruction;
-    page += F("</p>");
-    const uint32_t countdown =
-        getAcceptanceCountdownSeconds(stage);
-    if (stage == 1 || stage == 6 || stage == 14) {
-        page += F("<div class='timer' id='timer'>");
-        page += String(countdown / 60);
-        page += F(":");
-        if (countdown % 60 < 10) {
-            page += F("0");
+
+    page += F("<section class='dash'><div class='metric'><span>Aufzeichnung"
+              "</span><b id='recording'>");
+    page += recording ? F("AKTIV") : (preparing ? F("STARTET") : F("AUS"));
+    page += F("</b></div><div class='metric'><span>Geschwindigkeit</span><b "
+              "id='speed'>");
+    if (obd.speedValid) {
+        page += String(obd.speedKmh) + " km/h";
+    } else if (gps.speed_valid) {
+        page += String(gps.speed_kmh, 1) + " km/h";
+    } else {
+        page += F("–");
+    }
+    page += F("</b></div><div class='metric'><span>Firmware-Kurven</span><b "
+              "id='curves'>");
+    page += String(ride.curveCount);
+    page += F("</b></div><div class='metric'><span>Strecke</span><b "
+              "id='distance'>");
+    page += String(ride.distanceKm, 2);
+    page += F(" km</b></div></section><section class='progress'>");
+    page += F("<div>Gerade<b>");
+    page += String(curveStraightCount);
+    page += F("/1</b></div><div>Weit<b>");
+    page += String(curveWideCount);
+    page += F("/4</b></div><div>Normal<b>");
+    page += String(curveNormalCount);
+    page += F("/4</b></div><div>S-Kurve<b>");
+    page += String(curveSCount);
+    page += F("/3</b></div></section>");
+
+    if (!curveTestActive) {
+        page += F("<section class='task'><div class='step'>START</div>"
+                  "<h2>Alles aus einer Hand</h2><p>Dieser Knopf startet die "
+                  "Aufzeichnung. Eine vorher separat gestartete Messung ist "
+                  "nicht nötig.</p><form method='POST' action='/curve-test/start'>"
+                  "<button type='submit'>Kurventest & Aufzeichnung starten"
+                  "</button></form></section>");
+    } else if (!recording) {
+        page += F("<section class='task'><div class='step'>VORBEREITUNG</div>"
+                  "<h2>Dateien werden geöffnet</h2><p>Noch nicht losfahren. "
+                  "Die Seite wechselt automatisch, sobald die Messung bereit "
+                  "ist.</p></section>");
+    } else if (curveReferenceActive) {
+        page += F("<section class='task'><div class='step'>REFERENZ LÄUFT</div>"
+                  "<h2>");
+        page += getCurveReferenceName(curveReferenceType);
+        page += F("</h2><p>Am tatsächlichen Ende des geraden Abschnitts oder "
+                  "der Kurve drücken. Alle Startknöpfe bleiben bis dahin "
+                  "ausgeblendet.</p><form method='POST' action="
+                  "'/curve-test/reference-end'><button class='end' type="
+                  "'submit'>JETZT ENDE MARKIEREN</button></form></section>");
+    } else {
+        if (!curveReferencesComplete) {
+            page += F("<p class='lead'>Wähle immer die Kurve, die als Nächstes "
+                      "tatsächlich kommt. Die Reihenfolge ist frei; erledigte "
+                      "Richtungen verschwinden automatisch.</p>");
         }
-        page += String(countdown % 60);
-        page += F("</div>");
+        if (curveStraightCount < 1) {
+            page += F("<section class='task'><div class='step'>OFFEN / GERADE "
+                      "REFERENZ</div><h2>45–60 Sekunden gerade</h2><p>Erst am "
+                      "Beginn eines wirklich geraden Abschnitts drücken. Die "
+                      "Gerade kann zu jedem Zeitpunkt der Fahrt markiert "
+                      "werden.</p><form method='POST' action="
+                      "'/curve-test/reference-start'><input type='hidden' "
+                      "name='type' value='straight'><button type='submit'>"
+                      "GERADE BEGINNT JETZT</button></form></section>");
+        }
+        if (curveLeftWideCount < 2 || curveRightWideCount < 2) {
+            page += F("<section class='task'><div class='step'>OFFEN / WEITE "
+                      "KURVEN · LINKS ");
+            page += String(curveLeftWideCount);
+            page += F("/2 · RECHTS ");
+            page += String(curveRightWideCount);
+            page += F("/2</div><h2>Langgezogene Bögen</h2><p>Am wirklichen "
+                      "Einlenkpunkt drücken; ideal sind ungefähr zehn Sekunden "
+                      "oder länger.</p><div class='buttons pair'>");
+            if (curveLeftWideCount < 2) {
+                page += F("<form method='POST' action="
+                          "'/curve-test/reference-start'><input type='hidden' "
+                          "name='type' value='left-wide'><button type='submit'>"
+                          "← WEIT LINKS BEGINNT</button></form>");
+            }
+            if (curveRightWideCount < 2) {
+                page += F("<form method='POST' action="
+                          "'/curve-test/reference-start'><input type='hidden' "
+                          "name='type' value='right-wide'><button type='submit'>"
+                          "WEIT RECHTS BEGINNT →</button></form>");
+            }
+            page += F("</div></section>");
+        }
+        if (curveLeftNormalCount < 2 || curveRightNormalCount < 2) {
+            page += F("<section class='task'><div class='step'>OFFEN / NORMAL "
+                      "ODER ENG · LINKS ");
+            page += String(curveLeftNormalCount);
+            page += F("/2 · RECHTS ");
+            page += String(curveRightNormalCount);
+            page += F("/2</div><h2>Deutliches Einlenken</h2><p>Normale oder "
+                      "engere Straßenkurven markieren. Sicher und normal "
+                      "fahren; keine besonderen Manöver provozieren.</p><div "
+                      "class='buttons pair'>");
+            if (curveLeftNormalCount < 2) {
+                page += F("<form method='POST' action="
+                          "'/curve-test/reference-start'><input type='hidden' "
+                          "name='type' value='left-normal'><button type='submit'>"
+                          "← NORMAL LINKS BEGINNT</button></form>");
+            }
+            if (curveRightNormalCount < 2) {
+                page += F("<form method='POST' action="
+                          "'/curve-test/reference-start'><input type='hidden' "
+                          "name='type' value='right-normal'><button type='submit'>"
+                          "NORMAL RECHTS BEGINNT →</button></form>");
+            }
+            page += F("</div></section>");
+        }
+        if (curveSCount < 3) {
+            page += F("<section class='task'><div class='step'>OFFEN / S-KURVEN · ");
+            page += String(curveSCount);
+            page += F("/3</div><h2>Beide Hälften als ein Intervall</h2><p>Vor "
+                      "der ersten Hälfte starten und erst nach der zweiten "
+                      "Hälfte beenden.</p><form method='POST' action="
+                      "'/curve-test/reference-start'><input type='hidden' "
+                      "name='type' value='s-curve'><button type='submit'>"
+                      "S-KURVE BEGINNT JETZT</button></form></section>");
+        }
+        if (curveReferencesComplete) {
+            page += F("<section class='task'><div class='step'>VOLLSTÄNDIG</div>"
+                      "<h2>Referenzen im Kasten</h2><p>Wenn es sich anbietet, "
+                      "kann die Fahrt noch einige Minuten ohne Bedienung "
+                      "weiterlaufen. Danach Dateien sauber schließen.</p>"
+                      "<form method='POST' action='/curve-test/end'><button "
+                      "class='finish' type='submit'>TEST BEENDEN & SPEICHERN"
+                      "</button></form></section>");
+        }
     }
-    if (showAction) {
-        page += F("<form method='POST' action='");
-        page += action;
-        page += F("'><button class='");
-        page += stage == 15 ? F("finish") : F("action");
-        page += F("' type='submit'>");
-        page += button;
-        page += F("</button></form>");
+
+    if (curveTestActive && !curveReferenceActive &&
+        !curveReferencesComplete) {
+        page += F("<details><summary>Test vorzeitig beenden</summary><form "
+                  "method='POST' action='/curve-test/end'><button class='stop' "
+                  "type='submit'>Vorzeitig beenden und Dateien schließen"
+                  "</button></form></details>");
     }
-    page += F("</section><div id='connection' class='connection'>"
-              "Statusverbindung aktiv</div>");
-    if (active && stage != 15) {
-        page += F("<details><summary>Test vorzeitig abbrechen</summary>"
-                  "<form method='POST' action='/acceptance/end'><button "
-                  "class='abort' type='submit'>Abbruch bestätigen und Dateien "
-                  "schließen</button></form></details>");
-    }
-    page += F("<p class='foot'>Die Seite überträgt im Hintergrund nur eine "
-              "kleine Statusantwort. ECU-Recovery verwendet weiterhin "
-              "ausschließlich freigegebene OBD-Service-01-Leseanfragen bei "
-              "maximal zwei Frames pro Sekunde.<br><br><a href='/'>← "
-              "Systemstatus</a></p></main><script>const initialStage=");
-    page += String(stage);
-    page += F(";function text(id,v){const e=document.getElementById(id);if(e)e."
-              "textContent=v}function clock(s){return Math.floor(s/60)+':'"
-              "+String(s%60).padStart(2,'0')}async function poll(){try{const r="
-              "await fetch('/acceptance/status',{cache:'no-store'});if(!r.ok)"
-              "throw 0;const s=await r.json();text('phase',s.phase);text('ecu',"
-              "s.ecu);text('obd',s.obdSpeed<0?'–':s.obdSpeed+' km/h');text('gps',"
-              "s.gpsSpeed+(s.gpsSpeedValid?' km/h':' roh'));text('distance',"
-              "s.distanceKm.toFixed(3)+' km');text('pause',s.maxPauseMs+' ms');"
-              "text('timer',clock(s.countdown));const c=document.getElementById("
-              "'connection');if(c){c.textContent='Statusverbindung aktiv';c.className="
-              "'connection'}if(s.stage!==initialStage)location.replace('/acceptance')"
-              "}catch(e){const c=document.getElementById('connection');if(c){"
-              "c.textContent='Statusverbindung unterbrochen';c.className='connection "
-              "bad'}}}poll();setInterval(poll,2000);document.querySelectorAll('form')."
-              "forEach(f=>f.addEventListener('submit',()=>{const b=f.querySelector("
-              "'button');if(!b)return;const label=b.textContent;b.disabled=true;"
-              "b.textContent='Wird gespeichert …';setTimeout(()=>{if(!b.disabled)"
-              "return;b.disabled=false;b.textContent=label;const c=document."
-              "getElementById('connection');if(c){c.textContent='Keine Bestätigung · "
-              "Knopf erneut drücken';c.className='connection bad'}},5000)}));"
-              "</script></body></html>");
+    page += F("<p id='connection' class='connection'>Statusverbindung aktiv"
+              "</p><p class='foot'>Keine Bedienung durch den Fahrer. Die "
+              "Marker werden ohne sofortigen SD-Flush geschrieben, damit der "
+              "Knopfdruck keine künstliche Messpause erzeugt.<br><br><a "
+              "href='/'>← Systemstatus</a></p></main><script>const initial="
+              "{active:");
+    page += curveTestActive ? F("true") : F("false");
+    page += F(",recording:");
+    page += recording ? F("true") : F("false");
+    page += F(",reference:");
+    page += curveReferenceActive ? F("true") : F("false");
+    page += F("};function t(id,v){const e=document.getElementById(id);if(e)e."
+              "textContent=v}async function poll(){try{const r=await fetch("
+              "'/curve-test/status',{cache:'no-store'});if(!r.ok)throw 0;const "
+              "s=await r.json();t('recording',s.recording?'AKTIV':(s.preparing?"
+              "'STARTET':'AUS'));const v=s.obdSpeed>=0?s.obdSpeed:s.gpsSpeed;"
+              "t('speed',v>=0?v+' km/h':'–');t('curves',s.detectedCurves);"
+              "t('distance',s.distanceKm."
+              "toFixed(2)+' km');const c=document.getElementById('connection');"
+              "c.textContent='Statusverbindung aktiv';c.className='connection';"
+              "if(s.active!==initial.active||s.recording!==initial.recording||"
+              "s.referenceActive!==initial.reference)location.reload()}catch(e){"
+              "const c=document.getElementById('connection');c.textContent="
+              "'Statusverbindung unterbrochen';c.className='connection bad'}}"
+              "poll();setInterval(poll,2000);document.querySelectorAll('form')."
+              "forEach(f=>f.addEventListener('submit',()=>{const b=f.querySelector"
+              "('button');if(b){b.disabled=true;b.textContent='WIRD GESPEICHERT …'"
+              "}}));</script></body></html>");
     return page;
 }
+
 
 String WebManager::buildCalibrationPage(const String& message) {
     CalibrationData calibration = bnoManager.getCalibration();

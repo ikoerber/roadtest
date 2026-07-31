@@ -1352,8 +1352,9 @@ void loop() {
         float roadQuality = bnoManager.calculateRoadQuality(speedKmh);
         bool potholeDetected =
             bnoManager.detectPothole(sensorData, speedKmh);
+        CurveEvent curveEvent;
         bool curveCompleted =
-            bnoManager.detectCurve(sensorData, speedKmh);
+            bnoManager.detectCurve(sensorData, speedKmh, curveEvent);
 
         // Daten auf SD-Karte loggen
         if (sdLogger.isLogging()) {
@@ -1365,7 +1366,8 @@ void loop() {
             if (roadQuality >= 0.0f) {
                 sdLogger.logRoadQuality(
                     roadQuality, bnoManager.getSmoothness(),
-                    0, vibMetrics.rmsAccel);
+                    sdLogger.getCurveFrequencyPerKm(),
+                    vibMetrics.rmsAccel);
             }
 
             // Schlagloch-Erkennung
@@ -1378,9 +1380,8 @@ void loop() {
 
             // Kurven-Erkennung
             if (curveCompleted) {
-                float curveAngle = bnoManager.getCurveAngle();
                 sdLogger.logCurve(
-                    curveAngle, 0,
+                    curveEvent,
                     lastGPSData.valid_fix ? lastGPSData.latitude : 0.0f,
                     lastGPSData.valid_fix ? lastGPSData.longitude : 0.0f);
             }
@@ -1390,8 +1391,12 @@ void loop() {
             Serial.println("⚠️  Schlagloch erkannt!");
         }
         if (curveCompleted) {
-            Serial.printf("↪️  Kurve abgeschlossen: %.1f°\n",
-                          bnoManager.getCurveAngle());
+            Serial.printf(
+                "↪️  Kurve abgeschlossen: %.1f°, R %.0f m, "
+                "Dauer %.1f s, Gruppe %lu\n",
+                curveEvent.angleDeg, curveEvent.radiusM,
+                curveEvent.durationMs / 1000.0f,
+                static_cast<unsigned long>(curveEvent.groupId));
         }
         
         if (firstSensorSample) {

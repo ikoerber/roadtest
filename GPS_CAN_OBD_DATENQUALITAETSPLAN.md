@@ -280,6 +280,11 @@ in einer per Ereignis verknüpften Sitzung fort. Außerdem ergänzt sie für
 langgezogene Kurven einen kumulativen Erkennungspfad; die öffentliche
 OSRM-Kartenzuordnung diente nur zur Offline-Kalibrierung der Schwellen und ist
 keine Laufzeitabhängigkeit der Firmware.
+Firmware 1.5.28 entfernt die inzwischen abgeschlossene `/acceptance`-Seite.
+Der neue Beifahrer-Kurventest unter `/curve-test` startet eine normale
+GPS-/OBD-Gesamtaufzeichnung und ergänzt ausschließlich zeitgenaue
+Kurvenreferenzmarker; die bestehenden Datenqualitätsfelder und Grenzwerte
+bleiben unverändert.
 
 #### Firmware
 

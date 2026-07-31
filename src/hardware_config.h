@@ -7,10 +7,10 @@
 // Zentrale Pin-Konfiguration für das Straßenqualitäts-Messsystem
 // Alle Hardware-spezifischen Pin-Zuordnungen sind hier definiert
 
-#define ROADTEST_FIRMWARE_VERSION "1.5.27"
+#define ROADTEST_FIRMWARE_VERSION "1.5.28"
 #define ROADTEST_FIRMWARE_FILE_NAME \
     "roadtest_" ROADTEST_FIRMWARE_VERSION ".bin"
-#define ROADTEST_CSV_SCHEMA_VERSION "1.5.27-quality-v9"
+#define ROADTEST_CSV_SCHEMA_VERSION "1.5.28-quality-v10"
 #define ROADTEST_VEHICLE_PROFILE "Porsche Carrera S 2012 PDK"
 
 // -----------------------------------------------------------------------------
@@ -112,10 +112,10 @@ extern const int GPS_BAUD_RATE;    // 9600    - GPS Baudrate
 #define GPS_DISTANCE_MIN_SEGMENT_OBD_M   0.5f
 #define GPS_DISTANCE_MIN_SEGMENT_GPS_M   3.0f
 
-// Verbleibender kurzer Recovery-Kontrolltest. Die lange GPS-/OBD-Fahrt ist
-// abgenommen und wird nicht mehr als Webablauf in der Firmware mitgeführt.
+// Serielle Discovery-/Recovery-Zustandsmaschine. Der bisherige Webablauf
+// wurde entfernt, die Mindestzeit bleibt für bestehende serielle Tests
+// verbindlich.
 #define ACCEPTANCE_INITIAL_STAND_MS         60000UL
-#define ACCEPTANCE_FINAL_STAND_MS          120000UL
 
 // Laufzeitdiagnose: 250 ms verfehlen bereits zwei 10-Hz-Sensorzeitpunkte und
 // mindestens einen 5-Hz-GPS-Snapshot. Verlorene Slots werden zusätzlich
@@ -147,6 +147,10 @@ extern const int GPS_BAUD_RATE;    // 9600    - GPS Baudrate
 #define CURVE_MIN_EVENT_ANGLE_DEG             10.0f
 #define CURVE_REVERSAL_ANGLE_DEG               5.0f
 #define CURVE_MAX_DURATION_MS              60000UL
+#define CURVE_EVENT_COOLDOWN_MS              1000UL
+#define CURVE_GRAVITY_MIN_MPS2                  7.0f
+#define CURVE_GRAVITY_MAX_MPS2                 12.0f
+#define CURVE_MIN_QUALITY_SAMPLES                  5
 
 // Task-Watchdog: Ein hängender loop() führt zum Neustart statt zu einem
 // stummen Gerät auf der Strecke. Grosszügig bemessen, damit langsame

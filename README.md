@@ -2,11 +2,10 @@
 
 Ein fortschrittliches Embedded-System zur Messung und Bewertung von Straßenqualität für kurvenreiche Motorradstrecken.
 
-Aktueller Firmwarestand: **1.5.27**. Der Stand ist ein Hardware- und
-Fahrzeugteststand. 1.5.27 ergänzt die Erkennung langgezogener Kurven und setzt
-eine laufende Messung nach einem vorübergehenden SD-Fehler in einer
-verknüpften Folgesitzung fort. Beide Änderungen müssen noch am Gerät bestätigt
-werden.
+Aktueller Firmwarestand: **1.5.28**. Der Stand ist ein Hardware- und
+Fahrzeugteststand. 1.5.28 misst Kurven über eine einbaulagenunabhängige
+Gyroskopprojektion, protokolliert Radius und vollständige Ereignisintervalle
+und stellt dafür einen geführten Beifahrertest bereit.
 
 ## 📋 Überblick
 
@@ -290,47 +289,57 @@ Während dieses Ablaufs sind `start`, `stop` und `obd on/off` absichtlich
 gesperrt. Das optionale OLED wird nicht benötigt. `discover end` stellt den
 vorherigen OBD-Zustand wieder her und schließt alle SD-Dateien.
 
-### Geführte Recovery-Kontrolle im Browser
+### Geführter Beifahrer-Kurventest
 
-Die GPS-/OBD-Vergleichsfahrt aus 1.5.22 ist bestanden und deshalb nicht mehr
-Teil der Testseite. Seit Firmware 1.5.25 führt `/acceptance` nur noch durch
-den kurzen ECU-Recovery-Kontrolltest:
+Firmware 1.5.28 stellt unter `/curve-test` einen eigenen Kurventest bereit.
+Die Seite startet und beendet die Aufzeichnung selbst; vorheriges manuelles
+Starten ist nicht nötig. Die Referenzen können in jeder Reihenfolge markiert
+werden, so wie sie sich aus der gefahrenen Strecke ergeben:
 
-1. 60 Sekunden echte Listen-Only-Phase bei ausgeschalteter Zündung
-2. Zündung einschalten und erste ECU-Antwort abwarten
-3. Motor starten und eine Minute im Stillstand laufen lassen
-4. Motor und Zündung ausschalten und den erkannten ECU-Verlust abwarten
-5. Zündung und Motor erneut starten, zwei Minuten stabil laufen lassen
-6. Test abschließen
+1. 45 bis 60 Sekunden möglichst gerade Fahrt
+2. vier langgezogene Kurven, möglichst je zwei links und rechts
+3. vier normale oder enge Kurven, möglichst je zwei links und rechts
+4. drei vollständige S-Kurven
 
-Die großen Aktionsknöpfe erscheinen nur für den gerade zulässigen Schritt und
-verschwinden nach erfolgreicher Speicherung. Laufende Werte werden als kleine
-Statusantwort abgefragt; das vollständige HTML wird nur bei einem
-Schrittwechsel geladen. Bleibt die HTTP-Bestätigung aus, wird der Knopf nach
-fünf Sekunden erneut bedienbar. Eine frische OBD-Drehzahl bestätigt den
-zweiten Motorstart außerdem unabhängig vom Browsermarker. Während dieses
-Tests ist keine Fahrt und keine Bedienung während der Fahrt nötig.
+Der Beifahrer drückt den Startknopf genau am physischen Beginn der Kurve und
+den danach allein sichtbaren Endknopf am tatsächlichen Ende. Bei einer
+S-Kurve umfasst ein Referenzintervall beide Hälften. Vollständig erledigte
+Kurvenarten beziehungsweise Richtungen verschwinden; alle noch offenen
+Referenzen bleiben auswählbar. Der Fahrer bedient die Seite nicht und soll
+keine ungewöhnlichen oder fahrdynamisch riskanten Manöver ausführen.
 
-### Abnahme von Firmware 1.5.27
+Die Ereignisdatei enthält neben den manuellen Referenzintervallen automatisch
+erkannte Kurven mit Start- und Endzeit, Radius, Drehrate,
+Querbeschleunigung, Erkennungsmodus und Qualitätsflags. Die Sensor-CSV
+protokolliert außerdem Schwerkraft und projizierte Drehrate für eine
+unabhängige Nachrechnung. Referenzmarker werden erst beim regulären
+Sammelflush gesichert, damit ein Knopfdruck keine künstliche Messpause
+verursacht.
 
-Die neuen Funktionen werden in drei getrennten, kurzen Schritten geprüft:
+### Abnahme von Firmware 1.5.28
 
-1. **Vollständigkeit im Stand:** Eine normale Aufzeichnung zwei Minuten laufen
-   lassen und regulär beenden. Im `END`-Datensatz von `road_meta_...csv`
-   müssen `SensorSamples` und `GPSSnapshots` zu den jeweiligen CSV-Datenzeilen
-   passen; `SensorMissedSlots`, `GPSMissedSlots` und `SDDropped` sollen null
-   bleiben.
-2. **SD-Wiederanlauf auf dem Arbeitstisch:** Bei stehendem Fahrzeug und
-   getrennter Fahrzeug-CAN-Verbindung am seriellen Monitor `sdrecovery`
-   eingeben. Die MicroSD-Karte ausschließlich nach der angezeigten
-   Aufforderung entfernen und wieder einsetzen. Der Test startet selbst eine
-   Messung, hält eine Sensorzeile im RAM und erwartet danach eine
-   `road_sensor_recovered_*.csv` in der Ursprungssitzung sowie das Ereignis
-   `SD_RECOVERY_CONTINUATION` in der automatisch gestarteten Folgesitzung.
-3. **Kurvenfahrt:** Eine etwa 10- bis 15-minütige Überlandfahrt mit mindestens
-   zwei langgezogenen Kurven und einer S-Kurve normal aufzeichnen. Während der
-   Fahrt sind keine Testknöpfe erforderlich. Anschließend Kurvenereignisse,
-   GPS-Spur und Fehlalarme auf geraden Abschnitten vergleichen.
+Die Probefahrt sollte 20 bis 30 Minuten dauern. Ein geeigneter Abschnitt
+enthält eine gut erkennbare Gerade sowie bekannte weite, normale und
+wechselnde Kurven in beliebiger Reihenfolge. Nach der Fahrt werden geprüft:
+
+- Anteil automatisch erkannter Kurven an den Referenzintervallen
+- automatische Kurven außerhalb aller Referenzen als mögliche Fehlalarme
+- Start-/Endabweichung, Richtung und S-Kurven-Gruppierung
+- Radius und Querbeschleunigung auf Plausibilität
+- Übereinstimmung von projiziertem Gyro-Winkel und relativem Heading-Winkel
+- `SensorMissedSlots`, `GPSMissedSlots`, SD-Fehler und Datenvollständigkeit
+
+Die Straßenqualitätsbewertung bleibt in dieser Version absichtlich
+unverändert. Ihre nächste Parametrierung folgt getrennt aus denselben
+Rohdaten, damit Änderungen an Kurven- und Oberflächenmodell eindeutig
+bewertbar bleiben.
+
+### Separater SD-Wiederanlauftest
+
+Der weiterhin verfügbare serielle Befehl `sdrecovery` prüft auf dem
+Arbeitstisch die Pufferrettung und die verknüpfte Folgesitzung. Dabei muss das
+Fahrzeug-CAN getrennt sein. Die MicroSD-Karte ausschließlich nach der
+angezeigten Aufforderung entfernen und wieder einsetzen.
 
 Der SD-Ausfalltest ist bewusst ein kontrollierter Hardwaretest. Er darf nicht
 während einer Fahrt, eines OTA-Uploads oder bei angeschlossenem Fahrzeug-CAN

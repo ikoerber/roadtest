@@ -85,15 +85,21 @@ struct SensorData {
     float accelZ;       // m/s²
     float accelMagnitude; // Gesamtbeschleunigung
     
-    // Gyroskop
-    float gyroX;        // rad/s
-    float gyroY;        // rad/s
-    float gyroZ;        // rad/s
+    // Gyroskop. Adafruit_BNO055::getVector(VECTOR_GYROSCOPE) liefert °/s.
+    float gyroX;        // °/s
+    float gyroY;        // °/s
+    float gyroZ;        // °/s
     
     // Gravitation
     float gravX;        // m/s²
     float gravY;        // m/s²
     float gravZ;        // m/s²
+
+    // Einbaulagenunabhängige Fahrzeug-Drehrate. Der komplette
+    // Gyroskopvektor wird auf die Schwerkraftrichtung projiziert; dadurch
+    // ist keine feste Sensorachse als Fahrzeug-Hochachse vorausgesetzt.
+    float yawRateDps;   // vorzeichenbehaftete Drehrate um die Vertikale
+    bool yawRateValid;
     
     // Zusätzliche Metriken
     float temperature;  // °C
@@ -109,8 +115,79 @@ struct VibrationMetrics {
     uint32_t shockCount; // Anzahl Stöße über Schwellwert
 };
 
+enum class CurveDetectionMode : uint8_t {
+    SHARP,
+    LONG
+};
+
+enum class CurveCompletionReason : uint8_t {
+    QUIET,
+    REVERSAL,
+    TIMEOUT
+};
+
+enum CurveQualityFlag : uint16_t {
+    CURVE_QUALITY_GYRO_PRIMARY = 1U << 0,
+    CURVE_QUALITY_HEADING_FALLBACK = 1U << 1,
+    CURVE_QUALITY_HEADING_MISMATCH = 1U << 2,
+    CURVE_QUALITY_FEW_SAMPLES = 1U << 3
+};
+
+struct CurveEvent {
+    bool valid;
+    unsigned long startTimeMs;
+    unsigned long endTimeMs;
+    unsigned long durationMs;
+    uint32_t groupId;
+    int8_t direction;
+    float angleDeg;
+    float headingAngleDeg;
+    float distanceM;
+    float meanSpeedKmh;
+    float maxSpeedKmh;
+    float meanYawRateDps;
+    float maxYawRateDps;
+    float radiusM;
+    float meanLateralAccel;
+    float maxLateralAccel;
+    uint16_t sampleCount;
+    uint16_t qualityFlags;
+    CurveDetectionMode detectionMode;
+    CurveCompletionReason completionReason;
+
+    CurveEvent()
+        : valid(false), startTimeMs(0), endTimeMs(0), durationMs(0),
+          groupId(0), direction(0), angleDeg(0), headingAngleDeg(0),
+          distanceM(0), meanSpeedKmh(0), maxSpeedKmh(0),
+          meanYawRateDps(0), maxYawRateDps(0), radiusM(0),
+          meanLateralAccel(0), maxLateralAccel(0), sampleCount(0),
+          qualityFlags(0), detectionMode(CurveDetectionMode::LONG),
+          completionReason(CurveCompletionReason::QUIET) {}
+};
+
 class BNO055Manager {
 private:
+    struct CurveAccumulator {
+        bool active;
+        unsigned long startTimeMs;
+        unsigned long lastTurnTimeMs;
+        int8_t direction;
+        float signedAngleDeg;
+        float signedHeadingAngleDeg;
+        float distanceM;
+        float speedSumKmh;
+        float maxSpeedKmh;
+        float yawRateSumDps;
+        float maxYawRateDps;
+        float lateralAccelSum;
+        float maxLateralAccel;
+        uint16_t sampleCount;
+        uint16_t gyroSampleCount;
+        CurveDetectionMode detectionMode;
+
+        void clear();
+    };
+
     Adafruit_BNO055* sensor;
     bool initialized;
     bool selfTestPassed;
@@ -143,22 +220,24 @@ private:
     float lastHeading;
     unsigned long lastHeadingTime;
     bool headingInitialized;
-    bool inCurve;
-    float curveStartHeading;
-    float accumulatedCurveAngle;
     float lastCompletedCurveAngle;
-    unsigned long curveStartTime;
     unsigned long curveQuietSince;
     unsigned long lastCurveEvent;
-    int8_t curveDirection;
-    bool curveCandidateActive;
-    int8_t curveCandidateDirection;
-    float curveCandidateAngle;
-    float curveCandidateDistanceM;
-    unsigned long curveCandidateStartTime;
-    unsigned long curveCandidateLastTurnTime;
-    float curveReversalAngle;
-    unsigned long curveReversalStartTime;
+    CurveAccumulator curveCandidate;
+    CurveAccumulator activeCurve;
+    CurveAccumulator curveReversal;
+    uint32_t nextCurveGroupId;
+    uint32_t activeCurveGroupId;
+
+    void addCurveSample(
+        CurveAccumulator& accumulator, unsigned long intervalStartMs,
+        unsigned long intervalEndMs, float signedTurnDeltaDeg,
+        float headingDeltaDeg, float speedKmh, float yawRateDps,
+        bool gyroPrimary);
+    bool completeCurve(
+        const CurveAccumulator& accumulator, unsigned long endTimeMs,
+        uint32_t groupId, CurveCompletionReason reason,
+        CurveEvent& completedEvent);
 
     // Schlagloch-Erkennung
     bool potholeArmed;
@@ -234,7 +313,7 @@ public:
     // zurückgesetzt. Ohne diese Bindung lösten Leerlaufvibration und
     // Kursdrift im Stand Ereignisse aus.
     bool detectCurve(
-        const SensorData& data, float speedKmh,
+        const SensorData& data, float speedKmh, CurveEvent& completedEvent,
         float turnRateThreshold = CURVE_SHARP_START_RATE_DPS);
     float getCurveAngle();
     void resetCurveDetection();

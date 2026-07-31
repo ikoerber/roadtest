@@ -252,6 +252,11 @@ public:
     }
     RideSummary getRideSummary() const;
     String getSessionId() const { return sessionId; }
+    float getCurveFrequencyPerKm() const {
+        return rideSummary.distanceKm > 0.01f
+                   ? rideSummary.curveCount / rideSummary.distanceKm
+                   : 0.0f;
+    }
     
     // Sensor-Daten loggen
     bool logSensorData(const SensorData& data);
@@ -282,9 +287,11 @@ public:
     
     // Ereignisse loggen
     bool logEvent(const String& eventType, const String& description,
-                  float lat = 0, float lon = 0, float severity = 0);
+                  float lat = 0, float lon = 0, float severity = 0,
+                  bool flushImmediately = true);
     bool logPothole(float severity, float lat = 0, float lon = 0);
-    bool logCurve(float angle, float radius, float lat = 0, float lon = 0);
+    bool logCurve(
+        const CurveEvent& event, float lat = 0, float lon = 0);
     
     // System-Status loggen
     bool logSystemStatus(const String& status);

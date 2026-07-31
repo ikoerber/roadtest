@@ -9,6 +9,48 @@ und dieses Projekt hält sich an [Semantic Versioning](https://semver.org/spec/v
 
 Derzeit keine zusätzlichen Änderungen.
 
+## [1.5.28] - 2026-07-31
+
+### Hinzugefügt
+- Einbaulagenunabhängige Fahrzeug-Drehrate aus der Projektion des vollständigen
+  Gyroskopvektors auf die gemessene Schwerkraftrichtung. Die rohe Sensor-Z-Achse
+  wird nicht als Fahrzeug-Hochachse vorausgesetzt.
+- Strukturierte Kurvenereignisse mit Beginn, Ende, Dauer, Richtung,
+  S-Kurven-Gruppierung, Gyro- und Heading-Winkel, Weg, mittlerer und maximaler
+  Geschwindigkeit, Drehrate, Radius, Querbeschleunigung, Erkennungsmodus,
+  Abschlussgrund und Qualitätsflags.
+- Geführte Beifahrerseite unter `/curve-test` für eine gerade Referenz, vier
+  weite Kurven, vier normale beziehungsweise enge Kurven und drei S-Kurven.
+  Alle noch offenen Kurvenarten sind unabhängig von der Streckenreihenfolge
+  auswählbar. Erledigte Richtungen verschwinden; nach dem Start eines
+  Referenzintervalls bleibt nur dessen großer Endknopf sichtbar.
+- Sensor-CSV mit Schwerkraftvektor sowie projizierter Drehrate und
+  Gültigkeitsflag, damit das neue Verfahren unabhängig nachgerechnet werden
+  kann.
+
+### Geändert
+- Die Kurvenerkennung verwendet bei vollständig kalibriertem Gyroskop die
+  projizierte Drehrate; bei fehlender Projektion bleibt der relative
+  Heading-Verlauf als gekennzeichneter Rückfall verfügbar.
+- Langgezogene und schnelle Kurven nutzen denselben kontinuierlichen
+  Ereignisakkumulator. Ein Richtungswechsel ab fünf Grad erzeugt getrennte
+  Kurvenhälften mit gemeinsamer Gruppennummer.
+- `KurvenProKm` wird aus den tatsächlich protokollierten Kurven und der
+  qualitätsgeprüften GPS-Strecke gefüllt.
+- Referenzmarker der Beifahrerseite werden ohne sofortigen Einzel-Flush
+  geschrieben und beim regulären Sammelflush gesichert. Dadurch erzeugt der
+  Knopfdruck selbst keine zusätzliche SD-Pause.
+- Die abgeschlossene Recovery-Webseite `/acceptance` einschließlich ihrer
+  Zustandslogik wurde entfernt. Firmwareversion und CSV-Schema steigen auf
+  1.5.28 beziehungsweise `1.5.28-quality-v10`.
+
+### Testfokus
+- Die heutige Vergleichsfahrt misst zuerst Erkennungsgenauigkeit und
+  Vollständigkeit gegen explizite Beifahrerintervalle. Die
+  Straßenqualitätsbewertung wird erst anhand dieser neuen Fahrt weiter
+  parametriert, damit Kurven- und Oberflächenmodell nicht gleichzeitig
+  verändert werden.
+
 ## [1.5.27] - 2026-07-30
 
 ### Behoben

@@ -14,18 +14,16 @@ BNO055Manager::BNO055Manager()
       calibrationSaved(false), bufferIndex(0), bufferCount(0),
       vibrationThreshold(2.0), lastRoadQuality(100.0f),
       hasRoadQuality(false), lastHeading(0), lastHeadingTime(0),
-      headingInitialized(false), inCurve(false), curveStartHeading(0),
-      accumulatedCurveAngle(0), lastCompletedCurveAngle(0),
-      curveStartTime(0), curveQuietSince(0), lastCurveEvent(0),
-      curveDirection(0), curveCandidateActive(false),
-      curveCandidateDirection(0), curveCandidateAngle(0),
-      curveCandidateDistanceM(0), curveCandidateStartTime(0),
-      curveCandidateLastTurnTime(0), curveReversalAngle(0),
-      curveReversalStartTime(0),
+      headingInitialized(false), lastCompletedCurveAngle(0),
+      curveQuietSince(0), lastCurveEvent(0), nextCurveGroupId(1),
+      activeCurveGroupId(0),
       potholeArmed(false), potholeStartTime(0), lastPotholeEvent(0) {
     
     currentVibration = {0, 0, 0, 0};
     memset(accelBuffer, 0, sizeof(accelBuffer));
+    curveCandidate.clear();
+    activeCurve.clear();
+    curveReversal.clear();
 }
 
 BNO055Manager::~BNO055Manager() {
@@ -135,17 +133,7 @@ void BNO055Manager::end() {
     currentVibration = {0, 0, 0, 0};
     lastRoadQuality = 100.0f;
     hasRoadQuality = false;
-    headingInitialized = false;
-    inCurve = false;
-    curveDirection = 0;
-    curveCandidateActive = false;
-    curveCandidateDirection = 0;
-    curveCandidateAngle = 0;
-    curveCandidateDistanceM = 0;
-    curveCandidateStartTime = 0;
-    curveCandidateLastTurnTime = 0;
-    curveReversalAngle = 0;
-    curveReversalStartTime = 0;
+    resetCurveDetection();
     potholeArmed = false;
 }
 
@@ -483,6 +471,23 @@ SensorData BNO055Manager::getCurrentData() {
     data.gravX = grav.x();
     data.gravY = grav.y();
     data.gravZ = grav.z();
+
+    const float gravityMagnitude =
+        sqrt(data.gravX * data.gravX +
+             data.gravY * data.gravY +
+             data.gravZ * data.gravZ);
+    data.yawRateValid =
+        isfinite(gravityMagnitude) &&
+        gravityMagnitude >= CURVE_GRAVITY_MIN_MPS2 &&
+        gravityMagnitude <= CURVE_GRAVITY_MAX_MPS2;
+    if (data.yawRateValid) {
+        data.yawRateDps =
+            (data.gyroX * data.gravX +
+             data.gyroY * data.gravY +
+             data.gyroZ * data.gravZ) /
+            gravityMagnitude;
+        data.yawRateValid = isfinite(data.yawRateDps);
+    }
     
     // Temperatur und Kalibrierung
     data.temperature = sensor->getTemp();
@@ -548,16 +553,143 @@ VibrationMetrics BNO055Manager::analyzeVibration() {
     return currentVibration;
 }
 
+void BNO055Manager::CurveAccumulator::clear() {
+    active = false;
+    startTimeMs = 0;
+    lastTurnTimeMs = 0;
+    direction = 0;
+    signedAngleDeg = 0;
+    signedHeadingAngleDeg = 0;
+    distanceM = 0;
+    speedSumKmh = 0;
+    maxSpeedKmh = 0;
+    yawRateSumDps = 0;
+    maxYawRateDps = 0;
+    lateralAccelSum = 0;
+    maxLateralAccel = 0;
+    sampleCount = 0;
+    gyroSampleCount = 0;
+    detectionMode = CurveDetectionMode::LONG;
+}
+
+void BNO055Manager::addCurveSample(
+    CurveAccumulator& accumulator, unsigned long intervalStartMs,
+    unsigned long intervalEndMs, float signedTurnDeltaDeg,
+    float headingDeltaDeg, float speedKmh, float yawRateDps,
+    bool gyroPrimary) {
+    if (!accumulator.active) {
+        accumulator.clear();
+        accumulator.active = true;
+        accumulator.startTimeMs = intervalStartMs;
+    }
+
+    const float intervalSeconds =
+        static_cast<float>(intervalEndMs - intervalStartMs) / 1000.0f;
+    const float absoluteYawRate = fabs(yawRateDps);
+    const float lateralAccel =
+        speedKmh / 3.6f * absoluteYawRate * DEG_TO_RAD;
+
+    accumulator.lastTurnTimeMs = intervalEndMs;
+    accumulator.signedAngleDeg += signedTurnDeltaDeg;
+    accumulator.signedHeadingAngleDeg += headingDeltaDeg;
+    accumulator.distanceM += speedKmh / 3.6f * intervalSeconds;
+    accumulator.speedSumKmh += speedKmh;
+    accumulator.maxSpeedKmh = max(accumulator.maxSpeedKmh, speedKmh);
+    accumulator.yawRateSumDps += absoluteYawRate;
+    accumulator.maxYawRateDps =
+        max(accumulator.maxYawRateDps, absoluteYawRate);
+    accumulator.lateralAccelSum += lateralAccel;
+    accumulator.maxLateralAccel =
+        max(accumulator.maxLateralAccel, lateralAccel);
+    accumulator.sampleCount++;
+    if (gyroPrimary) {
+        accumulator.gyroSampleCount++;
+    }
+    accumulator.direction =
+        accumulator.signedAngleDeg > 0.0f
+            ? 1
+            : (accumulator.signedAngleDeg < 0.0f ? -1 : 0);
+}
+
+bool BNO055Manager::completeCurve(
+    const CurveAccumulator& accumulator, unsigned long endTimeMs,
+    uint32_t groupId, CurveCompletionReason reason,
+    CurveEvent& completedEvent) {
+    const float angleDeg = fabs(accumulator.signedAngleDeg);
+    if (!accumulator.active ||
+        angleDeg < CURVE_MIN_EVENT_ANGLE_DEG ||
+        accumulator.sampleCount == 0) {
+        return false;
+    }
+
+    completedEvent = CurveEvent();
+    completedEvent.valid = true;
+    completedEvent.startTimeMs = accumulator.startTimeMs;
+    completedEvent.endTimeMs = max(endTimeMs, accumulator.startTimeMs);
+    completedEvent.durationMs =
+        completedEvent.endTimeMs - completedEvent.startTimeMs;
+    completedEvent.groupId = groupId;
+    completedEvent.direction = accumulator.direction;
+    completedEvent.angleDeg = angleDeg;
+    completedEvent.headingAngleDeg =
+        fabs(accumulator.signedHeadingAngleDeg);
+    completedEvent.distanceM = accumulator.distanceM;
+    completedEvent.meanSpeedKmh =
+        accumulator.speedSumKmh / accumulator.sampleCount;
+    completedEvent.maxSpeedKmh = accumulator.maxSpeedKmh;
+    completedEvent.meanYawRateDps =
+        accumulator.yawRateSumDps / accumulator.sampleCount;
+    completedEvent.maxYawRateDps = accumulator.maxYawRateDps;
+    completedEvent.meanLateralAccel =
+        accumulator.lateralAccelSum / accumulator.sampleCount;
+    completedEvent.maxLateralAccel = accumulator.maxLateralAccel;
+    completedEvent.sampleCount = accumulator.sampleCount;
+    completedEvent.detectionMode = accumulator.detectionMode;
+    completedEvent.completionReason = reason;
+    if (angleDeg >= 1.0f) {
+        completedEvent.radiusM =
+            accumulator.distanceM / (angleDeg * DEG_TO_RAD);
+    }
+
+    if (accumulator.gyroSampleCount > 0) {
+        completedEvent.qualityFlags |= CURVE_QUALITY_GYRO_PRIMARY;
+    }
+    if (accumulator.gyroSampleCount < accumulator.sampleCount) {
+        completedEvent.qualityFlags |= CURVE_QUALITY_HEADING_FALLBACK;
+    }
+    const float headingDifference =
+        fabs(completedEvent.headingAngleDeg - angleDeg);
+    if (completedEvent.headingAngleDeg >= 5.0f &&
+        headingDifference > max(8.0f, angleDeg * 0.35f)) {
+        completedEvent.qualityFlags |= CURVE_QUALITY_HEADING_MISMATCH;
+    }
+    if (accumulator.sampleCount < CURVE_MIN_QUALITY_SAMPLES) {
+        completedEvent.qualityFlags |= CURVE_QUALITY_FEW_SAMPLES;
+    }
+
+    lastCompletedCurveAngle = angleDeg;
+    lastCurveEvent = completedEvent.endTimeMs;
+    return true;
+}
+
 bool BNO055Manager::detectCurve(
-    const SensorData& data, float speedKmh, float turnRateThreshold) {
+    const SensorData& data, float speedKmh, CurveEvent& completedEvent,
+    float turnRateThreshold) {
+    completedEvent = CurveEvent();
     if (!initialized || data.timestamp == 0) return false;
 
-    // Ohne nachgewiesene Fahrzeugbewegung gibt es keine Kurve. Der Zustand
-    // wird vollständig verworfen, damit beim Anfahren nicht der veraltete
-    // Kurs der Standphase als Kursänderung erscheint.
+    // Beim Ausrollen darf eine bereits qualifizierte Kurve nicht verloren
+    // gehen. Der Zustand wird danach vollständig verworfen, damit beim
+    // Wiederanfahren kein alter Verlauf fortgesetzt wird.
     if (!(speedKmh >= ROAD_EVENT_MIN_SPEED_KMH)) {
+        const bool completed = completeCurve(
+            activeCurve, activeCurve.lastTurnTimeMs, activeCurveGroupId,
+            CurveCompletionReason::QUIET, completedEvent);
         resetCurveDetection();
-        return false;
+        if (completed) {
+            lastCompletedCurveAngle = completedEvent.angleDeg;
+        }
+        return completed;
     }
 
     if (!headingInitialized) {
@@ -567,194 +699,160 @@ bool BNO055Manager::detectCurve(
         return false;
     }
 
-    unsigned long deltaTime = data.timestamp - lastHeadingTime;
+    const unsigned long deltaTime = data.timestamp - lastHeadingTime;
     if (deltaTime == 0) return false;
-    if (deltaTime > CURVE_MAX_SAMPLE_GAP_MS) {
-        // Nach einer längeren Abtastlücke ist nicht bekannt, auf welchem
-        // Verlauf die Kursänderung entstand. Nicht aus zwei weit
-        // auseinanderliegenden Punkten ein scheinbar präzises
-        // Kurvenereignis ableiten.
-        inCurve = false;
-        curveDirection = 0;
-        curveQuietSince = 0;
-        accumulatedCurveAngle = 0;
-        curveCandidateActive = false;
-        curveCandidateAngle = 0;
-        curveCandidateDistanceM = 0;
-        curveReversalAngle = 0;
-        lastHeading = data.heading;
-        lastHeadingTime = data.timestamp;
-        return false;
-    }
 
     float headingDelta = data.heading - lastHeading;
     while (headingDelta > 180.0f) headingDelta -= 360.0f;
     while (headingDelta < -180.0f) headingDelta += 360.0f;
 
-    const float absoluteHeadingDelta = fabs(headingDelta);
-    const float turnRate =
-        absoluteHeadingDelta * 1000.0f / deltaTime;
-    const int8_t turnDirection =
-        headingDelta > 0.0f ? 1 : (headingDelta < 0.0f ? -1 : 0);
-    const float intervalDistanceM =
-        speedKmh / 3.6f * (static_cast<float>(deltaTime) / 1000.0f);
-    bool curveCompleted = false;
+    if (deltaTime > CURVE_MAX_SAMPLE_GAP_MS) {
+        const bool completed = completeCurve(
+            activeCurve, activeCurve.lastTurnTimeMs, activeCurveGroupId,
+            CurveCompletionReason::TIMEOUT, completedEvent);
+        resetCurveDetection();
+        lastHeading = data.heading;
+        lastHeadingTime = data.timestamp;
+        headingInitialized = true;
+        if (completed) {
+            lastCompletedCurveAngle = completedEvent.angleDeg;
+        }
+        return completed;
+    }
 
-    if (!inCurve) {
-        const bool meaningfulTurn =
-            turnDirection != 0 && turnRate >= CURVE_LONG_MIN_RATE_DPS;
+    const float intervalSeconds =
+        static_cast<float>(deltaTime) / 1000.0f;
+    const float headingRateDps = headingDelta / intervalSeconds;
+    const bool gyroPrimary =
+        data.yawRateValid && data.calibration.gyro == 3;
+    const float selectedRateDps =
+        gyroPrimary ? data.yawRateDps : headingRateDps;
+    const float selectedDeltaDeg = selectedRateDps * intervalSeconds;
+    const float absoluteTurnRate = fabs(selectedRateDps);
+    const int8_t turnDirection =
+        selectedDeltaDeg > 0.0f
+            ? 1
+            : (selectedDeltaDeg < 0.0f ? -1 : 0);
+    const bool meaningfulTurn =
+        turnDirection != 0 &&
+        absoluteTurnRate >= CURVE_LONG_MIN_RATE_DPS;
+
+    if (!activeCurve.active) {
+        const bool candidateExpired =
+            curveCandidate.active &&
+            (data.timestamp - curveCandidate.startTimeMs >
+                 CURVE_LONG_MAX_WINDOW_MS ||
+             data.timestamp - curveCandidate.lastTurnTimeMs >
+                 CURVE_END_QUIET_MS);
+        if (candidateExpired) {
+            curveCandidate.clear();
+        }
 
         if (meaningfulTurn) {
-            const bool candidateExpired =
-                curveCandidateActive &&
-                (data.timestamp - curveCandidateStartTime >
-                     CURVE_LONG_MAX_WINDOW_MS ||
-                 data.timestamp - curveCandidateLastTurnTime >
-                     CURVE_END_QUIET_MS);
-            if (!curveCandidateActive || candidateExpired) {
-                curveCandidateActive = true;
-                curveCandidateDirection = turnDirection;
-                curveCandidateAngle = absoluteHeadingDelta;
-                curveCandidateDistanceM = intervalDistanceM;
-                curveCandidateStartTime = data.timestamp - deltaTime;
-            } else {
-                // Vor dem Kurvenstart zählt die Netto-Richtungsänderung.
-                // Einzelne kleine Gegenbewegungen des magnetischen Headings
-                // löschen damit nicht mehr den gesamten Kandidaten.
-                const float signedCandidateAngle =
-                    curveCandidateDirection * curveCandidateAngle +
-                    headingDelta;
-                if (signedCandidateAngle > 0.0f) {
-                    curveCandidateDirection = 1;
-                    curveCandidateAngle = signedCandidateAngle;
-                } else if (signedCandidateAngle < 0.0f) {
-                    curveCandidateDirection = -1;
-                    curveCandidateAngle = -signedCandidateAngle;
-                } else {
-                    curveCandidateAngle = 0;
-                }
-                curveCandidateDistanceM += intervalDistanceM;
-            }
-            curveCandidateLastTurnTime = data.timestamp;
-        } else if (curveCandidateActive &&
-                   data.timestamp - curveCandidateLastTurnTime >=
+            addCurveSample(
+                curveCandidate, data.timestamp - deltaTime, data.timestamp,
+                selectedDeltaDeg, headingDelta, speedKmh, selectedRateDps,
+                gyroPrimary);
+        } else if (curveCandidate.active &&
+                   data.timestamp - curveCandidate.lastTurnTimeMs >=
                        CURVE_END_QUIET_MS) {
-            curveCandidateActive = false;
-            curveCandidateAngle = 0;
-            curveCandidateDistanceM = 0;
+            curveCandidate.clear();
         }
 
         const bool sharpStart =
-            turnRate >= turnRateThreshold &&
-            data.timestamp - lastCurveEvent >= 1000;
+            meaningfulTurn && absoluteTurnRate >= turnRateThreshold &&
+            data.timestamp - lastCurveEvent >= CURVE_EVENT_COOLDOWN_MS;
         const bool longStart =
-            curveCandidateActive &&
-            curveCandidateAngle >= CURVE_LONG_START_ANGLE_DEG &&
-            curveCandidateDistanceM >= CURVE_LONG_MIN_DISTANCE_M &&
-            data.timestamp - curveCandidateStartTime <=
+            curveCandidate.active &&
+            fabs(curveCandidate.signedAngleDeg) >=
+                CURVE_LONG_START_ANGLE_DEG &&
+            curveCandidate.distanceM >= CURVE_LONG_MIN_DISTANCE_M &&
+            data.timestamp - curveCandidate.startTimeMs <=
                 CURVE_LONG_MAX_WINDOW_MS;
 
         if (sharpStart || longStart) {
-            inCurve = true;
-            curveDirection =
-                curveCandidateActive
-                    ? curveCandidateDirection
-                    : turnDirection;
-            curveStartHeading = data.heading -
-                curveDirection * curveCandidateAngle;
-            accumulatedCurveAngle =
-                curveDirection *
-                (curveCandidateActive
-                     ? curveCandidateAngle
-                     : absoluteHeadingDelta);
-            curveStartTime =
-                curveCandidateActive
-                    ? curveCandidateStartTime
-                    : data.timestamp - deltaTime;
+            activeCurve = curveCandidate;
+            activeCurve.detectionMode =
+                sharpStart ? CurveDetectionMode::SHARP
+                           : CurveDetectionMode::LONG;
+            curveCandidate.clear();
             curveQuietSince = 0;
-            curveReversalAngle = 0;
-            curveReversalStartTime = 0;
-            curveCandidateActive = false;
-            curveCandidateAngle = 0;
-            curveCandidateDistanceM = 0;
+            curveReversal.clear();
+            activeCurveGroupId = 0;
+        }
+    } else if (meaningfulTurn) {
+        if (turnDirection == activeCurve.direction) {
+            addCurveSample(
+                activeCurve, data.timestamp - deltaTime, data.timestamp,
+                selectedDeltaDeg, headingDelta, speedKmh, selectedRateDps,
+                gyroPrimary);
+            curveQuietSince = 0;
+            curveReversal.clear();
+        } else {
+            addCurveSample(
+                curveReversal, data.timestamp - deltaTime, data.timestamp,
+                selectedDeltaDeg, headingDelta, speedKmh, selectedRateDps,
+                gyroPrimary);
+            if (fabs(curveReversal.signedAngleDeg) >=
+                CURVE_REVERSAL_ANGLE_DEG) {
+                if (activeCurveGroupId == 0) {
+                    activeCurveGroupId = nextCurveGroupId++;
+                    if (nextCurveGroupId == 0) {
+                        nextCurveGroupId = 1;
+                    }
+                }
+                const bool completed = completeCurve(
+                    activeCurve, curveReversal.startTimeMs,
+                    activeCurveGroupId, CurveCompletionReason::REVERSAL,
+                    completedEvent);
+                activeCurve = curveReversal;
+                activeCurve.detectionMode =
+                    activeCurve.maxYawRateDps >= turnRateThreshold
+                        ? CurveDetectionMode::SHARP
+                        : CurveDetectionMode::LONG;
+                curveReversal.clear();
+                curveQuietSince = 0;
+                lastHeading = data.heading;
+                lastHeadingTime = data.timestamp;
+                return completed;
+            }
         }
     } else {
-        if (turnRate >= CURVE_END_RATE_DPS && turnDirection != 0) {
-            if (turnDirection == curveDirection) {
-                accumulatedCurveAngle += headingDelta;
-                curveQuietSince = 0;
-                curveReversalAngle = 0;
-                curveReversalStartTime = 0;
-            } else {
-                if (curveReversalAngle == 0) {
-                    curveReversalStartTime = data.timestamp - deltaTime;
-                }
-                curveReversalAngle += absoluteHeadingDelta;
-
-                // Eine ausreichend große Gegenkurve schließt die bisherige
-                // Richtung ab und startet ohne blinden Zwischenraum die
-                // nächste Hälfte einer S-Kurve.
-                if (curveReversalAngle >= CURVE_REVERSAL_ANGLE_DEG) {
-                    lastCompletedCurveAngle =
-                        fabs(accumulatedCurveAngle);
-                    curveCompleted =
-                        lastCompletedCurveAngle >=
-                        CURVE_MIN_EVENT_ANGLE_DEG;
-                    if (curveCompleted) {
-                        lastCurveEvent = data.timestamp;
-                    }
-
-                    curveDirection = turnDirection;
-                    accumulatedCurveAngle =
-                        curveDirection * curveReversalAngle;
-                    curveStartHeading = data.heading -
-                        accumulatedCurveAngle;
-                    curveStartTime = curveReversalStartTime;
-                    curveQuietSince = 0;
-                    curveReversalAngle = 0;
-                    curveReversalStartTime = 0;
-                }
-            }
-        } else {
-            curveReversalAngle = 0;
-            curveReversalStartTime = 0;
-            if (curveQuietSince == 0) {
-                curveQuietSince = data.timestamp;
-            }
-
-            if (data.timestamp - curveQuietSince >= CURVE_END_QUIET_MS) {
-                lastCompletedCurveAngle = fabs(accumulatedCurveAngle);
-                curveCompleted =
-                    lastCompletedCurveAngle >= CURVE_MIN_EVENT_ANGLE_DEG;
-                inCurve = false;
-                curveDirection = 0;
-                curveQuietSince = 0;
-                if (curveCompleted) {
-                    lastCurveEvent = data.timestamp;
-                }
-            }
+        curveReversal.clear();
+        if (curveQuietSince == 0) {
+            curveQuietSince = data.timestamp;
         }
-
-        // Verhindert einen dauerhaft offenen Kurvenzustand.
-        if (inCurve &&
-            data.timestamp - curveStartTime > CURVE_MAX_DURATION_MS) {
-            lastCompletedCurveAngle = fabs(accumulatedCurveAngle);
-            curveCompleted =
-                lastCompletedCurveAngle >= CURVE_MIN_EVENT_ANGLE_DEG;
-            inCurve = false;
-            curveDirection = 0;
+        if (data.timestamp - curveQuietSince >= CURVE_END_QUIET_MS) {
+            const bool completed = completeCurve(
+                activeCurve, curveQuietSince, activeCurveGroupId,
+                CurveCompletionReason::QUIET, completedEvent);
+            activeCurve.clear();
             curveQuietSince = 0;
-            curveReversalAngle = 0;
-            curveReversalStartTime = 0;
-            if (curveCompleted) {
-                lastCurveEvent = data.timestamp;
-            }
+            activeCurveGroupId = 0;
+            lastHeading = data.heading;
+            lastHeadingTime = data.timestamp;
+            return completed;
         }
+    }
+
+    if (activeCurve.active &&
+        data.timestamp - activeCurve.startTimeMs >
+            CURVE_MAX_DURATION_MS) {
+        const bool completed = completeCurve(
+            activeCurve, data.timestamp, activeCurveGroupId,
+            CurveCompletionReason::TIMEOUT, completedEvent);
+        activeCurve.clear();
+        curveQuietSince = 0;
+        curveReversal.clear();
+        activeCurveGroupId = 0;
+        lastHeading = data.heading;
+        lastHeadingTime = data.timestamp;
+        return completed;
     }
 
     lastHeading = data.heading;
     lastHeadingTime = data.timestamp;
-    return curveCompleted;
+    return false;
 }
 
 float BNO055Manager::getCurveAngle() {
@@ -762,21 +860,13 @@ float BNO055Manager::getCurveAngle() {
 }
 
 void BNO055Manager::resetCurveDetection() {
-    inCurve = false;
-    curveStartHeading = 0;
-    accumulatedCurveAngle = 0;
     lastCompletedCurveAngle = 0;
     curveQuietSince = 0;
     headingInitialized = false;
-    curveDirection = 0;
-    curveCandidateActive = false;
-    curveCandidateDirection = 0;
-    curveCandidateAngle = 0;
-    curveCandidateDistanceM = 0;
-    curveCandidateStartTime = 0;
-    curveCandidateLastTurnTime = 0;
-    curveReversalAngle = 0;
-    curveReversalStartTime = 0;
+    curveCandidate.clear();
+    activeCurve.clear();
+    curveReversal.clear();
+    activeCurveGroupId = 0;
 }
 
 float BNO055Manager::calculateRoadQuality(float speedKmh) {

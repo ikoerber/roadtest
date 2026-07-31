@@ -1,7 +1,7 @@
 # ROADTEST Firmware
 
 ESP32-S3-Firmware zur Aufzeichnung von BNO055-, GPS-, Straßenqualitäts- und
-standardisierten OBD-II-Daten. Aktueller Firmwarestand: **1.5.27**.
+standardisierten OBD-II-Daten. Aktueller Firmwarestand: **1.5.28**.
 
 Der aktuelle Stand ist ein Hardware- und Fahrzeugteststand, nicht abschließend
 produktionsreif. Bekannte Einschränkungen stehen weiter unten.
@@ -163,8 +163,8 @@ git diff --check
 
 ## Aktueller Teststand
 
-- Firmware 1.5.27 baut erfolgreich für `lolin_s3_mini`.
-- Letzter Build: 70.876 Byte RAM (21,6 %) und 1.246.190 Byte Flash (95,1 %).
+- Firmware 1.5.28 baut erfolgreich für `lolin_s3_mini`.
+- Letzter Build: 71.060 Byte RAM (21,7 %) und 1.251.418 Byte Flash (95,5 %).
 - BNO055-Selbsttest, SD-Logging, WLAN, optionales OLED und MCP2515-
   Grundkommunikation wurden am System geprüft.
 - Am Porsche Carrera S, Baujahr 2012, PDK wurden standardisierte Antworten von
@@ -189,10 +189,11 @@ git diff --check
 
 ## Verbindlicher Datenqualitätsfokus
 
-GPS und CAN/OBD sind die beiden primären Datenquellen der nächsten
-Entwicklungsphase. Jeder Fahrzeugtest muss beide Quellen gleichzeitig
-aufzeichnen, ihre Eigenqualität bewerten und Geschwindigkeit zeitlich
-miteinander vergleichen.
+Kurvenerkennung ist der primäre Fokus der nächsten Fahrzeugfahrt. Firmware
+1.5.28 zeichnet dafür einbaulagenunabhängige Drehrate, vollständige
+Kurvenintervalle, Radius, Querbeschleunigung und manuelle
+Beifahrer-Referenzintervalle auf. GPS und CAN/OBD laufen gleichzeitig als
+Zeit-, Geschwindigkeits- und Positionsreferenz mit.
 
 Der verbindliche Umsetzungs-, Test- und Abnahmeplan steht in
 `GPS_CAN_OBD_DATENQUALITAETSPLAN.md`. Neue Messfunktionen müssen dessen
@@ -200,8 +201,9 @@ Sitzungszähler, Gültigkeitsfelder, Zeitbasis und PASS/WARN/FAIL-Kriterien
 berücksichtigen.
 
 BNO055, SD, OLED und WLAN laufen bei diesen Tests als Stabilitätskontrolle mit.
-Weitere Fahrzeug-PIDs und nicht blockierende Nebenoptimierungen werden erst
-priorisiert, wenn die GPS-/Standard-OBD-Basis reproduzierbar belastbar ist.
+Nach der Kurvenauswertung folgt die getrennte Verbesserung der
+Straßenqualitätsbewertung anhand derselben Rohfahrt. Beide Bewertungsmodelle
+werden nicht gleichzeitig neu parametriert.
 
 ## Bekannte Einschränkungen
 
@@ -230,11 +232,10 @@ priorisiert, wenn die GPS-/Standard-OBD-Basis reproduzierbar belastbar ist.
   auch nach erfolgreicher Wiedererkennung als abgeschlossener Abnahmeschritt
   erhalten.
 
-Nächster sinnvoller Schritt: kurzer stationärer Vollständigkeitstest mit
-1.5.27 sowie der fokussierte serielle Befehl `sdrecovery` auf dem Arbeitstisch.
-Anschließend eine Überlandfahrt mit mindestens zwei langgezogenen und einer
-S-Kurve. Der vollständige ECU-Recovery-Ablauf muss dabei nicht erneut
-durchgeführt werden.
+Nächster sinnvoller Schritt: 20- bis 30-minütige Überlandfahrt mit 1.5.28 und
+der Beifahrerseite `/curve-test`: eine gerade Referenz, vier weite, vier
+normale beziehungsweise enge und drei S-Kurven. Der vollständige
+ECU-Recovery-Ablauf muss dabei nicht erneut durchgeführt werden.
 
 ### GPS
 
@@ -267,7 +268,10 @@ Positionssprungbewertung und ereignisorientiertes Logging bleiben offen.
   nachgewiesene Fahrzeuggeschwindigkeit von mindestens 5 km/h.
 - 1.5.27 erkennt zusätzlich langsame Kurven über mindestens 8 Grad
   Netto-Kursänderung und 20 Meter Fahrweg innerhalb von zehn Sekunden.
-  Die Wirksamkeit und Fehlalarmrate müssen noch am Fahrzeug bestätigt werden.
+  1.5.28 verwendet dafür die auf die Schwerkraftrichtung projizierte
+  Gyroskop-Drehrate, protokolliert vollständige Ereignisintervalle und nutzt
+  das relative Heading als gekennzeichneten Rückfall und Qualitätsvergleich.
+  Wirksamkeit und Fehlalarmrate müssen mit der Beifahrerfahrt bestätigt werden.
 - Ein vorübergehender SD-Ausfall wird in derselben Gerätesitzung automatisch
   durch eine separate Puffer-Recovery-Datei und eine neue, verknüpfte
   Messsitzung behandelt. Nach Reset oder Spannungsverlust bleibt ein
