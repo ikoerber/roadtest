@@ -5,6 +5,47 @@ Alle wichtigen Änderungen am ESP32-S3 Straßenqualitäts-Messsystem werden in d
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt hält sich an [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.30] - 2026-08-01
+
+### Behoben
+- Nach einem Kartenfehler bekommt die abgebrochene Sitzung ihre
+  Zusammenfassung nachgetragen, sobald die Karte wieder beschreibbar ist. Die
+  Kennzahlen stehen zu diesem Zeitpunkt noch vollständig im Arbeitsspeicher,
+  nur die Karte war beim Abbruch nicht mehr erreichbar. In
+  `20260731_160032_3D732AD1` fehlten dadurch Strecke, Kurvenzahl und
+  Durchschnittsqualität einer 2,5-km-Fahrt mit 16 Kurven, obwohl alle
+  Rohdateien vollständig vorlagen. Eine bereits vorhandene Datei wird nicht
+  überschrieben. Nach Reset oder Spannungsverlust entsteht bewusst keine
+  Zusammenfassung: Der Sitzungsmarker überlebt zwar im NVS, die Kennzahlen
+  nicht, und eine Datei voller Nullwerte wäre keine Messung. Das
+  Fortsetzungsereignis `SD_RECOVERY_CONTINUATION` führt dafür das neue Feld
+  `ZusammenfassungNachgetragen` mit `ja` oder `nein`.
+- Statuszeilen erscheinen wieder in gleichmäßigem Fünf-Sekunden-Abstand. Die
+  Kombination aus Fünf-Sekunden-Takt und einem zusätzlichen 5000-ms-Gatter
+  blockierte sich bei Jitter gegenseitig; in den Messdaten vom 31.07.2026
+  standen deshalb Statuszeilen mal nach fünf, mal erst nach zehn Sekunden.
+  Den Takt gibt jetzt allein der Schrittzähler des Flush-Durchlaufs vor.
+
+### Geändert
+- Der SD-Flush wird in Einzelschritte zerlegt. Bisher sicherte ein Durchlauf
+  alle neun Dateien am Stück und blockierte die Hauptschleife dabei gemessen
+  bis zu 235 Millisekunden; die verfehlten Sensorstichproben lagen
+  deterministisch bei 2290 und 2590 Millisekunden modulo 5000, also genau im
+  Takt dieses Durchlaufs. Neu sichert `SDLogger::flushStep()` je Aufruf
+  höchstens eine Datei oder die Statuszeile. Zehn Schritte im Abstand von
+  500 Millisekunden ergeben einen vollen Umlauf in fünf Sekunden, also
+  dieselbe Sicherungsfrequenz wie zuvor. `SDLogger::flush()` sichert
+  weiterhin alles in einem Zug und bleibt den Sitzungsenden vorbehalten.
+- Der Aufruf steht bewusst hinter der Sensorabtastung, damit ein Schritt in
+  die Lücke zwischen zwei Abtastzeitpunkten fällt statt auf einen.
+- `FlushLastMs`, `FlushMaxMs` und `FlushCycles` in der Metadatendatei
+  beziehen sich jetzt auf den einzelnen Schritt statt auf den vollen
+  Durchlauf. Genau diese Zahl beschreibt die Blockade der Hauptschleife;
+  `LoopMaxMs` und `SensorMissedSlots` behalten ihre Bedeutung unverändert.
+- Noch am Gerät zu bestätigen: erwartet werden ein deutlicher Rückgang von
+  `LoopMaxMs` gegenüber den zuletzt gemessenen 247 Millisekunden und von
+  `SensorMissedSlots` gegenüber 19 je Minute.
+
 ## [1.5.29] - 2026-07-31
 
 Auswertung der fünf Beifahrer-Referenzfahrten vom 31.07.2026 mit zusammen

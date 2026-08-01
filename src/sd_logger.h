@@ -153,6 +153,9 @@ private:
     // Timing
     unsigned long lastRoadLog;
     unsigned long lastFlush;
+    unsigned long lastFlushStep;
+    // Nächster Schritt des aufgeteilten Flush-Durchlaufs.
+    uint8_t flushCursor;
     unsigned long lastMetadataLog;
     unsigned long sessionStartTime;
     GPSStatus gpsSessionStartStatus;
@@ -194,6 +197,8 @@ private:
     uint32_t recoveryBufferedRecordsAtFailure;
     uint32_t recoveryRecoveredRecords;
     String recoveryBufferFileName;
+    // Ob die Zusammenfassung der abgebrochenen Sitzung nachgetragen wurde.
+    bool recoverySummaryWritten;
     String lastRecoveryStatus;
     
     // Buffer-Overflow Schutz Funktionen
@@ -208,6 +213,10 @@ private:
     void handleCardFailure(const char* reason, uint32_t droppedRecords = 0);
     bool writeHeader(File& file, LogType type);
     bool writeRideSummaryFile();
+    // Trägt die Zusammenfassung einer durch Kartenfehler abgebrochenen
+    // Sitzung nach, sobald die Karte wieder beschreibbar ist.
+    bool writeRecoveredRideSummary();
+    bool writeRideSummaryTo(const String& directory, const String& id);
     bool recoverBufferedSensorData();
     bool flushBuffer();
     void failLoggingStart(const String& reason);
@@ -299,7 +308,14 @@ public:
     bool logDebug(const String& message);
     
     // Daten-Management
+    //
+    // flush() sichert alle Dateien in einem Zug und blockiert dabei
+    // entsprechend lange; er gehört an Sitzungsenden. Im Fahrbetrieb dient
+    // flushStep(): der Aufruf darf in jedem Schleifendurchlauf erfolgen,
+    // wartet selbst das Schrittintervall ab und sichert je Aufruf höchstens
+    // eine Datei.
     void flush();
+    void flushStep();
     bool rotateLogFile();
     uint32_t getFileSize() const;
     uint32_t getFreeSpace();

@@ -1412,7 +1412,14 @@ void loop() {
             lastSensorRead = currentTime;
         }
     }
-    
+
+    // Einen Schritt des aufgeteilten SD-Flush ausführen, bewusst nach der
+    // Sensorabtastung. Der Aufruf wartet das Schrittintervall selbst ab und
+    // sichert je Runde höchstens eine Datei; ein vollständiger Durchlauf am
+    // Stück blockierte die Schleife zuvor bis zu 235 ms und kostete dabei
+    // zwei bis drei Sensorstichproben.
+    sdLogger.flushStep();
+
     // GPS-Daten verarbeiten (alle 200ms)
     // Im Interrupt-Modus verarbeitet update() die gepufferten Daten
     if (gpsAvailable &&
@@ -1611,8 +1618,7 @@ void loop() {
         // SD-Logger Status
         if (sdLogger.isLogging()) {
             Serial.printf(", SD: %lu KB frei\n", sdLogger.getFreeSpace());
-            sdLogger.flush(); // Daten sichern
-            
+
             // Kalibrierungs-Hinweise
             if (!cal.isFullyCalibrated()) {
                 Serial.println(bnoManager.getCalibrationInstructions());

@@ -7,7 +7,7 @@
 // Zentrale Pin-Konfiguration für das Straßenqualitäts-Messsystem
 // Alle Hardware-spezifischen Pin-Zuordnungen sind hier definiert
 
-#define ROADTEST_FIRMWARE_VERSION "1.5.29"
+#define ROADTEST_FIRMWARE_VERSION "1.5.30"
 #define ROADTEST_FIRMWARE_FILE_NAME \
     "roadtest_" ROADTEST_FIRMWARE_VERSION ".bin"
 #define ROADTEST_CSV_SCHEMA_VERSION "1.5.28-quality-v10"
@@ -215,6 +215,12 @@ extern const int GPS_BAUD_RATE;    // 9600    - GPS Baudrate
 #define GPS_UPDATE_INTERVAL     200 // GPS Update-Intervall (ms) 
 #define CAN_CHECK_INTERVAL      10  // CAN-Check Intervall (ms)
 #define STATUS_REPORT_INTERVAL  5000// Status-Report Intervall (ms)
+
+// Aufgeteilter SD-Flush. Zehn Schritte im Abstand von 500 ms ergeben einen
+// vollen Umlauf in fünf Sekunden - dieselbe Sicherungsfrequenz wie zuvor,
+// aber ohne die gemessenen 235 ms Blockade am Stück.
+#define SD_FLUSH_STEP_INTERVAL_MS            500UL
+#define SD_FLUSH_STEP_COUNT                     10
 
 // Buffer-Sicherheit
 #define MAX_LOG_LINE_LENGTH     256 // Maximale Länge einer Log-Zeile

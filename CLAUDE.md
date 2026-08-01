@@ -1,7 +1,7 @@
 # ROADTEST Firmware
 
 ESP32-S3-Firmware zur Aufzeichnung von BNO055-, GPS-, Straßenqualitäts- und
-standardisierten OBD-II-Daten. Aktueller Firmwarestand: **1.5.29**.
+standardisierten OBD-II-Daten. Aktueller Firmwarestand: **1.5.30**.
 
 Der aktuelle Stand ist ein Hardware- und Fahrzeugteststand, nicht abschließend
 produktionsreif. Bekannte Einschränkungen stehen weiter unten.
@@ -240,8 +240,8 @@ Eigenschaften des Sitzungskopfes.
 
 ## Aktueller Teststand
 
-- Firmware 1.5.29 baut erfolgreich für `lolin_s3_mini`.
-- Letzter Build: 71.060 Byte RAM (21,7 %) und 1.249.082 Byte Flash (95,3 %).
+- Firmware 1.5.30 baut erfolgreich für `lolin_s3_mini`.
+- Letzter Build: 71.076 Byte RAM (21,7 %) und 1.250.270 Byte Flash (95,4 %).
 - Am 31.07.2026 liefen fünf Beifahrer-Referenzfahrten mit 1.5.28 und je zwölf
   markierten Referenzintervallen. Sie sind der Prüfstand der Kurvenerkennung.
 - 1.5.29 ist am Fahrzeug bestätigt: vier Fahrten am 01.08.2026 über 21 Minuten
@@ -338,6 +338,10 @@ genügt normales Fahren. Der vollständige ECU-Recovery-Ablauf muss dabei nicht
 erneut durchgeführt werden.
 
 Offen ist allein noch eine zweiminütige Parkplatzrunde für `SESSION_END`.
+Dabei lässt sich 1.5.30 gleich mitprüfen: `LoopMaxMs` und
+`SensorMissedSlots` müssen gegenüber 247 ms und 19 je Minute deutlich
+zurückgehen, und die Statuszeilen der Metadatendatei müssen in gleichmäßigem
+Fünf-Sekunden-Abstand stehen.
 
 ### GPS
 
@@ -397,8 +401,17 @@ Positionssprungbewertung und ereignisorientiertes Logging bleiben offen.
   Kurven drehen netto weniger als 10 Grad.
 - Ein vorübergehender SD-Ausfall wird in derselben Gerätesitzung automatisch
   durch eine separate Puffer-Recovery-Datei und eine neue, verknüpfte
-  Messsitzung behandelt. Nach Reset oder Spannungsverlust bleibt ein
-  manueller Messstart verbindlich.
+  Messsitzung behandelt. Seit 1.5.30 bekommt die abgebrochene Sitzung
+  zusätzlich ihre Zusammenfassung nachgetragen; das Fortsetzungsereignis
+  führt dazu das Feld `ZusammenfassungNachgetragen`. Nach Reset oder
+  Spannungsverlust bleibt ein manueller Messstart verbindlich, und es
+  entsteht bewusst keine Zusammenfassung: Der Sitzungsmarker überlebt im NVS,
+  die Kennzahlen nicht.
+- Der SD-Flush läuft seit 1.5.30 in Einzelschritten. `flushStep()` gehört in
+  die Hauptschleife und sichert je Aufruf höchstens eine Datei; `flush()`
+  sichert alles in einem Zug und bleibt Sitzungsenden vorbehalten. Die
+  Felder `FlushLastMs`, `FlushMaxMs` und `FlushCycles` beziehen sich dadurch
+  auf den einzelnen Schritt statt auf den vollen Durchlauf.
 - Absolute Kurswerte benötigen eine ausreichende Magnetometer- und
   Systemkalibrierung; relative Beschleunigungen bleiben davon weitgehend
   unabhängig.

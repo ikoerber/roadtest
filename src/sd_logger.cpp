@@ -56,7 +56,7 @@ SDLogger::SDLogger(int cs)
     : csPin(cs), spiInstance(nullptr), initialized(false), 
       cardAvailable(false), logging(false), stopping(false),
       loggingStartState(LoggingStartState::IDLE), bufferIndex(0),
-      lastRoadLog(0), lastFlush(0),
+      lastRoadLog(0), lastFlush(0), lastFlushStep(0), flushCursor(0),
       lastMetadataLog(0), sessionStartTime(0),
       gpsSessionStartStatus{}, gpsSessionStartFixSequence(0),
       gpsSessionLastLoggedFixSequence(0),
@@ -69,7 +69,7 @@ SDLogger::SDLogger(int cs)
       recoveryFailureReason(""), recoveryFailureUTC(""),
       recoveryFailureTime(0), recoveryBufferedRecordsAtFailure(0),
       recoveryRecoveredRecords(0), recoveryBufferFileName(""),
-      lastRecoveryStatus("") {
+      recoverySummaryWritten(false), lastRecoveryStatus("") {
     
     // Standard-Konfiguration
     config = {
@@ -203,6 +203,10 @@ bool SDLogger::begin(SPIClass& spi) {
     stats.startTime = millis();
 
     loadPersistentRecoveryState();
+    // Die Zusammenfassung der abgebrochenen Sitzung zuerst nachtragen: Sie
+    // hängt nur an Kennzahlen im Arbeitsspeicher und soll auch dann
+    // entstehen, wenn gar keine Sensorzeilen zu retten waren.
+    writeRecoveredRideSummary();
     if (recoveryBufferPending && !recoverBufferedSensorData()) {
         Serial.println(
             "⚠️ Gepufferte Sensordaten konnten noch nicht gesichert werden; "
@@ -951,6 +955,11 @@ void SDLogger::finishRecoveryMarker() {
         description +=
             ";RecoveryDatei=" + recoveryBufferFileName;
     }
+    // Damit sich in der Auswertung ohne Blick ins Verzeichnis erkennen lässt,
+    // ob die Ursprungssitzung ihre Kennzahlen zurückbekommen hat.
+    description +=
+        String(";ZusammenfassungNachgetragen=") +
+        (recoverySummaryWritten ? "ja" : "nein");
 
     if (!logEvent("SD_RECOVERY_CONTINUATION", description)) {
         return;
@@ -971,6 +980,7 @@ void SDLogger::finishRecoveryMarker() {
     recoveryBufferedRecordsAtFailure = 0;
     recoveryRecoveredRecords = 0;
     recoveryBufferFileName = "";
+    recoverySummaryWritten = false;
     persistActiveSession();
 }
 
@@ -1099,10 +1109,59 @@ bool SDLogger::writeRideSummaryFile() {
     if (!cardAvailable || sessionId.length() == 0) {
         return false;
     }
+    return writeRideSummaryTo(sessionDirectory, sessionId);
+}
 
+bool SDLogger::writeRecoveredRideSummary() {
+    // Nach einem Kartenfehler fehlte der abgebrochenen Sitzung bisher ihre
+    // Zusammenfassung. Die Kennzahlen stehen zu diesem Zeitpunkt noch
+    // vollständig im Arbeitsspeicher, nur die Karte war beim Abbruch nicht
+    // mehr beschreibbar. In 20260731_160032_3D732AD1 gingen so Strecke,
+    // Kurvenzahl und Durchschnittsqualität einer 2,5-km-Fahrt mit 16 Kurven
+    // verloren, obwohl die Rohdateien vollständig vorlagen.
+    //
+    // Die Bedingung auf rideSummary.sessionId ist wesentlich: Nach einem
+    // Reset oder Spannungsverlust wird der Sitzungsmarker zwar aus dem NVS
+    // geladen, die Kennzahlen sind dann aber verloren. In diesem Fall darf
+    // keine Zusammenfassung mit Nullwerten entstehen.
+    if (!cardAvailable || recoveryOriginalSessionId.length() == 0 ||
+        rideSummary.sessionId != recoveryOriginalSessionId ||
+        !rideSummary.interrupted) {
+        return false;
+    }
+
+    const String directory = "/sessions/" + recoveryOriginalSessionId;
+    if (!SD.exists(directory)) {
+        return false;
+    }
+    const String summaryFileName =
+        directory + "/" + config.filePrefix + "_summary_" +
+        recoveryOriginalSessionId + ".csv";
+    if (SD.exists(summaryFileName)) {
+        // Bereits vorhanden, etwa weil der Abbruch erst nach dem regulären
+        // Schreiben auftrat. Eine bestehende Datei nicht überschreiben.
+        return false;
+    }
+
+    if (rideSummary.qualitySamples > 0) {
+        rideSummary.averageQuality =
+            qualitySum / rideSummary.qualitySamples;
+    }
+    const bool written =
+        writeRideSummaryTo(directory, recoveryOriginalSessionId);
+    if (written) {
+        recoverySummaryWritten = true;
+        Serial.printf(
+            "✅ Zusammenfassung der abgebrochenen Sitzung nachgetragen: %s\n",
+            summaryFileName.c_str());
+    }
+    return written;
+}
+
+bool SDLogger::writeRideSummaryTo(
+    const String& directory, const String& id) {
     String summaryFileName =
-        sessionDirectory + "/" + config.filePrefix +
-        "_summary_" + sessionId + ".csv";
+        directory + "/" + config.filePrefix + "_summary_" + id + ".csv";
     File summaryFile = SD.open(summaryFileName, FILE_WRITE);
     if (!summaryFile) {
         Serial.printf("❌ Fahrzusammenfassung konnte nicht erstellt werden: %s\n",
@@ -2037,8 +2096,68 @@ void SDLogger::flush() {
     if (correlatedLogFile) flushFileTimed(correlatedLogFile);
 
     lastFlush = millis();
+    flushCursor = 0;
     runtimeDiagnostics.recordFlushCycle(
         lastFlush - flushCycleStartedAt);
+}
+
+void SDLogger::flushStep() {
+    // Ein vollständiger Flush aller neun Dateien blockierte die Hauptschleife
+    // gemessen bis zu 235 ms am Stück und verschluckte dabei zwei bis drei
+    // Sensorstichproben. Die Lücken lagen deterministisch bei 2290 und
+    // 2590 ms modulo 5000, also genau im Takt dieses Durchlaufs.
+    //
+    // Der Durchlauf wird deshalb in Einzelschritte zerlegt: je Aufruf
+    // höchstens eine Datei oder die Statuszeile. Ein voller Umlauf dauert
+    // damit SD_FLUSH_STEP_INTERVAL_MS mal Schrittzahl und bleibt in derselben
+    // Größenordnung wie zuvor, die einzelne Blockade aber sinkt auf die
+    // Dauer eines Schritts.
+    if (!logging) return;
+    const unsigned long now = millis();
+    if (now - lastFlushStep < SD_FLUSH_STEP_INTERVAL_MS) return;
+    lastFlushStep = now;
+
+    const unsigned long stepStartedAt = now;
+    switch (flushCursor) {
+        case 0:
+            // Ohne zusätzliches Zeitgatter: Schritt 0 kehrt konstruktiv alle
+            // SD_FLUSH_STEP_INTERVAL_MS mal SD_FLUSH_STEP_COUNT wieder. Die
+            // frühere Kombination aus Fünf-Sekunden-Takt und einem separaten
+            // 5000-ms-Gatter blockierte sich bei Jitter gegenseitig; in den
+            // Messdaten vom 31.07.2026 erschienen Statuszeilen deshalb mal
+            // nach fünf, mal erst nach zehn Sekunden.
+            if (metaLogFile) {
+                logSessionMetadata(
+                    "STATUS", gpsManager.getStatus(),
+                    canReader.getOBDSessionStats(),
+                    canReader.getHardwareDiagnostics());
+            }
+            break;
+        case 1:
+            // Der Sensorpuffer zuerst: Er ist die einzige Stelle, an der
+            // Messzeilen bei einem Kartenfehler verloren gehen könnten.
+            if (isReady() && flushBuffer() && currentLogFile) {
+                flushFileTimed(currentLogFile);
+            }
+            break;
+        case 2: if (roadLogFile) flushFileTimed(roadLogFile); break;
+        case 3: if (gpsLogFile) flushFileTimed(gpsLogFile); break;
+        case 4: if (canLogFile) flushFileTimed(canLogFile); break;
+        case 5: if (obdLogFile) flushFileTimed(obdLogFile); break;
+        case 6: if (obdTraceLogFile) flushFileTimed(obdTraceLogFile); break;
+        case 7: if (metaLogFile) flushFileTimed(metaLogFile); break;
+        case 8: if (eventLogFile) flushFileTimed(eventLogFile); break;
+        case 9: if (correlatedLogFile) flushFileTimed(correlatedLogFile); break;
+        default: break;
+    }
+
+    if (++flushCursor >= SD_FLUSH_STEP_COUNT) {
+        flushCursor = 0;
+        lastFlush = millis();
+    }
+    // Erfasst wird jetzt der einzelne Schritt, nicht mehr der volle Umlauf.
+    // Genau diese Zahl beschreibt die Blockade der Hauptschleife.
+    runtimeDiagnostics.recordFlushCycle(millis() - stepStartedAt);
 }
 
 bool SDLogger::rotateLogFile() {
