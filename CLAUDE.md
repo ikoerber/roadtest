@@ -414,7 +414,10 @@ Positionssprungbewertung und ereignisorientiertes Logging bleiben offen.
   gegen die tatsächliche Größe auf der Karte und legt bei Abweichung
   `road_integritaet_<Sitzung>.csv` an. Die Prüfung erkennt den Verlust, sie
   verhindert ihn nicht; die Ursache liegt unterhalb der Firmware und ist noch
-  offen. Ein Gegentest mit einer anderen SD-Karte steht aus.
+  offen. Der naheliegende Gegentest mit einer zweiten SD-Karte ist
+  zurückgestellt, weil keine Ersatzkarte vorhanden ist. Vorher lohnt keine
+  weitere Ursachensuche in der Firmware: Ihre Buchführung war in diesem Fall
+  nachweislich in sich schlüssig.
 - Bei Auswertungen jeder Sitzung zuerst die Zeilenzahl jeder Datei gegen die
   Zähler der Metadatendatei stellen. Vollständigkeit nicht aus dem Vorhandensein
   eines END-Records und einer Zusammenfassung schließen.
