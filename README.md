@@ -2,7 +2,7 @@
 
 Ein fortschrittliches Embedded-System zur Messung und Bewertung von Straßenqualität für kurvenreiche Motorradstrecken.
 
-Aktueller Firmwarestand: **1.5.30**. Der Stand ist ein Hardware- und
+Aktueller Firmwarestand: **1.5.31**. Der Stand ist ein Hardware- und
 Fahrzeugteststand. 1.5.28 misst Kurven über eine einbaulagenunabhängige
 Gyroskopprojektion, protokolliert Radius und vollständige Ereignisintervalle
 und stellt dafür einen geführten Beifahrertest bereit. 1.5.29 schärft die
@@ -733,6 +733,13 @@ Der priorisierte Backlog für gleichmäßigere Sensorabtastung und geringere
 Buslast steht in [OPTIMIERUNGEN.md](OPTIMIERUNGEN.md).
 
 ## 📈 Version History
+
+### v1.5.31 - Größenprüfung der Logdateien
+- ✅ Jede Logdatei wird am Sitzungsende gegen die tatsächliche Größe auf der
+  Karte geprüft; Abweichungen landen in `road_integritaet_<Sitzung>.csv`
+- ✅ Anlass: In einer Fahrt fehlten 68 % der GPS-Spur, ohne dass ein einziger
+  Fehlerzähler ansprach
+- ⚠️ Erkennt den Verlust, verhindert ihn nicht
 
 ### v1.5.30 - Aufgeteilter SD-Flush und nachgetragene Zusammenfassung
 - ✅ Flush je Aufruf höchstens eine Datei statt aller neun am Stück; ein

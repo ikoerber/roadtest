@@ -5,6 +5,34 @@ Alle wichtigen Änderungen am ESP32-S3 Straßenqualitäts-Messsystem werden in d
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt hält sich an [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.31] - 2026-08-01
+
+### Hinzugefügt
+- Größenprüfung aller Logdateien am Sitzungsende. Nach dem Schließen wird
+  jede Datei frisch geöffnet, sodass ihre Größe aus dem Verzeichniseintrag
+  der Karte stammt und nicht aus dem Arbeitsspeicher, und gegen die Summe der
+  geschriebenen Bytes gestellt.
+
+  Anlass ist `20260801_114252_B9D1628B`: Dort verbuchte die Firmware 3534
+  erfolgreiche GPS-Schreibvorgänge, die Datei enthielt aber nur 1122 Zeilen
+  und endete nach 227 von 709 Sekunden. 68 Prozent der GPS-Spur fehlen. Alle
+  acht übrigen Dateien der Sitzung decken die volle Dauer ab, sämtliche
+  Fehlerzähler standen auf null, und `SDWrites` von 18.125 entspricht der
+  Annahme, dass alle 3534 Zeilen geschrieben wurden - gegenüber 15.734 bei
+  nur den vorhandenen 1122. Der Verlust liegt damit unterhalb der Firmware;
+  ihre eigene Buchführung war in sich schlüssig.
+
+  Bei einer Abweichung entsteht `road_integritaet_<Sitzung>.csv` mit einer
+  Zeile je betroffener Datei aus Sitzung, Dateiart, Byte auf der Karte und
+  Byte erwartet. Die Sitzung gilt als unterbrochen, und der persistente
+  Verweis trägt die Ursache `SESSION_FILES_TRUNCATED`, abgegrenzt vom
+  bisherigen `SESSION_FINALIZATION_INCOMPLETE` für fehlende Abschlussdateien.
+  Ein automatischer Wiederanlauf entsteht bewusst nicht: Der Nutzer hat die
+  Messung beendet.
+
+  Die Prüfung erkennt den Verlust, sie verhindert ihn nicht. Sie macht aus
+  einem stillen Datenverlust einen protokollierten Befund.
+
 ## [1.5.30] - 2026-08-01
 
 ### Behoben

@@ -30,6 +30,19 @@ size_t writeFileTimed(File& file, const char* data, size_t length) {
     return written;
 }
 
+// Wie writeFileTimed, führt zusätzlich die erwartete Dateigröße mit. Nur so
+// lässt sich am Sitzungsende gegen die tatsächliche Größe auf der Karte
+// prüfen.
+size_t writeFileTimed(
+    File& file, uint32_t& expectedBytes, const char* data, size_t length);
+
+size_t writeFileTimed(
+    File& file, uint32_t& expectedBytes, const char* data, size_t length) {
+    const size_t written = writeFileTimed(file, data, length);
+    expectedBytes += written;
+    return written;
+}
+
 void flushFileTimed(File& file) {
     const unsigned long startedAt = millis();
     file.flush();
@@ -69,7 +82,8 @@ SDLogger::SDLogger(int cs)
       recoveryFailureReason(""), recoveryFailureUTC(""),
       recoveryFailureTime(0), recoveryBufferedRecordsAtFailure(0),
       recoveryRecoveredRecords(0), recoveryBufferFileName(""),
-      recoverySummaryWritten(false), lastRecoveryStatus("") {
+      recoverySummaryWritten(false), expectedFileBytes{},
+      lastRecoveryStatus("") {
     
     // Standard-Konfiguration
     config = {
@@ -95,7 +109,7 @@ bool SDLogger::logCorrelatedData(const SensorData& sensorData, const CANMessage&
     if (!logging || !isReady() || canMsg.timestamp == 0) return false;
 
     if (!correlatedLogFile &&
-        !openLogFile(correlatedLogFile, correlatedFileName, LOG_TYPE_CORRELATED)) {
+        !openLogFile(correlatedLogFile, correlatedFileName, LOG_TYPE_CORRELATED, LOGFILE_CORRELATED)) {
         return false;
     }
     
@@ -125,7 +139,8 @@ bool SDLogger::logCorrelatedData(const SensorData& sensorData, const CANMessage&
     
     if (correlatedLogFile &&
         writeFileTimed(
-            correlatedLogFile, logLine.c_str(), logLine.length()) ==
+            correlatedLogFile, expectedFileBytes[LOGFILE_CORRELATED],
+            logLine.c_str(), logLine.length()) ==
             logLine.length()) {
         stats.totalWrites++;
         stats.totalBytes += logLine.length();
@@ -313,7 +328,7 @@ void SDLogger::processLoggingStart() {
 
         case LoggingStartState::OPEN_ROAD:
             if (config.enableRoadLog &&
-                !openLogFile(roadLogFile, roadFileName, LOG_TYPE_ROAD)) {
+                !openLogFile(roadLogFile, roadFileName, LOG_TYPE_ROAD, LOGFILE_ROAD)) {
                 failLoggingStart("Straßen-Log konnte nicht angelegt werden");
                 return;
             }
@@ -322,7 +337,7 @@ void SDLogger::processLoggingStart() {
 
         case LoggingStartState::OPEN_GPS:
             if (config.enableGPSLog &&
-                !openLogFile(gpsLogFile, gpsFileName, LOG_TYPE_GPS)) {
+                !openLogFile(gpsLogFile, gpsFileName, LOG_TYPE_GPS, LOGFILE_GPS)) {
                 failLoggingStart("GPS-Log konnte nicht angelegt werden");
                 return;
             }
@@ -331,7 +346,7 @@ void SDLogger::processLoggingStart() {
 
         case LoggingStartState::OPEN_EVENT:
             if (config.enableEventLog &&
-                !openLogFile(eventLogFile, eventFileName, LOG_TYPE_EVENT)) {
+                !openLogFile(eventLogFile, eventFileName, LOG_TYPE_EVENT, LOGFILE_EVENT)) {
                 failLoggingStart("Ereignis-Log konnte nicht angelegt werden");
                 return;
             }
@@ -339,7 +354,7 @@ void SDLogger::processLoggingStart() {
             return;
 
         case LoggingStartState::OPEN_META:
-            if (!openLogFile(metaLogFile, metaFileName, LOG_TYPE_META)) {
+            if (!openLogFile(metaLogFile, metaFileName, LOG_TYPE_META, LOGFILE_META)) {
                 failLoggingStart("Metadaten-Log konnte nicht angelegt werden");
                 return;
             }
@@ -348,7 +363,7 @@ void SDLogger::processLoggingStart() {
 
         case LoggingStartState::OPEN_CAN:
             if (config.enableCANLog && canReader.isReady() &&
-                !openLogFile(canLogFile, canFileName, LOG_TYPE_CAN)) {
+                !openLogFile(canLogFile, canFileName, LOG_TYPE_CAN, LOGFILE_CAN)) {
                 failLoggingStart("CAN-Log konnte nicht angelegt werden");
                 return;
             }
@@ -357,7 +372,7 @@ void SDLogger::processLoggingStart() {
 
         case LoggingStartState::OPEN_OBD:
             if (config.enableCANLog && canReader.isReady() &&
-                !openLogFile(obdLogFile, obdFileName, LOG_TYPE_OBD)) {
+                !openLogFile(obdLogFile, obdFileName, LOG_TYPE_OBD, LOGFILE_OBD)) {
                 failLoggingStart("OBD-Log konnte nicht angelegt werden");
                 return;
             }
@@ -367,7 +382,8 @@ void SDLogger::processLoggingStart() {
         case LoggingStartState::OPEN_OBD_TRACE:
             if (config.enableCANLog && canReader.isReady() &&
                 !openLogFile(
-                    obdTraceLogFile, obdTraceFileName, LOG_TYPE_OBD_TRACE)) {
+                    obdTraceLogFile, obdTraceFileName, LOG_TYPE_OBD_TRACE,
+                    LOGFILE_OBD_TRACE)) {
                 failLoggingStart("OBD-Trace konnte nicht angelegt werden");
                 return;
             }
@@ -378,7 +394,7 @@ void SDLogger::processLoggingStart() {
             if (config.enableCANLog && canReader.isReady() &&
                 !openLogFile(
                     correlatedLogFile, correlatedFileName,
-                    LOG_TYPE_CORRELATED)) {
+                    LOG_TYPE_CORRELATED, LOGFILE_CORRELATED)) {
                 failLoggingStart(
                     "Korrelations-Log konnte nicht angelegt werden");
                 return;
@@ -415,6 +431,9 @@ void SDLogger::processLoggingStart() {
         canSessionStartDiagnostics = CANHardwareDiagnostics{};
     }
     runtimeDiagnostics.resetSession();
+    for (uint8_t i = 0; i < LOGFILE_COUNT; ++i) {
+        expectedFileBytes[i] = 0;
+    }
     // Ohne Rückstellung überlebt ein vor dem Messstart angefangener
     // Kurvenverlauf den Sitzungsbeginn. In 20260731_152148_452707FB begann
     // das erste Ereignis dadurch 2,2 s vor der Sitzung.
@@ -564,13 +583,31 @@ void SDLogger::stopLogging() {
     logging = false;
     stopping = false;
 
-    if (sessionComplete) {
+    // Erst nach dem Schließen liefert ein frisches Öffnen die Größe aus dem
+    // Verzeichniseintrag der Karte. Eine Abweichung bedeutet, dass Zeilen
+    // trotz erfolgreich gemeldeter Schreibvorgänge nicht angekommen sind.
+    const uint8_t unvollstaendig =
+        isReady() ? verifyLogFileSizes() : 0;
+    if (unvollstaendig > 0) {
+        rideSummary.completed = false;
+        rideSummary.interrupted = true;
+    }
+
+    if (sessionComplete && unvollstaendig == 0) {
         clearPersistentRecoveryState();
     } else if (isReady()) {
         recoveryOriginalSessionId = sessionId;
-        recoveryFailureReason = "SESSION_FINALIZATION_INCOMPLETE";
+        // Die beiden Fälle unterscheiden sich grundlegend: Bei fehlenden
+        // Abschlussdateien hat die Firmware selbst nicht zu Ende geschrieben,
+        // bei einer Größenabweichung sind gemeldete Schreibvorgänge unterhalb
+        // der Firmware verloren gegangen.
+        recoveryFailureReason =
+            unvollstaendig > 0 ? "SESSION_FILES_TRUNCATED"
+                               : "SESSION_FINALIZATION_INCOMPLETE";
         recoveryFailureUTC = rideSummary.endUTC;
         recoveryFailureTime = millis();
+        // Ausdrücklich kein automatischer Wiederanlauf: Der Nutzer hat die
+        // Messung beendet. Nur der Verweis bleibt bestehen.
         recoveryResumePending = false;
         recoveryBufferPending = false;
         recoveryBufferedRecordsAtFailure = 0;
@@ -578,9 +615,11 @@ void SDLogger::stopLogging() {
         recoveryBufferFileName = "";
         recoveryMarkerPending = true;
         persistFailureState(recoveryFailureReason);
-        lastRecoveryStatus =
-            "Sitzungsabschluss unvollständig; Verweis wird bei der nächsten "
-            "Messung protokolliert";
+        if (unvollstaendig == 0) {
+            lastRecoveryStatus =
+                "Sitzungsabschluss unvollständig; Verweis wird bei der "
+                "nächsten Messung protokolliert";
+        }
     }
 
     Serial.println(
@@ -673,7 +712,8 @@ bool SDLogger::createLogFile(LogType type) {
     return true;
 }
 
-bool SDLogger::openLogFile(File& file, String& fileName, LogType type) {
+bool SDLogger::openLogFile(
+    File& file, String& fileName, LogType type, LogFileIndex index) {
     fileName = generateFileName(type);
     file = SD.open(fileName, FILE_WRITE);
     if (!file) {
@@ -687,8 +727,99 @@ bool SDLogger::openLogFile(File& file, String& fileName, LogType type) {
         return false;
     }
 
+    // Ausgangswert einschließlich Kopfzeile. Alle weiteren Schreibvorgänge
+    // addieren darauf, sodass am Sitzungsende eine erwartete Gesamtgröße
+    // vorliegt.
+    expectedFileBytes[index] = file.size();
     stats.fileCount++;
     return true;
+}
+
+uint8_t SDLogger::verifyLogFileSizes() {
+    // Gegenprobe nach dem Schließen: Die Dateien werden frisch geöffnet,
+    // sodass die Größe aus dem Verzeichniseintrag der Karte stammt und nicht
+    // aus dem Arbeitsspeicher.
+    //
+    // Anlass ist 20260801_114252_B9D1628B: Dort verbuchte die Firmware 3534
+    // erfolgreiche GPS-Schreibvorgänge, die Datei enthielt aber nur 1122
+    // Zeilen und endete nach 227 von 709 Sekunden. Sämtliche Fehlerzähler
+    // standen auf null. Ein solcher Verlust unterhalb der Firmware bleibt
+    // ohne diese Prüfung unsichtbar.
+    struct Eintrag {
+        const String& name;
+        uint32_t erwartet;
+        const char* bezeichnung;
+    };
+    const Eintrag eintraege[] = {
+        {currentFileName, expectedFileBytes[LOGFILE_SENSOR], "Sensor"},
+        {roadFileName, expectedFileBytes[LOGFILE_ROAD], "Strasse"},
+        {gpsFileName, expectedFileBytes[LOGFILE_GPS], "GPS"},
+        {canFileName, expectedFileBytes[LOGFILE_CAN], "CAN"},
+        {obdFileName, expectedFileBytes[LOGFILE_OBD], "OBD"},
+        {obdTraceFileName, expectedFileBytes[LOGFILE_OBD_TRACE], "OBD-Trace"},
+        {metaFileName, expectedFileBytes[LOGFILE_META], "Metadaten"},
+        {eventFileName, expectedFileBytes[LOGFILE_EVENT], "Ereignis"},
+        {correlatedFileName, expectedFileBytes[LOGFILE_CORRELATED],
+         "Korrelation"},
+    };
+
+    String abweichungen;
+    uint8_t betroffen = 0;
+    for (const Eintrag& eintrag : eintraege) {
+        if (eintrag.name.length() == 0 || eintrag.erwartet == 0) continue;
+        File probe = SD.open(eintrag.name, FILE_READ);
+        if (!probe) {
+            ++betroffen;
+            abweichungen += String(eintrag.bezeichnung) + "=nicht lesbar;";
+            continue;
+        }
+        const uint32_t tatsaechlich = probe.size();
+        probe.close();
+        if (tatsaechlich >= eintrag.erwartet) continue;
+        ++betroffen;
+        abweichungen += String(eintrag.bezeichnung) + "=" +
+                        String(tatsaechlich) + "/" +
+                        String(eintrag.erwartet) + ";";
+        Serial.printf(
+            "❌ %s-Datei unvollständig: %lu von %lu Byte auf der Karte\n",
+            eintrag.bezeichnung,
+            static_cast<unsigned long>(tatsaechlich),
+            static_cast<unsigned long>(eintrag.erwartet));
+    }
+
+    if (betroffen == 0) {
+        return 0;
+    }
+
+    // Der Befund gehört in eine eigene Datei: Die Logdateien sind zu diesem
+    // Zeitpunkt geschlossen, und genau ihre Vollständigkeit steht in Frage.
+    const String berichtName =
+        sessionDirectory + "/" + config.filePrefix + "_integritaet_" +
+        sessionId + ".csv";
+    File bericht = SD.open(berichtName, FILE_WRITE);
+    if (bericht) {
+        bericht.println("Session,Datei,ByteAufKarte,ByteErwartet");
+        for (const Eintrag& eintrag : eintraege) {
+            if (eintrag.name.length() == 0 || eintrag.erwartet == 0) continue;
+            File probe = SD.open(eintrag.name, FILE_READ);
+            const uint32_t tatsaechlich = probe ? probe.size() : 0;
+            if (probe) probe.close();
+            if (tatsaechlich >= eintrag.erwartet) continue;
+            bericht.printf(
+                "%s,%s,%lu,%lu\n", sessionId.c_str(), eintrag.bezeichnung,
+                static_cast<unsigned long>(tatsaechlich),
+                static_cast<unsigned long>(eintrag.erwartet));
+        }
+        bericht.flush();
+        bericht.close();
+    }
+
+    stats.errorCount++;
+    lastRecoveryStatus =
+        "Sitzung " + sessionId + " unvollständig auf der Karte: " +
+        abweichungen;
+    Serial.println("❌ " + lastRecoveryStatus);
+    return betroffen;
 }
 
 void SDLogger::closeLogFiles() {
@@ -1235,6 +1366,7 @@ bool SDLogger::flushBuffer() {
             }
             stats.totalWrites += bufferedRecordCount;
             stats.totalBytes += bytesWritten;
+            expectedFileBytes[LOGFILE_SENSOR] += bytesWritten;
         } else {
             // Niemals einen abgeschnittenen CSV-Puffer schreiben. Die Sitzung
             // wird sichtbar abgebrochen, damit keine scheinbar gültige,
@@ -1384,7 +1516,8 @@ bool SDLogger::logVibrationMetrics(const VibrationMetrics& metrics) {
     
     if (eventLogFile &&
         writeFileTimed(
-            eventLogFile, logLine.c_str(), logLine.length()) ==
+            eventLogFile, expectedFileBytes[LOGFILE_EVENT],
+            logLine.c_str(), logLine.length()) ==
             logLine.length()) {
         stats.totalWrites++;
         stats.totalBytes += logLine.length();
@@ -1410,7 +1543,7 @@ bool SDLogger::logCANMessage(const CANMessage& msg) {
     if (!logging || !config.enableCANLog) return false;
 
     if (!canLogFile &&
-        !openLogFile(canLogFile, canFileName, LOG_TYPE_CAN)) {
+        !openLogFile(canLogFile, canFileName, LOG_TYPE_CAN, LOGFILE_CAN)) {
         return false;
     }
     
@@ -1454,7 +1587,7 @@ bool SDLogger::logCANMessage(const CANMessage& msg) {
     
     size_t logLength = strlen(logBuffer);
     if (canLogFile &&
-        writeFileTimed(canLogFile, logBuffer, logLength) == logLength) {
+        writeFileTimed(canLogFile, expectedFileBytes[LOGFILE_CAN], logBuffer, logLength) == logLength) {
         stats.totalWrites++;
         stats.totalBytes += logLength;
         return true;
@@ -1472,7 +1605,7 @@ bool SDLogger::logOBDData(
     }
 
     if (!obdLogFile &&
-        !openLogFile(obdLogFile, obdFileName, LOG_TYPE_OBD)) {
+        !openLogFile(obdLogFile, obdFileName, LOG_TYPE_OBD, LOGFILE_OBD)) {
         return false;
     }
 
@@ -1543,7 +1676,7 @@ bool SDLogger::logOBDData(
 
     const size_t logLength = static_cast<size_t>(written);
     if (obdLogFile &&
-        writeFileTimed(obdLogFile, logBuffer, logLength) == logLength) {
+        writeFileTimed(obdLogFile, expectedFileBytes[LOGFILE_OBD], logBuffer, logLength) == logLength) {
         stats.totalWrites++;
         stats.totalBytes += logLength;
         return true;
@@ -1562,7 +1695,8 @@ bool SDLogger::logOBDTraceEvent(
 
     if (!obdTraceLogFile &&
         !openLogFile(
-            obdTraceLogFile, obdTraceFileName, LOG_TYPE_OBD_TRACE)) {
+            obdTraceLogFile, obdTraceFileName, LOG_TYPE_OBD_TRACE,
+            LOGFILE_OBD_TRACE)) {
         return false;
     }
 
@@ -1616,7 +1750,7 @@ bool SDLogger::logOBDTraceEvent(
     }
 
     const size_t length = static_cast<size_t>(written);
-    if (writeFileTimed(obdTraceLogFile, logBuffer, length) == length) {
+    if (writeFileTimed(obdTraceLogFile, expectedFileBytes[LOGFILE_OBD_TRACE], logBuffer, length) == length) {
         stats.totalWrites++;
         stats.totalBytes += length;
         return true;
@@ -1736,7 +1870,7 @@ bool SDLogger::logSessionMetadata(
     }
 
     const size_t length = static_cast<size_t>(written);
-    if (writeFileTimed(metaLogFile, logBuffer, length) == length) {
+    if (writeFileTimed(metaLogFile, expectedFileBytes[LOGFILE_META], logBuffer, length) == length) {
         stats.totalWrites++;
         stats.totalBytes += length;
         lastMetadataLog = millis();
@@ -1804,7 +1938,7 @@ bool SDLogger::logGPSData(const GPSData& gps) {
     
     size_t logLength = strlen(logBuffer);
     if (gpsLogFile &&
-        writeFileTimed(gpsLogFile, logBuffer, logLength) == logLength) {
+        writeFileTimed(gpsLogFile, expectedFileBytes[LOGFILE_GPS], logBuffer, logLength) == logLength) {
         stats.totalWrites++;
         stats.totalBytes += logLength;
         gpsSessionLastLoggedFixSequence = gps.fix_sequence;
@@ -1906,7 +2040,8 @@ bool SDLogger::logRoadQuality(float quality, float smoothness,
     
     if (roadLogFile &&
         writeFileTimed(
-            roadLogFile, logLine.c_str(), logLine.length()) ==
+            roadLogFile, expectedFileBytes[LOGFILE_ROAD],
+            logLine.c_str(), logLine.length()) ==
             logLine.length()) {
         stats.totalWrites++;
         stats.totalBytes += logLine.length();
@@ -1949,7 +2084,8 @@ bool SDLogger::logEvent(const String& eventType, const String& description,
     
     if (eventLogFile &&
         writeFileTimed(
-            eventLogFile, logLine.c_str(), logLine.length()) ==
+            eventLogFile, expectedFileBytes[LOGFILE_EVENT],
+            logLine.c_str(), logLine.length()) ==
             logLine.length()) {
         if (flushImmediately) {
             flushFileTimed(eventLogFile);
@@ -2030,7 +2166,8 @@ bool SDLogger::logCurve(
     bool logged =
         eventLogFile &&
         writeFileTimed(
-            eventLogFile, logLine.c_str(), logLine.length()) ==
+            eventLogFile, expectedFileBytes[LOGFILE_EVENT],
+            logLine.c_str(), logLine.length()) ==
             logLine.length();
     if (logged) {
         // Ein Ereignis wird sofort gesichert. Die Referenzmarker der

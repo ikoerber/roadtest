@@ -1,7 +1,7 @@
 # ROADTEST Firmware
 
 ESP32-S3-Firmware zur Aufzeichnung von BNO055-, GPS-, Straßenqualitäts- und
-standardisierten OBD-II-Daten. Aktueller Firmwarestand: **1.5.30**.
+standardisierten OBD-II-Daten. Aktueller Firmwarestand: **1.5.31**.
 
 Der aktuelle Stand ist ein Hardware- und Fahrzeugteststand, nicht abschließend
 produktionsreif. Bekannte Einschränkungen stehen weiter unten.
@@ -240,8 +240,8 @@ Eigenschaften des Sitzungskopfes.
 
 ## Aktueller Teststand
 
-- Firmware 1.5.30 baut erfolgreich für `lolin_s3_mini`.
-- Letzter Build: 71.076 Byte RAM (21,7 %) und 1.250.270 Byte Flash (95,4 %).
+- Firmware 1.5.31 baut erfolgreich für `lolin_s3_mini`.
+- Letzter Build: 71.108 Byte RAM (21,7 %) und 1.252.598 Byte Flash (95,6 %).
 - Am 31.07.2026 liefen fünf Beifahrer-Referenzfahrten mit 1.5.28 und je zwölf
   markierten Referenzintervallen. Sie sind der Prüfstand der Kurvenerkennung.
 - 1.5.29 ist am Fahrzeug bestätigt: vier Fahrten am 01.08.2026 über 21 Minuten
@@ -407,6 +407,17 @@ Positionssprungbewertung und ereignisorientiertes Logging bleiben offen.
   Spannungsverlust bleibt ein manueller Messstart verbindlich, und es
   entsteht bewusst keine Zusammenfassung: Der Sitzungsmarker überlebt im NVS,
   die Kennzahlen nicht.
+- Ein erfolgreich gemeldeter Schreibvorgang beweist nicht, dass die Zeile die
+  Karte erreicht hat. In `20260801_114252_B9D1628B` fehlten 68 Prozent der
+  GPS-Spur bei null Fehlerzählern und schlüssiger firmwareseitiger
+  Buchführung. Seit 1.5.31 prüft die Firmware am Sitzungsende jede Logdatei
+  gegen die tatsächliche Größe auf der Karte und legt bei Abweichung
+  `road_integritaet_<Sitzung>.csv` an. Die Prüfung erkennt den Verlust, sie
+  verhindert ihn nicht; die Ursache liegt unterhalb der Firmware und ist noch
+  offen. Ein Gegentest mit einer anderen SD-Karte steht aus.
+- Bei Auswertungen jeder Sitzung zuerst die Zeilenzahl jeder Datei gegen die
+  Zähler der Metadatendatei stellen. Vollständigkeit nicht aus dem Vorhandensein
+  eines END-Records und einer Zusammenfassung schließen.
 - Der SD-Flush läuft seit 1.5.30 in Einzelschritten. `flushStep()` gehört in
   die Hauptschleife und sichert je Aufruf höchstens eine Datei; `flush()`
   sichert alles in einem Zug und bleibt Sitzungsenden vorbehalten. Die

@@ -26,6 +26,20 @@ enum LogType {
 };
 
 // Log-Konfiguration
+// Feste Reihenfolge der Logdateien für die Größenprüfung.
+enum LogFileIndex : uint8_t {
+    LOGFILE_SENSOR = 0,
+    LOGFILE_ROAD,
+    LOGFILE_GPS,
+    LOGFILE_CAN,
+    LOGFILE_OBD,
+    LOGFILE_OBD_TRACE,
+    LOGFILE_META,
+    LOGFILE_EVENT,
+    LOGFILE_CORRELATED,
+    LOGFILE_COUNT
+};
+
 struct LogConfig {
     bool enableSensorLog;
     bool enableCANLog;
@@ -199,6 +213,9 @@ private:
     String recoveryBufferFileName;
     // Ob die Zusammenfassung der abgebrochenen Sitzung nachgetragen wurde.
     bool recoverySummaryWritten;
+    // Summe der je Logdatei geschriebenen Bytes einschließlich Kopfzeile.
+    // Grundlage der Größenprüfung am Sitzungsende.
+    uint32_t expectedFileBytes[LOGFILE_COUNT];
     String lastRecoveryStatus;
     
     // Buffer-Overflow Schutz Funktionen
@@ -208,7 +225,12 @@ private:
     String generateFileName(LogType type);
     String generateSessionId();
     bool createLogFile(LogType type);
-    bool openLogFile(File& file, String& fileName, LogType type);
+    bool openLogFile(
+        File& file, String& fileName, LogType type, LogFileIndex index);
+    // Vergleicht nach dem Schließen die tatsächliche Dateigröße auf der Karte
+    // mit der Summe der geschriebenen Bytes. Liefert die Zahl der Dateien mit
+    // Abweichung.
+    uint8_t verifyLogFileSizes();
     void closeLogFiles();
     void handleCardFailure(const char* reason, uint32_t droppedRecords = 0);
     bool writeHeader(File& file, LogType type);
