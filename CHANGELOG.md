@@ -5,6 +5,28 @@ Alle wichtigen Änderungen am ESP32-S3 Straßenqualitäts-Messsystem werden in d
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt hält sich an [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.33] - 2026-08-01
+
+### Entfernt
+- Die geführte Beifahrerseite `/curve-test` samt ihren sechs Routen, dem
+  Seitenaufbau, der Zustandsverwaltung und dem Status-JSON. Ihr Zweck ist
+  erfüllt: Am 31.07.2026 entstanden damit fünf Referenzfahrten mit zusammen
+  55 markierten Kurven, die in `testdata/` liegen und als Festwerte in
+  `test_wiedergabe_referenzfahrten` verankert sind. Diese Daten bleiben die
+  Messgrundlage für Schwellwertänderungen der Kurvenerkennung.
+- Der Parameter `flushImmediately` von `SDLogger::logEvent()` entfällt. Er
+  existierte allein für die gepufferten Referenzmarker; alle verbliebenen
+  Aufrufer sichern das Ereignis sofort.
+- Der Gewinn beträgt **13.868 Byte Flash**: 1.219.138 statt 1.233.006 Byte,
+  93,0 statt 94,1 Prozent der App-Partition.
+
+### Hinweis
+- Wird je wieder ein frischer Referenzsatz gebraucht, ist die Seite über die
+  Versionsgeschichte wiederherstellbar. Die Ereignisse hießen
+  `CURVE_TEST_START`, `CURVE_TEST_END`, `CURVE_REFERENCE_START` und
+  `CURVE_REFERENCE_END`; der GeoJSON-Export wertet sie unverändert aus, damit
+  die vorhandenen Fahrten weiter vollständig darstellbar bleiben.
+
 ## [1.5.32] - 2026-08-01
 
 ### Entfernt

@@ -318,8 +318,7 @@ public:
     
     // Ereignisse loggen
     bool logEvent(const String& eventType, const String& description,
-                  float lat = 0, float lon = 0, float severity = 0,
-                  bool flushImmediately = true);
+                  float lat = 0, float lon = 0, float severity = 0);
     bool logPothole(float severity, float lat = 0, float lon = 0);
     bool logCurve(
         const CurveEvent& event, float lat = 0, float lon = 0);

@@ -2,7 +2,7 @@
 
 Ein fortschrittliches Embedded-System zur Messung und Bewertung von Straßenqualität für kurvenreiche Motorradstrecken.
 
-Aktueller Firmwarestand: **1.5.32**. Der Stand ist ein Hardware- und
+Aktueller Firmwarestand: **1.5.33**. Der Stand ist ein Hardware- und
 Fahrzeugteststand. 1.5.28 misst Kurven über eine einbaulagenunabhängige
 Gyroskopprojektion, protokolliert Radius und vollständige Ereignisintervalle
 und stellt dafür einen geführten Beifahrertest bereit. 1.5.29 schärft die
@@ -291,32 +291,24 @@ Während dieses Ablaufs sind `start`, `stop` und `obd on/off` absichtlich
 gesperrt. `discover end` stellt den
 vorherigen OBD-Zustand wieder her und schließt alle SD-Dateien.
 
-### Geführter Beifahrer-Kurventest
+### Beifahrer-Kurventest (entfernt in 1.5.33)
 
-Firmware 1.5.28 stellt unter `/curve-test` einen eigenen Kurventest bereit.
-Die Seite startet und beendet die Aufzeichnung selbst; vorheriges manuelles
-Starten ist nicht nötig. Die Referenzen können in jeder Reihenfolge markiert
-werden, so wie sie sich aus der gefahrenen Strecke ergeben:
+Die Firmware stellte unter `/curve-test` eine geführte Seite bereit, mit der
+ein Beifahrer Kurvenanfang und -ende von Hand markierte. Damit entstanden am
+31.07.2026 fünf Referenzfahrten mit zusammen 55 markierten Kurven. Diese
+Daten liegen in `testdata/` und sind als Festwerte in
+`test_wiedergabe_referenzfahrten` verankert; sie bleiben die Messgrundlage
+für Schwellwertänderungen der Kurvenerkennung.
 
-1. 45 bis 60 Sekunden möglichst gerade Fahrt
-2. vier langgezogene Kurven, möglichst je zwei links und rechts
-3. vier normale oder enge Kurven, möglichst je zwei links und rechts
-4. drei vollständige S-Kurven
+Die Seite selbst wurde mit 1.5.33 entfernt, weil ihr Zweck erfüllt ist. Wird
+je wieder ein frischer Referenzsatz gebraucht, ist sie über die
+Versionsgeschichte wiederherstellbar; die Ereignisse hießen `CURVE_TEST_START`,
+`CURVE_TEST_END`, `CURVE_REFERENCE_START` und `CURVE_REFERENCE_END`.
 
-Der Beifahrer drückt den Startknopf genau am physischen Beginn der Kurve und
-den danach allein sichtbaren Endknopf am tatsächlichen Ende. Bei einer
-S-Kurve umfasst ein Referenzintervall beide Hälften. Vollständig erledigte
-Kurvenarten beziehungsweise Richtungen verschwinden; alle noch offenen
-Referenzen bleiben auswählbar. Der Fahrer bedient die Seite nicht und soll
-keine ungewöhnlichen oder fahrdynamisch riskanten Manöver ausführen.
-
-Die Ereignisdatei enthält neben den manuellen Referenzintervallen automatisch
-erkannte Kurven mit Start- und Endzeit, Radius, Drehrate,
-Querbeschleunigung, Erkennungsmodus und Qualitätsflags. Die Sensor-CSV
-protokolliert außerdem Schwerkraft und projizierte Drehrate für eine
-unabhängige Nachrechnung. Referenzmarker werden erst beim regulären
-Sammelflush gesichert, damit ein Knopfdruck keine künstliche Messpause
-verursacht.
+Die Ereignisdatei enthält weiterhin automatisch erkannte Kurven mit Start-
+und Endzeit, Radius, Drehrate, Querbeschleunigung, Erkennungsmodus und
+Qualitätsflags. Die Sensor-CSV protokolliert außerdem Schwerkraft und
+projizierte Drehrate für eine unabhängige Nachrechnung.
 
 ### Abnahme von Firmware 1.5.28
 
@@ -683,6 +675,11 @@ Buslast steht in [OPTIMIERUNGEN.md](OPTIMIERUNGEN.md).
 
 ## 📈 Version History
 
+### v1.5.33 - Beifahrer-Kurventest entfernt
+- ✅ Seite `/curve-test` samt Routen und Zustandsverwaltung raus; 13.868 Byte
+  Flash frei, 93,0 statt 94,1 Prozent
+- ✅ Referenzdaten der fünf Fahrten vom 31.07.2026 bleiben als Prüfstand
+
 ### v1.5.32 - OLED-Treiber entfernt
 - ✅ Displaytreiber und beide Adafruit-Bibliotheken raus; 19.592 Byte Flash
   frei, 94,1 statt 95,6 Prozent
@@ -730,7 +727,7 @@ Buslast steht in [OPTIMIERUNGEN.md](OPTIMIERUNGEN.md).
   Schwerkraftrichtung; keine feste Sensorachse als Hochachse vorausgesetzt
 - ✅ Strukturierte Kurvenereignisse mit Beginn, Ende, Richtung, Radius,
   Querbeschleunigung, S-Kurven-Gruppierung und Qualitätsflags
-- ✅ Geführte Beifahrerseite `/curve-test` für Referenzintervalle
+- ✅ Geführte Beifahrerseite `/curve-test` für Referenzintervalle (entfernt in 1.5.33)
 - ✅ `KurvenProKm` wird aus tatsächlichen Kurven und geprüfter GPS-Strecke gefüllt
 - ✅ Auswertelogik von Kurven und Fahrbahn hardwarefrei ausgelagert und mit
   37 Hosttests abgedeckt (`pio test -e native`, ohne Firmware-Flash)

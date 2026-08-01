@@ -2070,8 +2070,7 @@ bool SDLogger::logRoadMetrics(const RoadMetrics& metrics) {
 }
 
 bool SDLogger::logEvent(const String& eventType, const String& description,
-                       float lat, float lon, float severity,
-                       bool flushImmediately) {
+                       float lat, float lon, float severity) {
     if (!logging || !config.enableEventLog) return false;
     
     String logLine = formatTimestamp() + "," +
@@ -2087,9 +2086,7 @@ bool SDLogger::logEvent(const String& eventType, const String& description,
             eventLogFile, expectedFileBytes[LOGFILE_EVENT],
             logLine.c_str(), logLine.length()) ==
             logLine.length()) {
-        if (flushImmediately) {
-            flushFileTimed(eventLogFile);
-        }
+        flushFileTimed(eventLogFile);
         stats.totalWrites++;
         stats.totalBytes += logLine.length();
         return true;
@@ -2170,8 +2167,7 @@ bool SDLogger::logCurve(
             logLine.c_str(), logLine.length()) ==
             logLine.length();
     if (logged) {
-        // Ein Ereignis wird sofort gesichert. Die Referenzmarker der
-        // Beifahrerseite verwenden dagegen bewusst gepuffertes Logging.
+        // Ein Ereignis wird sofort gesichert.
         flushFileTimed(eventLogFile);
         stats.totalWrites++;
         stats.totalBytes += logLine.length();
