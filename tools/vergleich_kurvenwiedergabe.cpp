@@ -111,11 +111,8 @@ struct Firmwareereignis {
 int main(int argc, char** argv) {
     const std::string basis = argc > 1 ? argv[1] : "testdata/";
     const char* sitzungen[] = {
-        "20260731_142552_677AA179", "20260731_151337_DAB245DC",
-        "20260731_152148_452707FB", "20260731_153224_503BD642",
-        "20260731_153850_6C7F041E", "20260731_154635_0FB73393",
-        "20260731_155106_3AEFA823", "20260731_160032_3D732AD1",
-        "20260731_160627_085A6E1C"};
+        "20260801_114252_B9D1628B", "20260801_115523_058A2486",
+        "20260801_121133_CE143DA9", "20260801_121741_97BE23A1"};
 
     size_t gesamtFirmware = 0, gesamtWiedergabe = 0, gesamtPaare = 0;
     double winkelAbwSumme = 0;
@@ -162,15 +159,30 @@ int main(int argc, char** argv) {
             versatzBekannt = true;
             break;
         }
+        // Ohne Referenzmarker bleibt nur der Rueckschluss aus den
+        // Kurvenereignissen. EndUptimeMs - UptimeMs ergibt den Versatz
+        // abzueglich des Schreibverzugs, und der haengt vom Abschlussgrund ab:
+        // nach QUIET vergeht das volle Ruhefenster, nach REVERSAL fast nichts.
+        // Das Maximum ueber alle Ereignisse trifft deshalb den Versatz am
+        // besten; der erste Wert lag je nach Fahrt bis zu zwei Sekunden daneben.
+        if (!versatzBekannt) {
+            for (const auto& r : ereignis.rows) {
+                if (r[eK] != "KURVE" || r[eEnde].empty()) continue;
+                const uint32_t kandidat =
+                    static_cast<uint32_t>(
+                        std::strtoul(r[eEnde].c_str(), nullptr, 10)) -
+                    static_cast<uint32_t>(
+                        std::strtoul(r[eUptime].c_str(), nullptr, 10));
+                if (!versatzBekannt || kandidat > versatz) {
+                    versatz = kandidat;
+                    versatzBekannt = true;
+                }
+            }
+        }
         for (const auto& r : ereignis.rows) {
             if (r[eK] != "KURVE" || r[eEnde].empty()) continue;
             const uint32_t ende =
                 static_cast<uint32_t>(std::strtoul(r[eEnde].c_str(), nullptr, 10));
-            if (!versatzBekannt) {
-                versatz = ende - static_cast<uint32_t>(
-                                     std::strtoul(r[eUptime].c_str(), nullptr, 10));
-                versatzBekannt = true;
-            }
             firmware.push_back(
                 {static_cast<uint32_t>(
                      std::strtoul(r[eStart].c_str(), nullptr, 10)) - versatz,
