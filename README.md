@@ -747,7 +747,12 @@ Buslast steht in [OPTIMIERUNGEN.md](OPTIMIERUNGEN.md).
   ohne eine der 55 markierten Referenzkurven zu verlieren
 - ✅ Wiedergabe aller fünf Referenzfahrten als Hosttest mit festgeschriebener
   Trefferzahl gegen 55 von Hand markierte Referenzkurven
-- ⚠️ Wirksamkeit am Gerät noch nicht bestätigt
+- ✅ Am Fahrzeug bestätigt (vier Fahrten am 01.08.2026, 21 Minuten, 9,1 km):
+  Zeitabdeckung 97 Prozent im Median, nur 1 von 66 Ereignissen unter
+  60 Prozent, keine Ausreißer über die Höchstdauer, kein Ereignis im Stand
+- ✅ Wiedergabe gibt die Firmwareläufe wieder: 65 von 66 Ereignissen
+  zugeordnet, drei von vier Fahrten ereignisgenau bei 0,0 bis 0,1 Grad
+- ⚠️ Abschlussgrund `SESSION_END` am Gerät noch nicht beobachtet
 
 ### v1.5.28 - Einbaulagenunabhängige Drehrate und Hosttests
 - ✅ Fahrzeug-Drehrate aus der Projektion des Gyroskopvektors auf die

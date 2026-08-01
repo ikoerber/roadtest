@@ -241,9 +241,20 @@ Eigenschaften des Sitzungskopfes.
 ## Aktueller Teststand
 
 - Firmware 1.5.29 baut erfolgreich für `lolin_s3_mini`.
-- Letzter Build: 71.060 Byte RAM (21,7 %) und 1.249.050 Byte Flash (95,3 %).
+- Letzter Build: 71.060 Byte RAM (21,7 %) und 1.249.082 Byte Flash (95,3 %).
 - Am 31.07.2026 liefen fünf Beifahrer-Referenzfahrten mit 1.5.28 und je zwölf
   markierten Referenzintervallen. Sie sind der Prüfstand der Kurvenerkennung.
+- 1.5.29 ist am Fahrzeug bestätigt: vier Fahrten am 01.08.2026 über 21 Minuten
+  und 9,1 km, Zeitabdeckung der Ereignisse 97 % im Median gegenüber 67 % mit
+  1.5.28, nur 1 von 66 Ereignissen unter 60 %, keine Ausreißer über die
+  Höchstdauer, kein Ereignis im Stand. Der Abgleich der Wiedergabe gegen die
+  Firmwareereignisse ordnete 65 von 66 zu, drei der vier Fahrten
+  ereignisgenau bei 0,0 bis 0,1 Grad.
+- Offen bleibt der Abschlussgrund `SESSION_END`: Er greift nur, wenn die
+  Aufzeichnung gestoppt wird, während das Fahrzeug über 5 km/h fährt und eine
+  Kurve läuft. Wird vorher angehalten, schließt bereits das
+  Geschwindigkeitsgatter die Kurve als `QUIET` ab. Zum Prüfen einen Kreis bei
+  etwa 15 km/h fahren und im Kreisen stoppen, ohne vorher auszurollen.
 - Zwei SD-Abbrüche desselben Tages wurden verlustfrei aufgefangen:
   `20260731_142359_514EDDF4` mit 38 von 38 geretteten Pufferzeilen nach
   81 Sekunden Ausfall und `20260731_160032_3D732AD1` mit 17 von 17 nach
@@ -318,10 +329,15 @@ werden nicht gleichzeitig neu parametriert.
   erhalten.
 
 Die Beifahrerfahrten dieser Art sind am 31.07.2026 fünfmal gelaufen und
-liegen als Prüfstand in `testdata/` vor. Nächster sinnvoller Schritt ist eine
-Bestätigungsfahrt mit 1.5.29 und `/curve-test`, um die geschärften
-Ereignisgrenzen und den Abschluss beim Messende am Gerät zu belegen. Der
-vollständige ECU-Recovery-Ablauf muss dabei nicht erneut durchgeführt werden.
+liegen als Prüfstand in `testdata/` vor. Die Bestätigungsfahrt mit 1.5.29 lief
+am 01.08.2026 in vier Sitzungen und belegte die geschärften Ereignisgrenzen.
+Referenzmarker braucht eine solche Fahrt nicht: Die Schwellwerte sind über die
+Fahrten vom 31.07.2026 bestimmt und im Hosttest festgeschrieben; eine
+Bestätigungsfahrt prüft die Übereinstimmung von Gerät und Wiedergabe, und dafür
+genügt normales Fahren. Der vollständige ECU-Recovery-Ablauf muss dabei nicht
+erneut durchgeführt werden.
+
+Offen ist allein noch eine zweiminütige Parkplatzrunde für `SESSION_END`.
 
 ### GPS
 

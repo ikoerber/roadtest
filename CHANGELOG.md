@@ -10,6 +10,37 @@ und dieses Projekt hält sich an [Semantic Versioning](https://semver.org/spec/v
 Auswertung der fünf Beifahrer-Referenzfahrten vom 31.07.2026 mit zusammen
 55 von Hand markierten Referenzkurven.
 
+### Am Gerät bestätigt
+
+Vier Fahrten am 01.08.2026 über zusammen 21 Minuten und 9,1 Kilometer,
+ohne Beifahrer-Referenzmarker. Alle vier Sitzungen vollständig, kein
+SD-Abbruch.
+
+- Zeitabdeckung der Ereignisse: 97 Prozent im Median, 1 von 66 Ereignissen
+  unter 60 Prozent. Mit 1.5.28 waren es 67 Prozent im Median und 37 Prozent
+  darunter. Kein einziges Ereignis lief mehr in die Höchstdauer; mit 1.5.28
+  gab es zwei solche Ausreißer über volle 60 Sekunden.
+- Kein Kurvenereignis im Stand. In der Hauptfahrt entstand während der
+  einminütigen Standphase nach dem Messstart nichts; das erste Ereignis kam
+  bei 116,6 Sekunden.
+- Abgleich der Wiedergabe gegen die Firmwareereignisse mit
+  `tools/vergleich_kurvenwiedergabe.cpp`: 65 von 66 Ereignissen zugeordnet,
+  drei der vier Fahrten ereignisgenau bei 0,0 bis 0,1 Grad Winkelabweichung.
+  Die Umsetzung auf dem ESP32 ist damit belegt und nicht nur plausibel.
+- Die einzige Abweichung ist ein Grenzfall der Ruhefensterschwelle: Der
+  Netto-Winkel erreichte 2,020 Grad bei einer Fensterlaufzeit von 1999
+  Millisekunden, gegen eine Schwelle von 2,0 Grad und 2000 Millisekunden.
+  Die Firmware trennte dort in zwei Kurven mit 92,8 und 98,2 Grad, die
+  Wiedergabe führte eine mit 191,4 Grad durch. Die Ursache liegt in der
+  Prüfmethode: die Gierrate wird mit drei Nachkommastellen protokolliert,
+  und über die rund zwanzig Stichproben des Fensters summiert sich diese
+  Rundung auf etwa 0,01 Grad.
+- Noch offen: `SESSION_END` wurde nicht beobachtet. Der Abschlussgrund greift
+  nur, wenn die Aufzeichnung gestoppt wird, während das Fahrzeug über
+  5 km/h fährt und eine Kurve läuft. Auf dem Parkplatz wurde vor dem Stopp
+  angehalten; das Geschwindigkeitsgatter schloss die Kurve dann bereits als
+  `QUIET` ab. Der Pfad bleibt durch drei Hosttests abgedeckt.
+
 ### Behoben
 - Eine beim Stoppen noch laufende Kurve wird abgeschlossen und protokolliert,
   statt verloren zu gehen. Das Ruhefenster über `CURVE_END_QUIET_MS` läuft
