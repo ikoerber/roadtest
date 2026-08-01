@@ -7,7 +7,6 @@
 #include "can_reader.h"
 #include "gps_manager.h"
 #include "hardware_config.h"
-#include "oled_manager.h"
 #include "runtime_diagnostics.h"
 #include "sd_logger.h"
 #include "vehicle_data_discovery.h"
@@ -529,7 +528,6 @@ String WebManager::buildStatusPage() {
     bool requiredHardwareReady =
         bnoManager.isSelfTestPassed() && bnoManager.isFusionModeActive() &&
         bnoManager.isDataValid() &&
-        (!OLED_REQUIRED || oledManager.isReady()) &&
         sdLogger.isReady() && gpsNMEAStream && isReady();
     String page;
     page.reserve(4500);
@@ -557,9 +555,6 @@ String WebManager::buildStatusPage() {
                     bnoManager.isDataValid()
                 ? String("OK · ") + ROADTEST_BNO_MODE_NAME
                 : String("Fehler");
-    page += F("</td></tr><tr><td>OLED</td><td>");
-    page += oledManager.isReady() ? F("OK · optional")
-                                 : F("nicht verbunden · optional");
     page += F("</td></tr><tr><td>GPS</td><td>");
     if (gpsManager.hasValidFix()) {
         page += F("Fix, ");

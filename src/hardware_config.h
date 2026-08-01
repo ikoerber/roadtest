@@ -7,7 +7,7 @@
 // Zentrale Pin-Konfiguration für das Straßenqualitäts-Messsystem
 // Alle Hardware-spezifischen Pin-Zuordnungen sind hier definiert
 
-#define ROADTEST_FIRMWARE_VERSION "1.5.31"
+#define ROADTEST_FIRMWARE_VERSION "1.5.32"
 #define ROADTEST_FIRMWARE_FILE_NAME \
     "roadtest_" ROADTEST_FIRMWARE_VERSION ".bin"
 #define ROADTEST_CSV_SCHEMA_VERSION "1.5.28-quality-v10"
@@ -20,9 +20,11 @@ extern const int I2C_SDA;          // GPIO 8  - I2C Data Line
 extern const int I2C_SCL;          // GPIO 9  - I2C Clock Line
 
 // I2C-Geräte-Adressen (BNO055_ADDRESS_* bereits in Adafruit_BNO055.h definiert)
+// Das Display ist verbaut, wird von der Firmware aber nicht mehr angesteuert.
+// Die Adressen bleiben, weil der I²C-Scanner und die Buszustandsdiagnose das
+// Display als zweiten unabhängigen Teilnehmer weiterhin anpingen.
 #define OLED_ADDRESS_A      0x3C    // OLED Standard-Adresse
 #define OLED_ADDRESS_B      0x3D    // OLED Alternative-Adresse
-#define OLED_REQUIRED       false   // Steckbares Display darf für Tests fehlen
 
 // -----------------------------------------------------------------------------
 // SPI-Bus Konfiguration
@@ -54,23 +56,20 @@ extern const int GPS_BAUD_RATE;    // 9600    - GPS Baudrate
 
 // Timing-Konstanten
 //
-// I²C: Der SSD1306-Treiber stellt den Bustakt bei jedem Transfer selbst ein
-// (TRANSACTION_START/END in Adafruit_SSD1306.cpp) und lässt ihn danach auf
-// seinem eigenen Default stehen. Ein Wire.setClock() in setup() wäre deshalb
-// bereits nach dem ersten Bildaufbau wirkungslos. Beide Werte werden daher
-// explizit an den Displaykonstruktor übergeben (oled_manager.cpp), erst damit
-// steuern die Konstanten hier den Bus tatsächlich.
+// I²C: Solange das Display mitlief, stellte dessen Treiber den Bustakt bei
+// jedem Transfer selbst ein; ein Wire.setClock() in setup() war dadurch nach
+// dem ersten Bildaufbau wirkungslos. Seit das Display nicht mehr angesteuert
+// wird, gilt der Takt hier wieder unmittelbar für den ganzen Bus.
 // Gemessen wurden 2,54 kOhm Pull-up. Eine Logic-8-Aufnahme zeigte, dass leere
 // Schreibtransaktionen zur BNO055-Erkennung den folgenden Adresszugriff als
 // Datenbyte an den Sensor anhängen konnten. Dadurch entstand SYS_ERR 5. Die
 // Firmware liest deshalb zur Erkennung die Chip-ID und begrenzt außerdem jede
 // I²C-Busoperation zeitlich.
 //
-// Beide Taktwerte bleiben gleich. Die gemessenen 100 kHz laufen mit BNO055 und
-// OLED stabil; der Bildaufbau dauert bei einem Aktualisierungsintervall von
-// fünf Sekunden nur unwesentlich länger.
-#define I2C_CLOCK_SPEED     100000  // Basistakt für BNO055 zwischen den Transfers
-#define I2C_DISPLAY_SPEED   100000  // Takt während der SSD1306-Übertragungen
+// Die gemessenen 100 kHz laufen mit dem BNO055 stabil. Der Wert stammt aus der
+// Zeit, als das Display mit am Bus betrieben wurde; er bleibt unverändert,
+// weil die Busanalyse aus Juli 2026 genau darauf beruht.
+#define I2C_CLOCK_SPEED     100000  // Basistakt des I²C-Busses
 #define I2C_TIMEOUT_MS          20  // Einzelne Busoperation spätestens abbrechen
 
 // SD: Die Bibliothek verwendet ohne Argument 4 MHz. Auf Lochraster ohne
@@ -202,8 +201,6 @@ extern const int GPS_BAUD_RATE;    // 9600    - GPS Baudrate
 #define WIFI_TX_POWER       WIFI_POWER_11dBm
 
 // Display-Spezifikationen
-#define SCREEN_WIDTH        128     // OLED Display Breite
-#define SCREEN_HEIGHT       64      // OLED Display Höhe
 #define OLED_RESET          -1      // OLED Reset Pin (nicht verwendet)
 
 // Sensor-Konfiguration  

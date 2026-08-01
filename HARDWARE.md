@@ -10,7 +10,7 @@ Signalbezeichnungen auf den Modulen. Kabelfarben sind nicht verbindlich.
 |---|---|---|
 | Controller | ESP32-S3-Board, genaue Variante per `diag` prüfen | Firmware, WLAN und OTA |
 | Bewegungssensor | Adafruit BNO055 Breakout | NDOF-Sensorfusion |
-| Display, optional | SSD1306 OLED, 128 × 64 | Steckbare I²C-Statusanzeige |
+| Display, ungenutzt | SSD1306 OLED, 128 × 64 | Verbaut, softwareseitig nicht angesteuert; dient der I²C-Diagnose |
 | GPS | Beitian BN-880 | NMEA über UART, 9600 Baud |
 | Speicher | PZSMOCN Micro-SD-Modul | SPI-Datenaufzeichnung |
 | CAN/OBD | Joy-IT SBC-CAN01: MCP2515 + MCP2562, 16-MHz-Quarz | Nur lesende OBD-II-Liveabfrage |
@@ -91,10 +91,13 @@ variablen LiPo-Zellenspannung.
 
 ## BNO055 und OLED am gemeinsamen I²C-Bus
 
-Das OLED ist steckbar und für Messung, Aufzeichnung und Systembereitschaft
-nicht erforderlich. Die Firmware erkennt es beim Start und später im
-Hintergrund automatisch. Wegen des gemeinsam mit dem BNO055 genutzten
-I²C-Busses darf der Stecker nur bei ausgeschaltetem System betätigt werden.
+Das OLED ist steckbar und für Messung und Aufzeichnung nicht erforderlich.
+**Seit Firmware 1.5.32 wird es nicht mehr angesteuert.** Es bleibt bewusst
+gesteckt, weil es als zweiter unabhängiger I²C-Teilnehmer die Diagnose des
+Busses trägt: Fällt es zusammen mit dem BNO055 aus, liegt die Ursache am Bus
+oder an der Versorgung und nicht am Sensor. Die Firmware pingt seine Adresse
+weiterhin an und zählt Aussetzer. Wegen des gemeinsamen Busses darf der
+Stecker nur bei ausgeschaltetem System betätigt werden.
 
 ```text
 ESP32-S3 GPIO       BNO055                 SSD1306 OLED

@@ -42,8 +42,6 @@ extern int accelBufferIndex;
 // void updateCurveDetection();        // -> BNO055Manager::detectCurve()
 // void updateSurfaceQuality();        // -> BNO055Manager::analyzeVibration() 
 // float calculateOverallScore();      // -> BNO055Manager::calculateRoadQuality()
-// void displayResults();              // -> OLEDManager::showRoadQuality()
-// void displaySensorData();           // -> OLEDManager::showSensorData()
 // void readCANMessages();             // -> CANReader::readMessage()
 
 #endif

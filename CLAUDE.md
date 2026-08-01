@@ -1,7 +1,7 @@
 # ROADTEST Firmware
 
 ESP32-S3-Firmware zur Aufzeichnung von BNO055-, GPS-, Straßenqualitäts- und
-standardisierten OBD-II-Daten. Aktueller Firmwarestand: **1.5.31**.
+standardisierten OBD-II-Daten. Aktueller Firmwarestand: **1.5.32**.
 
 Der aktuelle Stand ist ein Hardware- und Fahrzeugteststand, nicht abschließend
 produktionsreif. Bekannte Einschränkungen stehen weiter unten.
@@ -46,7 +46,6 @@ src/curve_detector.{h,cpp}      Kurvenerkennung, hardwarefrei und hosttestbar
 src/road_metrics.{h,cpp}        Vibration, Straßenqualität, Schlaglöcher;
                                 ebenfalls hardwarefrei und hosttestbar
 src/road_quality.h              Datenstruktur RoadMetrics für Auswertungen
-src/oled_manager.{h,cpp}        Optionale Statusanzeige
 src/web_manager.{h,cpp}         ROADTEST-WLAN, Statusseite und Browser-OTA
 src/runtime_diagnostics.{h,cpp} Laufzeit-, Web- und SD-Pausendiagnose
 src/integration_tests.{h,cpp}   Serielle Hardware- und Integrationstests
@@ -56,7 +55,8 @@ Systemablauf:
 
 1. WLAN und Webseite starten vor den externen Hardwareprüfungen.
 2. BNO055, GPS, SD und optionales CAN werden nicht blockierend geprüft.
-3. Das OLED ist reine Komfortausstattung und darf den Betrieb nie blockieren.
+3. Das OLED ist verbaut, wird aber seit 1.5.32 nicht mehr angesteuert; es
+   dient nur noch als zweiter I²C-Teilnehmer für die Buszustandsdiagnose.
 4. Die Hauptschleife bedient zuerst Web/OTA und anschließend Sensoren,
    Logging, CAN/OBD und Diagnose.
 5. `VehicleDataDiscovery` übernimmt während einer Discovery-Sitzung die
@@ -240,8 +240,8 @@ Eigenschaften des Sitzungskopfes.
 
 ## Aktueller Teststand
 
-- Firmware 1.5.31 baut erfolgreich für `lolin_s3_mini`.
-- Letzter Build: 71.108 Byte RAM (21,7 %) und 1.252.598 Byte Flash (95,6 %).
+- Firmware 1.5.32 baut erfolgreich für `lolin_s3_mini`.
+- Letzter Build: 71.060 Byte RAM (21,7 %) und 1.233.006 Byte Flash (94,1 %).
 - Am 31.07.2026 liefen fünf Beifahrer-Referenzfahrten mit 1.5.28 und je zwölf
   markierten Referenzintervallen. Sie sind der Prüfstand der Kurvenerkennung.
 - 1.5.29 ist am Fahrzeug bestätigt: vier Fahrten am 01.08.2026 über 21 Minuten
@@ -435,14 +435,17 @@ Positionssprungbewertung und ereignisorientiertes Logging bleiben offen.
 - Bestehende, fest verdrahtete Pinbelegung beibehalten.
 - Hardwarezugriffe nicht blockierend halten; WLAN, Webseite und OTA müssen
   erreichbar bleiben.
-- OLED und CAN dürfen die allgemeine Bereitschaft nicht blockieren.
+- CAN darf die allgemeine Bereitschaft nicht blockieren.
+- Den OLED-Treiber nicht wieder einführen. Das Display bleibt verbaut und
+  wird angepingt, aber nicht bespielt; die Statusseite und die serielle
+  Ausgabe zeigen dieselben Informationen.
 - SD-Aufzeichnung über die vorhandene nicht blockierende Startlogik öffnen.
 - Die entfernte Web-Downloadfunktion für SD-Dateien nicht wieder einführen;
   sie war auf dem Gerät zu langsam.
 - GPS- oder OBD-Werte nur als gültig ausgeben, wenn ihre Aktualität
   nachweisbar ist; unbekannte Werte nicht als Nullwert ausgeben.
 - Firmwareversion zentral in `src/hardware_config.h` sowie `CHANGELOG.md` und
-  `README.md` gemeinsam aktualisieren; Web, OLED und Bootmeldung verwenden
+  `README.md` gemeinsam aktualisieren; Web und Bootmeldung verwenden
   dieses zentrale Makro. Der Firmwaredateiname wird beim Build automatisch
   daraus erzeugt und darf nicht manuell abweichend benannt werden.
 - Rohmessungen, Fotos, `.sal`-Dateien, `.codex/`, `.claude/` und temporäre

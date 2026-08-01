@@ -2,7 +2,7 @@
 
 Ein fortschrittliches Embedded-System zur Messung und Bewertung von Straßenqualität für kurvenreiche Motorradstrecken.
 
-Aktueller Firmwarestand: **1.5.31**. Der Stand ist ein Hardware- und
+Aktueller Firmwarestand: **1.5.32**. Der Stand ist ein Hardware- und
 Fahrzeugteststand. 1.5.28 misst Kurven über eine einbaulagenunabhängige
 Gyroskopprojektion, protokolliert Radius und vollständige Ereignisintervalle
 und stellt dafür einen geführten Beifahrertest bereit. 1.5.29 schärft die
@@ -23,7 +23,6 @@ Das System erfasst Bewegungsdaten, GPS-Position und CAN-Bus-Signale, um die Qual
 - **Multi-Sensor-Fusion** (BNO055 + GPS + CAN)
 - **Robustes SD-Karten-Logging** mit Buffer-Overflow-Schutz
 - **SD-Wiederanlauf** mit Recovery-Datei und verknüpfter Fortsetzungssitzung
-- **Optionales steckbares Live-Display** auf 128x64 OLED mit Auto-Rotation
 - **Eigenes ROADTEST-WLAN** mit Statusseite, Kalibrierassistent und Browser-OTA
 - **Kontrollierte Messfahrten** mit Start, sicherem Ende und Zusammenfassung
 - **Umfassende Hardware-Tests** und Diagnostik
@@ -59,7 +58,7 @@ Das System erfasst Bewegungsdaten, GPS-Position und CAN-Bus-Signale, um die Qual
 | Komponente | Modell | Schnittstelle | Pins | Funktion |
 |------------|--------|---------------|------|----------|
 | **IMU-Sensor** | BNO055 | I2C | GPIO 8/9 | NDOF-Sensorfusion |
-| **Display** | SSD1306 | I2C | GPIO 8/9 | optionales 128x64 OLED |
+| **Display** | SSD1306 | I2C | GPIO 8/9 | verbaut, wird nicht angesteuert; dient der I²C-Diagnose |
 | **GPS-Modul** | BN-880 | UART2 | GPIO 15/16 | Position & Geschwindigkeit |
 | **CAN-Interface** | Joy-IT SBC-CAN01, MCP2515/MCP2562 | SPI | GPIO 1,2,3,11,13 | OBD-II, 11 Bit, 500 kbit/s |
 | **SD-Speicher** | MicroSD | SPI | GPIO 4,5,6,7 | Datenlogging |
@@ -203,21 +202,23 @@ Start automatisch aus dem NVS geladen.
 
 ## 🧪 Startprüfung und System-Tests
 
-Ist das OLED beim Einschalten verbunden, zeigt es eine fortlaufend
-aktualisierte Prüfseite. Das Display selbst ist optional und blockiert weder
-Systembereitschaft noch Aufzeichnung. Erforderlich sind BNO055, SD-Karte,
-GPS-NMEA-Daten und WLAN; ein GPS-Fix ist nicht nötig. CAN bleibt für die
-allgemeine Bereitschaft ebenfalls optional.
+Der Prüfstand meldet sich über die serielle Ausgabe und die Statusseite im
+ROADTEST-WLAN. Erforderlich sind BNO055, SD-Karte, GPS-NMEA-Daten und WLAN;
+ein GPS-Fix ist nicht nötig. CAN bleibt für die allgemeine Bereitschaft
+optional. Ob alles Erforderliche bereit ist, zeigt der serielle Befehl `diag`
+in der Zeile "Pflichthardware bereit".
 
 Fehlt eine erforderliche Komponente, bleibt die Firmware trotzdem bedienbar
-und versucht alle fünf Sekunden automatisch eine Wiederverbindung. Die
-Prüfseite verschwindet erst, wenn alles Erforderliche bereit ist. Bei einem
-späteren Ausfall erscheint sie erneut. Ein später angestecktes OLED wird
-automatisch erkannt; an- und abgesteckt wird nur bei ausgeschaltetem System.
+und versucht alle fünf Sekunden automatisch eine Wiederverbindung.
+
+Das OLED wird seit 1.5.32 nicht mehr angesteuert. Es bleibt verbaut, weil die
+Firmware seine I²C-Adresse weiter anpingt und Aussetzer zählt: Als zweiter
+unabhängiger Busteilnehmer trennt es Sensorfehler von Bus- und
+Versorgungsfehlern. An- und abgesteckt wird nur bei ausgeschaltetem System.
 
 Der serielle Fünf-Sekunden-Status enthält für mechanische Tests zusätzlich:
 
-- aktuellen OLED-Zustand und kumulierte BNO-/OLED-I²C-Aussetzer
+- kumulierte I²C-Aussetzer von BNO055 und OLED
 - getrennten CAN-Adapter- und ECU-Verbindungsstatus samt Antwortalter
 - SD-Schreibvorgänge, Schreibfehler und verworfene Datensätze
 - WLAN-Zustand; `diag` gibt dieselben Diagnosezähler auf Anforderung aus
@@ -287,7 +288,7 @@ PID-Scan erkennt ausschließlich standardisierte Service-01-Werte; unbekannte
 Porsche-UDS-Kennungen werden nicht durchprobiert.
 
 Während dieses Ablaufs sind `start`, `stop` und `obd on/off` absichtlich
-gesperrt. Das optionale OLED wird nicht benötigt. `discover end` stellt den
+gesperrt. `discover end` stellt den
 vorherigen OBD-Zustand wieder her und schließt alle SD-Dateien.
 
 ### Geführter Beifahrer-Kurventest
@@ -366,7 +367,7 @@ test end
 
 Der Abschlussbericht bewertet neue SD-Fehler, verworfene Datensätze,
 BNO055-I²C-Aussetzer, CAN-Bus-Off und Empfangspufferüberläufe als `FAIL`.
-Vorübergehende CAN-Warnungen, Sendefehler, ein Aussetzer des optionalen OLED
+Vorübergehende CAN-Warnungen, Sendefehler, ein I²C-Aussetzer des OLED
 oder eine aktuell fehlende ECU-Antwort ergeben `WARN`. Ohne durchgeführten
 SD-Schreibtest bleibt das Ergebnis ebenfalls `WARN`. `PASS` bedeutet, dass
 alle erforderlichen Module stabil blieben und der SD-Schreibtest erfolgreich
@@ -502,55 +503,6 @@ void* ptr = globalMemoryPool.allocate();
 - **Overflow-Detection:** Multi-Level-Überwachung mit Statistiken
 - **Auto-Recovery:** Intelligente Buffer-Verwaltung bei Fehlern
 
-## 📱 OLED-Display Modi
-
-Das System zeigt zyklisch verschiedene Informationen an:
-
-### 1. Hardware Status
-```
-=== HARDWARE STATUS ===
-I2C Bus : OK
-BNO055  : OK  
-OLED    : OK
-SD-Karte: OK
-CAN-Bus : OK
-GPS     : OK
-System: BEREIT!
-```
-
-### 2. Live Sensor-Daten
-```
-=== LIVE DATEN ===
-Richtung: 123.5 Grad
-Beschl.: 1.23 m/s²
-Temp: 24.5 C
-
-CAN/OBD: 42 msg
-Zeit: 1234s
-```
-
-### 3. GPS Status
-```
-=== GPS STATUS ===
-Fix: Gültig
-Satelliten: 8
-Lat: 47.123456
-Lon: 8.654321
-Speed: 67.5 km/h
-```
-
-### 4. Straßenqualität
-```
-=== ROAD QUALITY ===
-Gesamt: 85.5 / 100
-████████████████▌
-
-Glätte: 92.1
-Kurven: 12 (78.3)
-
-TRAUMSTRECKE!
-```
-
 ## 🔍 Erweiterte Konfiguration
 
 ### GPS-Konfiguration
@@ -582,8 +534,7 @@ Luftmassenstrom (`0x10`), Drosselstellung (`0x11`), Außentemperatur (`0x46`),
 nur zuvor bestätigte PIDs abgefragt. Antworten werden ausschließlich von
 `0x7E8` bis `0x7EF` verarbeitet; der MCP2515-Hardwarefilter verwirft andere
 Identifier. Die Webseite zeigt Anfragen, Antworten, Sendefehler und nur
-frische Werte. Der OLED-Zähler `CAN/OBD` steigt mit den empfangenen Antworten.
-
+frische Werte.
 ### SD-Logger Konfiguration
 ```cpp
 // Logging-Intervalle anpassen
@@ -644,7 +595,6 @@ Lösung:
 printBufferStats();
 
 // Hardware-Test-Suite erneut ausführen
-testOLED();
 testBNO055(); 
 testSDWithSafePins();
 ```
@@ -713,7 +663,6 @@ cp src/hardware_config.h hardware_config.backup
   mit der realen Verdrahtung ändern
 - **Sensor-Parameter:** `src/*_manager.h` 
 - **Logging-Einstellungen:** `SDLogger::LogConfig`
-- **Display-Modi:** `OLEDManager::DisplayConfig`
 
 ## 🤝 Beitragen
 
@@ -733,6 +682,13 @@ Der priorisierte Backlog für gleichmäßigere Sensorabtastung und geringere
 Buslast steht in [OPTIMIERUNGEN.md](OPTIMIERUNGEN.md).
 
 ## 📈 Version History
+
+### v1.5.32 - OLED-Treiber entfernt
+- ✅ Displaytreiber und beide Adafruit-Bibliotheken raus; 19.592 Byte Flash
+  frei, 94,1 statt 95,6 Prozent
+- ✅ Display bleibt verbaut und wird als zweiter I²C-Teilnehmer weiter
+  angepingt; die Buszustandsdiagnose bleibt vollständig erhalten
+- ✅ `requiredHardwareReady()` jetzt im seriellen `diag` sichtbar
 
 ### v1.5.31 - Größenprüfung der Logdateien
 - ✅ Jede Logdatei wird am Sitzungsende gegen die tatsächliche Größe auf der

@@ -140,7 +140,6 @@ bool IntegrationTests::testAllModulesConcurrent() {
     uint32_t sensorReads = 0;
     uint32_t gpsUpdates = 0;
     uint32_t canMessages = 0;
-    uint32_t oledUpdates = 0;
     uint32_t sdWrites = 0;
     
     Serial.println("Betreibe alle Module mit maximaler Last für 30 Sekunden...");
@@ -177,12 +176,6 @@ bool IntegrationTests::testAllModulesConcurrent() {
             }
         }
         
-        // OLED @ 2Hz
-        if (millis() % 500 == 0) {
-            oledManager.update();
-            oledUpdates++;
-        }
-        
         // SD-Logger @ 1Hz
         if (millis() % 1000 == 0) {
             if (sdLogger.isLogging()) {
@@ -203,7 +196,6 @@ bool IntegrationTests::testAllModulesConcurrent() {
     details = "Sensor: " + String(sensorReads) + " reads, ";
     details += "GPS: " + String(gpsUpdates) + " updates, ";
     details += "CAN: " + String(canMessages) + " msgs, ";
-    details += "OLED: " + String(oledUpdates) + " refreshes, ";
     details += "SD: " + String(sdWrites) + " writes";
     
     // Prüfungen
@@ -577,7 +569,6 @@ bool IntegrationTests::testI2CBusRecovery() {
     
     // Speichere aktuellen I2C-Status
     bool bnoWasReady = bnoManager.isReady();
-    bool oledWasReady = oledManager.isReady();
     
     Serial.println("Simuliere I2C-Bus-Störung...");
     
@@ -629,20 +620,18 @@ bool IntegrationTests::testI2CBusRecovery() {
         details += "BNO055 nicht wiederhergestellt! ";
     }
     
-    // OLED prüfen
-    Wire.beginTransmission(0x3C);
+    // Das Display wird nicht mehr angesteuert, hängt aber am selben Bus und
+    // ist damit der zweite unabhängige Nachweis, dass der Bus wieder trägt.
+    Wire.beginTransmission(OLED_ADDRESS_A);
     uint8_t error = Wire.endTransmission();
     if (error != 0) {
         recoverySuccess = false;
-        details += "OLED nicht wiederhergestellt! ";
+        details += "OLED antwortet nicht! ";
     }
     
     // 6. Manager neu initialisieren wenn nötig
     if (bnoWasReady && !bnoManager.isReady()) {
         bnoManager.begin();
-    }
-    if (oledWasReady && !oledManager.isReady()) {
-        oledManager.begin();
     }
     
     testPassed = accessFailed && recoverySuccess;
@@ -1181,9 +1170,8 @@ bool IntegrationTests::testPowerBrownout() {
     Serial.println("Simuliere Brownout-Effekte...");
     
     // Alle Module "ausfallen" lassen
-    bool modulesWereReady[5] = {
+    bool modulesWereReady[4] = {
         bnoManager.isReady(),
-        oledManager.isReady(),
         gpsManager.isReady(),
         canReader.isReady(),
         sdLogger.isReady()
@@ -1191,7 +1179,6 @@ bool IntegrationTests::testPowerBrownout() {
     
     // Module beenden
     bnoManager.end();
-    oledManager.end();
     gpsManager.end();
     canReader.end();
     sdLogger.end();
@@ -1219,20 +1206,16 @@ bool IntegrationTests::testPowerBrownout() {
         }
     }
     
-    if (modulesWereReady[1] && oledManager.begin()) {
-        recoveredModules++;
-    }
-    
-    if (modulesWereReady[2] && gpsManager.begin()) {
+    if (modulesWereReady[1] && gpsManager.begin()) {
         recoveredModules++;
         gpsManager.enableInterruptMode(true);  // Interrupt-Modus wiederherstellen
     }
     
-    if (modulesWereReady[3] && canReader.begin(CAN_BAUDRATE)) {
+    if (modulesWereReady[2] && canReader.begin(CAN_BAUDRATE)) {
         recoveredModules++;
     }
     
-    if (modulesWereReady[4] && sdLogger.begin(spiSD)) {
+    if (modulesWereReady[3] && sdLogger.begin(spiSD)) {
         recoveredModules++;
         
         // Prüfe ob Daten erhalten blieben
@@ -1243,7 +1226,7 @@ bool IntegrationTests::testPowerBrownout() {
     
     // Bewertung
     int expectedModules = 0;
-    for (int i = 0; i < 5; i++) {
+    for (int i = 0; i < 4; i++) {
         if (modulesWereReady[i]) expectedModules++;
     }
     
@@ -2063,7 +2046,6 @@ bool IntegrationTests::testCPUUsageOptimization() {
         bnoManager.getCurrentData();
         gpsManager.update();
         canReader.update();
-        oledManager.update();
         sdLogger.logSensorData(bnoManager.getCurrentData());
         
         busyLoops++;
@@ -2509,9 +2491,6 @@ bool IntegrationTests::testMemoryLeakDetection() {
             CANMessage msg = canReader.getLastMessage();
             canReader.logMessage(msg);
         }
-        
-        // Display-Update
-        oledManager.update();
         
         // Heap-Sampling alle 5 Sekunden
         if (millis() - lastSample > 5000) {

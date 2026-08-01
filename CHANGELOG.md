@@ -5,6 +5,35 @@ Alle wichtigen Änderungen am ESP32-S3 Straßenqualitäts-Messsystem werden in d
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt hält sich an [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.32] - 2026-08-01
+
+### Entfernt
+- Der OLED-Treiber und die beiden Adafruit-Displaybibliotheken. Das Display
+  wird nicht mehr genutzt; die Hardware bleibt verbaut. Entfallen sind
+  `src/oled_manager.{h,cpp}` mit 674 Zeilen, 64 Aufrufstellen in `main.cpp`,
+  die OLED-Schritte der Integrationstests, die Displayzeile der Statusseite
+  und der serielle Befehlszweig des Displaytests.
+- Damit entfiel auch die Bootstatus-Anzeige samt ihrer Zustandsverwaltung
+  (`updateBootStatusDisplay`, `bootStatusActive`, `BOOT_READY_HOLD_TIME`).
+  Sie hatte nach dem Ausbau nur noch Variablen gesetzt, die niemand mehr
+  liest. Die Prüfung `requiredHardwareReady()` bleibt erhalten und erscheint
+  jetzt im seriellen `diag` als "Pflichthardware bereit"; ohne das wäre mit
+  dem Display auch diese Information verschwunden.
+- Der Gewinn beträgt **19.592 Byte Flash**: 1.233.006 statt 1.252.598 Byte,
+  94,1 statt 95,6 Prozent der App-Partition. Der RAM-Bedarf sinkt um 48 Byte.
+
+### Geändert
+- Das Display bleibt bewusst gesteckt und wird weiterhin per I²C angepingt.
+  Als zweiter unabhängiger Busteilnehmer ist es das wertvollste Mittel zur
+  Unterscheidung von Sensor- und Busfehlern: Fällt es zusammen mit dem BNO055
+  aus, liegt die Ursache am Bus oder an der Versorgung. Genau diese
+  Unterscheidung brachte die Fehlersuche im Juli 2026 weiter. Der Zähler der
+  I²C-Aussetzer, der Scanner und die Prüfung im Bus-Recovery-Test bleiben
+  deshalb unverändert.
+- `OLED_ADDRESS_A` und `OLED_ADDRESS_B` bleiben in `hardware_config.h`, jetzt
+  als Beschreibung dessen, was am Bus zu erwarten ist. `SCREEN_WIDTH`,
+  `SCREEN_HEIGHT`, `OLED_REQUIRED` und `I2C_DISPLAY_SPEED` entfallen.
+
 ## [1.5.31] - 2026-08-01
 
 ### Hinzugefügt

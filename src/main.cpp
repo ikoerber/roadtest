@@ -9,7 +9,6 @@
 #include "esp_task_wdt.h"
 #include "hardware_config.h"
 #include "buffer_utils.h"
-#include "oled_manager.h"
 #include "can_reader.h"
 #include "bno055_manager.h"
 #include "sd_logger.h"
@@ -49,22 +48,17 @@ constexpr unsigned long HARDWARE_CHECK_INTERVAL = 5000;
 constexpr unsigned long GPS_RESTART_INTERVAL = 30000;
 constexpr unsigned long CAN_RECOVERY_RETRY_INTERVAL = 10000;
 constexpr uint8_t CAN_MODE_FAILURE_LIMIT = 2;
-constexpr unsigned long BOOT_STATUS_INTERVAL = 1000;
-constexpr unsigned long BOOT_READY_HOLD_TIME = 2500;
 constexpr unsigned long SENSOR_SAMPLE_INTERVAL_MS = 100;
 constexpr unsigned long GPS_SNAPSHOT_INTERVAL_MS = 200;
 unsigned long lastHardwareCheck = 0;
 unsigned long lastGPSRestart = 0;
 unsigned long lastCANRecoveryAttempt = 0;
-unsigned long lastBootStatusDisplay = 0;
-unsigned long requiredHardwareReadySince = 0;
 uint8_t bnoMissingChecks = 0;
 uint8_t oledMissingChecks = 0;
 uint32_t bnoProbeFailureCount = 0;
 uint32_t oledProbeFailureCount = 0;
 uint8_t canModeFailureCount = 0;
 bool oledDetectedAtLeastOnce = false;
-bool bootStatusActive = true;
 
 struct VehicleTestSession {
     bool active = false;
@@ -435,111 +429,6 @@ void testBNO055() {
     }
 }
 
-void testOLED() {
-    Serial.println("\n--- OLED Display Test ---");
-    
-    if (!oledManager.isReady()) {
-        Serial.println("❌ OLED-Manager nicht initialisiert!");
-        return;
-    }
-    
-    Serial.println("Führe OLED-Tests durch...");
-    
-    // 1. Display-Test (Pixel)
-    Serial.print("1. Display Pixel-Test: ");
-    bool pixelTest = oledManager.testDisplay();
-    Serial.println(pixelTest ? "OK" : "FEHLER");
-    delay(2000);
-    
-    // 2. Boot-Nachricht mit Fortschrittsbalken
-    Serial.print("2. Boot-Nachricht Test: ");
-    for (int i = 0; i <= 100; i += 20) {
-        oledManager.showBootMessage("System Test", i);
-        delay(300);
-    }
-    Serial.println("OK");
-    delay(1000);
-    
-    // 3. Test verschiedener Display-Modi
-    Serial.print("3. Display-Modi Test: ");
-    
-    // Hardware Status Test
-    oledManager.showHardwareStatus(true, true, true, true, false, false);
-    delay(2000);
-    
-    // Sensor-Daten Test (Dummy-Werte)
-    oledManager.showSensorData(123.5, 9.81, 25.4, 42);
-    delay(2000);
-    
-    // GPS Status Test (ohne Fix)
-    oledManager.showGPSStatus(0, 0, 0, 5, false);
-    delay(2000);
-    
-    // Straßenqualität Test
-    oledManager.showRoadQuality(85.5, 92.1, 78.3, 12);
-    delay(2000);
-    
-    Serial.println("OK");
-    
-    // 4. Test-Ergebnisse Anzeige
-    Serial.print("4. Test-Ergebnisse: ");
-    oledManager.showTestResults("OLED Test", true, "Alle Modi erfolgreich");
-    delay(2000);
-    Serial.println("OK");
-    
-    // 5. Fehler-Nachricht Test
-    Serial.print("5. Fehler-Nachricht: ");
-    oledManager.showErrorMessage("Test Fehler", "Beispiel für Debug");
-    delay(2000);
-    Serial.println("OK");
-    
-    // 6. System-Info Test
-    Serial.print("6. System-Info: ");
-    oledManager.showSystemInfo(
-        ROADTEST_FIRMWARE_VERSION, millis(), ESP.getFreeHeap());
-    delay(2000);
-    Serial.println("OK");
-    
-    // 7. Debug-Informationen Test
-    Serial.print("7. Debug-Info: ");
-    DisplayConfig config = oledManager.getConfig();
-    config.showDebugInfo = true;
-    oledManager.setConfig(config);
-    oledManager.showDebugInfo("Debug: OLED Test läuft");
-    delay(2000);
-    Serial.println("OK");
-    
-    // 8. Automatischer Modus-Wechsel Test
-    Serial.print("8. Modus-Wechsel Test: ");
-    config.autoRotate = true;
-    config.rotateInterval = 2000; // 2 Sekunden
-    oledManager.setConfig(config);
-    
-    for (int i = 0; i < 4; i++) {
-        oledManager.setMode((DisplayMode)i);
-        switch (i) {
-            case 0: oledManager.showHardwareStatus(true, true, true, true, true, true); break;
-            case 1: oledManager.showSensorData(45.2, 1.23, 26.1, 15); break;
-            case 2: oledManager.showGPSStatus(47.123456, 8.654321, 67.5, 8, true); break;
-            case 3: oledManager.showRoadQuality(72.8, 85.2, 45.6, 7); break;
-        }
-        delay(2000);
-    }
-    Serial.println("OK");
-    
-    // 9. Display-Info ausgeben
-    Serial.println("\n=== OLED Display Information ===");
-    Serial.println(oledManager.getDisplayInfo());
-    
-    // 10. Abschluss-Test
-    oledManager.showTestResults("OLED Volltest", true, "Alle 8 Tests bestanden!");
-    delay(3000);
-    
-    Serial.println("✅ OLED-Test erfolgreich abgeschlossen!");
-    Serial.printf("Display: %dx%d SSD1306\n", SCREEN_WIDTH, SCREEN_HEIGHT);
-    Serial.println("Alle Display-Modi funktional");
-}
-
 void testBufferSafety() {
     Serial.println("\n--- Buffer-Sicherheits-Test ---");
     
@@ -747,8 +636,7 @@ bool initializeOptionalCAN() {
 }
 
 bool requiredHardwareReady() {
-    return (!OLED_REQUIRED || oledManager.isReady()) &&
-           bnoManager.isSelfTestPassed() &&
+    return bnoManager.isSelfTestPassed() &&
            bnoManager.isFusionModeActive() && bnoManager.isDataValid() &&
            sdLogger.isReady() && gpsManager.isReceivingNMEA() &&
            webAvailable;
@@ -973,33 +861,6 @@ void endVehicleTest() {
     Serial.println("=== FAHRZEUG-TEST BEENDET ===\n");
 }
 
-void updateBootStatusDisplay(unsigned long now, bool force = false) {
-    bool allReady = requiredHardwareReady();
-    if (!allReady) {
-        bootStatusActive = true;
-        requiredHardwareReadySince = 0;
-    } else if (requiredHardwareReadySince == 0) {
-        requiredHardwareReadySince = now;
-    }
-
-    if (oledManager.isReady() &&
-        (force || (bootStatusActive &&
-                   now - lastBootStatusDisplay >= BOOT_STATUS_INTERVAL))) {
-        oledManager.showBootStatus(
-            bnoManager.isSelfTestPassed() && bnoManager.isFusionModeActive() &&
-                bnoManager.isDataValid(),
-            sdLogger.isReady(),
-            gpsManager.isReady(), gpsManager.isReceivingNMEA(),
-            canBusAvailable, webAvailable, allReady);
-        lastBootStatusDisplay = now;
-    }
-
-    if (allReady && bootStatusActive &&
-        now - requiredHardwareReadySince >= BOOT_READY_HOLD_TIME) {
-        bootStatusActive = false;
-    }
-}
-
 void handleHardwareRecovery(unsigned long now) {
     if (now - lastHardwareCheck < HARDWARE_CHECK_INTERVAL) {
         return;
@@ -1049,10 +910,16 @@ void handleHardwareRecovery(unsigned long now) {
         }
     }
 
-    bool oledResponding =
+    // Das Display wird softwareseitig nicht mehr angesteuert, hängt aber
+    // weiter am I²C-Bus. Als zweiter, unabhängiger Teilnehmer bleibt es das
+    // wertvollste Diagnosemittel für Busprobleme: Fällt es zusammen mit dem
+    // BNO055 aus, liegt die Ursache am Bus oder an der Versorgung und nicht
+    // am Sensor. Genau diese Unterscheidung brachte die Fehlersuche im Juli
+    // 2026 weiter. Der Ping kostet nichts und wird deshalb beibehalten.
+    const bool oledResponding =
         i2cDeviceResponds(OLED_ADDRESS_A) ||
         i2cDeviceResponds(OLED_ADDRESS_B);
-    if (oledManager.isReady()) {
+    if (oledDetectedAtLeastOnce) {
         if (!oledResponding) {
             oledProbeFailureCount++;
             Serial.printf("⚠️ OLED-I2C-Prüfung fehlgeschlagen (%u/3, gesamt %lu)\n",
@@ -1064,15 +931,12 @@ void handleHardwareRecovery(unsigned long now) {
         }
         oledMissingChecks = oledResponding ? 0 : oledMissingChecks + 1;
         if (oledMissingChecks >= 3) {
-            Serial.println("⚠️ Optionales OLED nicht mehr erreichbar; System läuft weiter");
-            oledManager.end(false);
+            Serial.println("⚠️ OLED antwortet nicht mehr auf dem I²C-Bus");
             oledMissingChecks = 0;
         }
-    } else if (oledResponding && oledManager.begin(OLED_ADDRESS_A)) {
-        oledManager.setRotation(true);
+    } else if (oledResponding) {
         oledDetectedAtLeastOnce = true;
-        bootStatusActive = true;
-        Serial.println("✅ Optionales OLED im Hintergrund wieder verbunden");
+        Serial.println("ℹ️ OLED antwortet auf dem I²C-Bus");
     }
 
     if (sdLogger.isReady() && !sdLogger.isLoggingStartPending()) {
@@ -1208,23 +1072,17 @@ void setup() {
     Serial.printf("I2C: %s (SDA=%d, SCL=%d, %d Hz)\n",
                   i2cSuccess ? "OK" : "FEHLER", I2C_SDA, I2C_SCL, I2C_CLOCK_SPEED);
 
-    // Das steckbare OLED ist eine reine Komfortanzeige. Nur initialisieren,
-    // wenn eine seiner bekannten Adressen antwortet; sein Fehlen darf weder
-    // Messung noch Bereitschaft blockieren.
+    // Das Display wird softwareseitig nicht mehr angesteuert. Sein Vorhandensein
+    // wird nur noch festgestellt, weil es als zweiter I²C-Teilnehmer die
+    // Buszustandsdiagnose trägt.
     const bool oledPresent =
         i2cDeviceResponds(OLED_ADDRESS_A) ||
         i2cDeviceResponds(OLED_ADDRESS_B);
-    if (oledPresent && oledManager.begin(OLED_ADDRESS_A)) {
-        oledManager.setRotation(true);
-        oledDetectedAtLeastOnce = true;
-        Serial.println("✅ Optionales OLED geprüft");
-    } else if (oledPresent) {
-        oledDetectedAtLeastOnce = true;
-        Serial.println("⚠️ Optionales OLED erkannt, Initialisierung fehlgeschlagen");
-    } else {
-        Serial.println("ℹ️ Optionales OLED nicht verbunden; System läuft ohne Display");
-    }
-    updateBootStatusDisplay(millis(), true);
+    oledDetectedAtLeastOnce = oledPresent;
+    Serial.println(
+        oledPresent
+            ? "ℹ️ OLED am I²C-Bus erkannt; wird nicht angesteuert"
+            : "ℹ️ Kein OLED am I²C-Bus");
 
     if (bnoManager.begin()) {
         bool selfTestOK = bnoManager.runSelfTest();
@@ -1232,7 +1090,6 @@ void setup() {
     } else {
         Serial.println("⚠️ BNO055 fehlt; Firmware startet trotzdem");
     }
-    updateBootStatusDisplay(millis(), true);
 
     if (bnoManager.isSelfTestPassed()) {
         CalibrationData startupCalibration = bnoManager.getCalibration();
@@ -1242,12 +1099,10 @@ void setup() {
     }
 
     gpsAvailable = initializeGPSAndClock();
-    updateBootStatusDisplay(millis(), true);
 
     if (!tryInitializeSDLogger()) {
         Serial.println("⚠️ SD-Karte fehlt; Einstecken wird automatisch erkannt");
     }
-    updateBootStatusDisplay(millis(), true);
 
     if (ENABLE_OPTIONAL_CAN) {
         Serial.println(CAN_OBD_POLLING_ENABLED
@@ -1257,7 +1112,6 @@ void setup() {
         Serial.println(
             "ℹ️ CAN ist deaktiviert; es kann WLAN und Webseite nicht blockieren");
     }
-    updateBootStatusDisplay(millis(), true);
 
     lastHardwareCheck = millis();
     lastCANRecoveryAttempt =
@@ -1279,9 +1133,6 @@ void loop() {
     static SensorData lastSensorData = {0};
     static CANMessage lastCANMessage = {0};
     static GPSData lastGPSData = {0};
-    static CalibrationData lastDisplayedCalibration = {255, 255, 255, 255};
-    static bool lastDisplayedCalibrationSaved = false;
-    static unsigned long lastCalibrationDisplay = 0;
     static unsigned long lastCalibrationSaveAttempt = 0;
 
     const unsigned long loopStartedAt = millis();
@@ -1471,7 +1322,6 @@ void loop() {
     // Die gemeinsame Prüfseite bleibt aktiv, bis alle erforderlichen
     // Komponenten reagieren. Nach einem späteren Ausfall erscheint sie
     // automatisch erneut.
-    updateBootStatusDisplay(currentTime);
 
     // Im normalen OBD-Betrieb genügt ein Frame pro 10-ms-Zyklus. Während
     // des passiven Erkennungsmitschnitts wird der MCP2515 dagegen in jeder
@@ -1731,8 +1581,8 @@ void loop() {
             const LogStats logStats = sdLogger.getStatistics();
             Serial.printf("   TEST: OLED=%s%s, I2C-Aussetzer BNO/OLED=%lu/%lu, "
                           "SD-Schreibvorgänge=%lu Fehler=%lu Verworfen=%lu, WLAN=%s\n",
-                          oledManager.isReady() ? "OK" : "nicht verbunden",
-                          OLED_REQUIRED ? "" : " (optional)",
+                          oledDetectedAtLeastOnce ? "am Bus" : "nicht am Bus",
+                          "",
                           static_cast<unsigned long>(bnoProbeFailureCount),
                           static_cast<unsigned long>(oledProbeFailureCount),
                           static_cast<unsigned long>(logStats.totalWrites),
@@ -1743,35 +1593,6 @@ void loop() {
         
         if (canLoggingEnabled) {
             canReader.flushLog(); // CAN-Log aktualisieren
-        }
-        
-        // Bei Änderungen oder länger unvollständiger Kalibrierung zeigt das
-        // OLED den Assistenten, ansonsten die Live-Daten.
-        if (!bootStatusActive && bnoManager.isSelfTestPassed() &&
-            bnoManager.isDataValid() &&
-            oledManager.isReady()) {
-            bool calibrationChanged =
-                cal.system != lastDisplayedCalibration.system ||
-                cal.gyro != lastDisplayedCalibration.gyro ||
-                cal.accel != lastDisplayedCalibration.accel ||
-                cal.mag != lastDisplayedCalibration.mag ||
-                bnoManager.isCalibrationSaved() != lastDisplayedCalibrationSaved;
-            bool calibrationReminder =
-                !cal.isFullyCalibrated() &&
-                currentTime - lastCalibrationDisplay >= 30000;
-
-            if (calibrationChanged || calibrationReminder) {
-                oledManager.showCalibrationStatus(
-                    cal.system, cal.gyro, cal.accel, cal.mag,
-                    bnoManager.isCalibrationSaved());
-                lastDisplayedCalibration = cal;
-                lastDisplayedCalibrationSaved = bnoManager.isCalibrationSaved();
-                lastCalibrationDisplay = currentTime;
-            } else if (lastSensorData.timestamp > 0) {
-                oledManager.showSensorData(
-                    lastSensorData.heading, lastSensorData.accelMagnitude,
-                    lastSensorData.temperature, totalCANMessages);
-            }
         }
         
         lastStatusReport = currentTime;
@@ -1837,7 +1658,6 @@ void loop() {
             suspendWatchdog();
             i2cScanner();
             testBNO055();
-            testOLED();
             testSDWithSafePins();
             testBufferSafety();
             resumeWatchdog();
@@ -1941,6 +1761,9 @@ void loop() {
         }
         else if (command == "diag") {
             Serial.println("\n=== System-Diagnose ===");
+            Serial.printf(
+                "Pflichthardware bereit: %s\n",
+                requiredHardwareReady() ? "ja" : "nein");
             Serial.printf("Free Heap: %lu Bytes\n",
                           (unsigned long)ESP.getFreeHeap());
             Serial.printf("Heap Size: %lu Bytes\n",
@@ -2062,9 +1885,11 @@ void loop() {
                           static_cast<unsigned long>(diagnosticSD.totalWrites),
                           static_cast<unsigned long>(diagnosticSD.errorCount),
                           static_cast<unsigned long>(diagnosticSD.droppedLogs));
-            Serial.printf("OLED: %s (optional, jemals erkannt: %s, I2C-Aussetzer: %lu)\n",
-                          oledManager.isReady() ? "OK" : "nicht verbunden",
-                          oledDetectedAtLeastOnce ? "ja" : "nein",
+            Serial.printf(
+                "OLED: %s (nicht angesteuert, jemals erkannt: %s, "
+                "I2C-Aussetzer: %lu)\n",
+                oledDetectedAtLeastOnce ? "am Bus" : "nicht am Bus",
+                oledDetectedAtLeastOnce ? "ja" : "nein",
                           static_cast<unsigned long>(oledProbeFailureCount));
             Serial.printf("BNO055-I2C-Aussetzer: %lu\n",
                           static_cast<unsigned long>(bnoProbeFailureCount));

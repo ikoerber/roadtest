@@ -6,7 +6,6 @@
 #include "gps_manager.h"
 #include "can_reader.h"
 #include "sd_logger.h"
-#include "oled_manager.h"
 #include "buffer_utils.h"
 
 // Test-Konfiguration
