@@ -38,8 +38,8 @@ Auswertung der fünf Beifahrer-Referenzfahrten vom 31.07.2026 mit zusammen
   Rauschen hebt sich dabei auf, eine echte langgezogene Kurve nicht.
 - Wirkung auf den Wiedergabestand der fünf Referenzfahrten: Der Anteil der
   Ereignisdauer, der von echten Drehstichproben belegt ist, steigt von 67 auf
-  90 Prozent. Ereignisse unter 60 Prozent Abdeckung fallen von 47 auf 7. Die
-  Zahl der Ereignisse steigt von 128 auf 158, weil zusammengelaufene
+  91 Prozent. Ereignisse unter 60 Prozent Abdeckung fallen von 47 auf 7. Die
+  Zahl der Ereignisse steigt von 130 auf 154, weil zusammengelaufene
   Ereignisse sich wieder auftrennen. Radius, Dauer und Mittelwerte beschreiben
   damit wieder eine einzelne Kurve.
 - Trefferquote gegen die 55 Referenzkurven: 52 statt 53. Die drei fehlenden
@@ -64,15 +64,22 @@ Auswertung der fünf Beifahrer-Referenzfahrten vom 31.07.2026 mit zusammen
   1450 Meter Radius bei 116 km/h dagegen 0,4 und ist keine gefahrene Kurve.
 - Beide Werte wurden gegen die 55 markierten Referenzkurven gewählt und
   lassen dort keine einzige entfallen; die schwächste markierte Kurve fuhr
-  10,8 Meter Weg und 0,45 m/s². Über alle neun Fahrten des 31.07.2026
-  entfernen sie zusammen 25 von 211 Ereignissen, darunter alle vier bekannten
-  Fehlalarme aus Stand und Rangieren. Ereignisse unter 12 km/h fallen von 15
-  auf 2; beide verbliebenen sind echte enge Kurven, eine davon eine
-  markierte Referenz.
+  10,8 Meter Weg und 0,45 m/s². Über alle neun Fahrten des 31.07.2026 fallen
+  die Ereignisse unter 12 km/h von 13 auf 2. Alle vier bekannten Fehlalarme
+  aus GPS-Drift im Stand und beim Rangieren entfallen; das Wendemanöver mit
+  190,7 Grad über 27 Meter bei 14 km/h bleibt korrekt erhalten.
 - Hosttest `test_wiedergabe_referenzfahrten`: spielt alle fünf
   Referenzfahrten durch die Erkennung und schreibt Trefferzahl,
   Ereigniszahl und die Zahl der Ereignisse mit geringer Zeitabdeckung als
-  Festwerte fest.
+  Festwerte fest. Die Geschwindigkeit wird dabei wie in `main.cpp` gewählt -
+  zuerst OBD, sonst GPS, sonst unbekannt. Mit dieser Reihenfolge gibt die
+  Wiedergabe die Firmwareläufe des 31.07.2026 ereignisgenau wieder: 174 zu
+  174 Ereignissen bei 0,1 Grad mittlerer Winkelabweichung und einem
+  Startversatz von 7 bis 21 Millisekunden in den Fahrten mit belastbarer
+  Zeitbasis. Allein mit der GPS-Geschwindigkeit waren es 128 statt 174. Der
+  Prüfstand bildet die Firmware damit belastbar ab; Parameteränderungen
+  lassen sich vorab am Entwicklungsrechner messen, und die Ereignisse einer
+  neuen Fahrt lassen sich gegen die Wiedergabe derselben Rohdaten stellen.
 - Hosttests für das entrauschte Ruhefenster, den Mindestfahrweg und die
   Mindest-Querbeschleunigung mit je einem Fall knapp über und knapp unter der
   Schwelle sowie für `CurveDetector::finish()`. 49 Hosttests insgesamt.

@@ -649,6 +649,50 @@ struct Referenzergebnis {
     size_t geringeAbdeckung = 0;
 };
 
+// Zeitlich sortierte Geschwindigkeitsquelle mit Gueltigkeitsflag.
+struct SpeedSource {
+    std::vector<uint32_t> times;
+    std::vector<float> values;
+    std::vector<bool> valid;
+
+    void add(uint32_t t, float v, bool ok) {
+        times.push_back(t);
+        values.push_back(v);
+        valid.push_back(ok);
+    }
+
+    // Juengster Eintrag bis zum Zeitpunkt, hoechstens maxAgeMs alt.
+    bool at(uint32_t t, uint32_t maxAgeMs, float& out) const {
+        size_t lo = 0, hi = times.size();
+        while (lo < hi) {
+            const size_t mid = (lo + hi) / 2;
+            if (times[mid] <= t) lo = mid + 1; else hi = mid;
+        }
+        if (lo == 0) return false;
+        const size_t idx = lo - 1;
+        if (!valid[idx] || t - times[idx] > maxAgeMs) return false;
+        out = values[idx];
+        return true;
+    }
+};
+
+// Fuellt eine Quelle aus einer Messdatei mit den ueblichen Spaltennamen.
+bool fillSpeedSource(const std::string& path, SpeedSource& source) {
+    std::vector<std::string> header;
+    std::vector<std::vector<std::string>> rows;
+    if (!loadCsv(path, header, rows)) return false;
+    const int t = columnIndex(header, "UptimeMs");
+    const int ok = columnIndex(header, "SpeedValid");
+    const int v = columnIndex(header, "SpeedKmh");
+    if (t < 0 || ok < 0 || v < 0) return false;
+    for (const auto& r : rows) {
+        source.add(
+            static_cast<uint32_t>(std::strtoul(r[t].c_str(), nullptr, 10)),
+            static_cast<float>(std::atof(r[v].c_str())), r[ok] == "1");
+    }
+    return true;
+}
+
 // Spielt eine Fahrt mit Beifahrer-Kurventest durch die Erkennung und misst
 // sie gegen die von Hand gesetzten Referenzintervalle.
 bool replayReferenceDrive(const std::string& session, Referenzergebnis& out) {
@@ -696,18 +740,14 @@ bool replayReferenceDrive(const std::string& session, Referenzergebnis& out) {
     }
     if (referenzen.empty()) return false;
 
-    const int gT = columnIndex(gh, "UptimeMs");
-    const int gV = columnIndex(gh, "SpeedValid");
-    const int gS = columnIndex(gh, "SpeedKmh");
-    if (gT < 0 || gV < 0 || gS < 0) return false;
-    std::vector<std::pair<uint32_t, float>> speeds;
-    for (const auto& r : gr) {
-        if (r[gV] != "1") continue;
-        speeds.push_back(
-            {static_cast<uint32_t>(std::strtoul(r[gT].c_str(), nullptr, 10)),
-             static_cast<float>(std::atof(r[gS].c_str()))});
-    }
-    if (speeds.empty()) return false;
+    // Geschwindigkeitswahl exakt wie in main.cpp: zuerst OBD, sonst GPS,
+    // sonst unbekannt. Mit dieser Reihenfolge gibt die Wiedergabe die
+    // Firmwarelaeufe des 31.07.2026 ereignisgenau wieder - 174 zu 174
+    // Ereignissen bei 0,1 Grad mittlerer Winkelabweichung. Allein mit der
+    // GPS-Geschwindigkeit waren es 128 statt 174.
+    SpeedSource obdSpeed, gpsSpeed;
+    fillSpeedSource(findFixture(base + "road_obd_" + session + ".csv"), obdSpeed);
+    if (!fillSpeedSource(gpsPath, gpsSpeed)) return false;
 
     const int sT = columnIndex(sh, "UptimeMs");
     const int sH = columnIndex(sh, "Heading");
@@ -718,17 +758,14 @@ bool replayReferenceDrive(const std::string& session, Referenzergebnis& out) {
 
     CurveDetector detector;
     std::vector<CurveEvent> events;
-    size_t cursor = 0;
     for (const auto& r : sr) {
         const uint32_t t =
             static_cast<uint32_t>(std::strtoul(r[sT].c_str(), nullptr, 10));
-        while (cursor + 1 < speeds.size() && speeds[cursor + 1].first <= t) {
-            ++cursor;
-        }
         float speed = -1.0f;
-        const uint32_t st = speeds[cursor].first;
-        const uint32_t diff = t > st ? t - st : st - t;
-        if (diff <= 1500) speed = speeds[cursor].second;
+        float wert = 0.0f;
+        if (obdSpeed.at(t, 1000, wert) || gpsSpeed.at(t, 1000, wert)) {
+            speed = wert;
+        }
 
         CurveSample s;
         s.timestampMs = t;
@@ -821,12 +858,12 @@ void test_wiedergabe_referenzfahrten() {
     // Vor 1.5.29 lagen hier 47 von 128 Ereignissen.
     TEST_ASSERT_EQUAL_UINT32(7, gesamt.geringeAbdeckung);
 
-    // 128 vor 1.5.29, dann 158 durch die aufgetrennten Ereignisse, davon
-    // nehmen Mindestfahrweg und Mindest-Querbeschleunigung fuenf wieder
-    // heraus. Ueber alle neun Fahrten des Tages entfernen die beiden Regeln
-    // 25 Ereignisse, darunter alle vier bekannten Fehlalarme aus GPS-Drift
-    // im Stand und beim Rangieren, ohne eine Referenzkurve zu verlieren.
-    TEST_ASSERT_EQUAL_UINT32(153, gesamt.ereignisse);
+    // Die Firmware protokollierte auf diesen fuenf Fahrten 130 Ereignisse,
+    // die Wiedergabe des damaligen Standes gibt genau diese 130 wieder. Mit
+    // 1.5.29 werden daraus 154: Das entrauschte Ruhefenster trennt
+    // zusammengelaufene Ereignisse wieder auf, Mindestfahrweg und
+    // Mindest-Querbeschleunigung nehmen einen Teil davon wieder heraus.
+    TEST_ASSERT_EQUAL_UINT32(154, gesamt.ereignisse);
 }
 
 int main(int, char**) {

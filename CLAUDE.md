@@ -16,6 +16,7 @@ produktionsreif. Bekannte Einschränkungen stehen weiter unten.
 | `pio run -t clean` | PlatformIO-Buildartefakte löschen |
 | `pio test -e native` | Hosttests der hardwarefreien Auswertelogik ausführen |
 | `python3 tools/export_geojson.py <Sitzung>` | Messsitzung als Karte für geojson.io exportieren |
+| `c++ -std=gnu++17 -O1 -I src -o /tmp/vergleich tools/vergleich_kurvenwiedergabe.cpp src/curve_detector.cpp` | Wiedergabe gegen die Firmwareereignisse derselben Fahrt prüfen |
 
 Die Web-OTA-Datei entsteht unter:
 
@@ -183,7 +184,11 @@ und den Festwert bewusst nachziehen.
 
 `test_wiedergabe_referenzfahrten` misst die Kurvenerkennung gegen die
 55 von Hand markierten Referenzkurven der fünf Beifahrerfahrten vom
-31.07.2026. Neben der Trefferzahl ist die Zahl der Ereignisse mit einer
+31.07.2026. Die Geschwindigkeit wird dabei wie in `main.cpp` gewählt: zuerst
+OBD, sonst GPS, sonst unbekannt. Diese Reihenfolge ist verbindlich, denn nur
+mit ihr gibt die Wiedergabe die Firmwareläufe ereignisgenau wieder — 174 zu
+174 Ereignissen bei 0,1 Grad mittlerer Winkelabweichung. Allein mit der
+GPS-Geschwindigkeit waren es 128 statt 174. Neben der Trefferzahl ist die Zahl der Ereignisse mit einer
 Zeitabdeckung unter 60 Prozent festgeschrieben: Ereignisse, deren Dauer nur
 zu einem kleinen Teil aus echten Drehstichproben besteht, umfassen mehrere
 Kurven, und ihr Radius beschreibt dann nichts Bestimmtes mehr. Dieser
