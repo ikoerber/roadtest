@@ -355,6 +355,43 @@ def position_fuer(zeile, position: Zeitreihe, zeit):
     return position.bei(zeit, fenster=3000)
 
 
+def kurven_zeitversatz(ereignisse):
+    """Versatz zwischen Geräte- und Sitzungszeit in Millisekunden.
+
+    StartUptimeMs und EndUptimeMs eines Kurvenereignisses zählen seit dem
+    Gerätestart, die Spalte UptimeMs dagegen seit dem Sitzungsbeginn. Ohne
+    Umrechnung liegen beide Zeitbasen um die gesamte bisherige Gerätelaufzeit
+    auseinander, und kein einziger GPS-Punkt fällt in ein Kurvenintervall.
+
+    Ein Referenzmarker der Beifahrerseite wird ohne Verzögerung geschrieben
+    und liefert den Versatz exakt. Sonst bleibt der Rückschluss aus den
+    Kurvenereignissen: EndUptimeMs minus UptimeMs ergibt den Versatz
+    abzüglich des Schreibverzugs, und der hängt vom Abschlussgrund ab. Das
+    Maximum trifft ihn deshalb am besten.
+    """
+    for zeile in ereignisse:
+        if zeile.get("Ereignis") != "CURVE_REFERENCE_END":
+            continue
+        werte = beschreibung_zerlegen(zeile.get("Beschreibung", ""))
+        ende = als_ganzzahl(werte.get("EndMs"))
+        zeit = als_ganzzahl(zeile.get("UptimeMs"))
+        if ende is not None and zeit is not None:
+            return ende - zeit
+
+    versatz = None
+    for zeile in ereignisse:
+        if zeile.get("Ereignis") != "KURVE":
+            continue
+        ende = als_ganzzahl(zeile.get("EndUptimeMs"))
+        zeit = als_ganzzahl(zeile.get("UptimeMs"))
+        if ende is None or zeit is None:
+            continue
+        kandidat = ende - zeit
+        if versatz is None or kandidat > versatz:
+            versatz = kandidat
+    return versatz
+
+
 def ebene_kurven(ereignisse, punkte, position):
     """Kurven als Bogen, wenn Anfangs- und Endzeit vorliegen.
 
@@ -363,6 +400,7 @@ def ebene_kurven(ereignisse, punkte, position):
     gezeichnet. Ältere Sitzungen liefern nur den Abschlusszeitpunkt; dort
     bleibt es bei einem Punkt."""
     features = []
+    versatz = kurven_zeitversatz(ereignisse)
     for zeile in ereignisse:
         if zeile.get("Ereignis") != "KURVE":
             continue
@@ -397,10 +435,18 @@ def ebene_kurven(ereignisse, punkte, position):
         }
 
         bogen = None
-        if start is not None and ende is not None and ende > start:
-            bogen = [
-                [lon, lat] for t, lon, lat, _ in punkte if start <= t <= ende
-            ]
+        if (
+            start is not None
+            and ende is not None
+            and ende > start
+            and versatz is not None
+        ):
+            # Beide Grenzen auf die Sitzungszeit der GPS-Spur umrechnen.
+            von = start - versatz
+            bis = ende - versatz
+            eigenschaften["vonUptimeMs"] = von
+            eigenschaften["bisUptimeMs"] = bis
+            bogen = [[lon, lat] for t, lon, lat, _ in punkte if von <= t <= bis]
         if bogen and len(bogen) >= 2:
             eigenschaften.update(
                 {"stroke": farbe, "stroke-width": 6, "stroke-opacity": 1.0}
@@ -422,7 +468,11 @@ def ebene_kurven(ereignisse, punkte, position):
                 "marker-color": farbe,
                 "marker-size": "medium",
                 "marker-symbol": "triangle",
-                "hinweis": "Kein Bogen: Sitzung ohne Anfangs- und Endzeit",
+                "hinweis": (
+                    "Kein Bogen: Sitzung ohne Anfangs- und Endzeit"
+                    if start is None or ende is None
+                    else "Kein Bogen: keine GPS-Punkte im Kurvenintervall"
+                ),
             }
         )
         features.append(
