@@ -113,6 +113,25 @@ bool CurveDetector::complete(
         return false;
     }
 
+    // Nachgewiesener Fahrweg statt Momentangeschwindigkeit. Die
+    // Geschwindigkeitsfreigabe allein reicht nicht: GPS-Drift im Stand wird
+    // mit bis zu 8 km/h als gültig ausgewiesen, und beim Rangieren entsteht
+    // sonst aus wenigen Metern eine Kurve mit 3 m Radius. Der Streckenzähler
+    // filtert dasselbe Rauschen seit jeher über eine Mindestsegmentlänge.
+    if (accumulator.distanceM < CURVE_MIN_EVENT_DISTANCE_M) {
+        return false;
+    }
+
+    // Eine Kurve, die niemand als Kurve fährt, ist keine. Maßgeblich ist die
+    // Querbeschleunigung, nicht der Radius: Ein Bogen mit 500 m Radius bei
+    // 90 km/h wurde von der Beifahrerseite ausdrücklich als Kurve markiert
+    // und trägt 1,5 m/s², ein Autobahnbogen mit 1450 m Radius dagegen 0,4.
+    const float meanLateralAccel =
+        accumulator.lateralAccelSum / accumulator.sampleCount;
+    if (meanLateralAccel < CURVE_MIN_EVENT_LATERAL_ACCEL) {
+        return false;
+    }
+
     completedEvent = CurveEvent();
     completedEvent.valid = true;
     completedEvent.startTimeMs = accumulator.startTimeMs;
@@ -131,8 +150,7 @@ bool CurveDetector::complete(
     completedEvent.meanYawRateDps =
         accumulator.yawRateSumDps / accumulator.sampleCount;
     completedEvent.maxYawRateDps = accumulator.maxYawRateDps;
-    completedEvent.meanLateralAccel =
-        accumulator.lateralAccelSum / accumulator.sampleCount;
+    completedEvent.meanLateralAccel = meanLateralAccel;
     completedEvent.maxLateralAccel = accumulator.maxLateralAccel;
     completedEvent.sampleCount = accumulator.sampleCount;
     completedEvent.detectionMode = accumulator.detectionMode;

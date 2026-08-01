@@ -175,6 +175,15 @@ extern const int GPS_BAUD_RATE;    // 9600    - GPS Baudrate
 // eine echte langgezogene Kurve nicht.
 #define CURVE_QUIET_MIN_NET_ANGLE_DEG          2.0f
 #define CURVE_MIN_EVENT_ANGLE_DEG             10.0f
+// Mindestfahrweg und Mindest-Querbeschleunigung eines Ereignisses. Beide
+// Werte wurden gegen die 55 von Hand markierten Referenzkurven der fünf
+// Beifahrerfahrten vom 31.07.2026 gewählt und lassen dort keine einzige
+// Referenzkurve entfallen: Die schwächste markierte Kurve fuhr 10,8 m Weg
+// und 0,45 m/s². Zusammen entfernen sie die beiden bekannten
+// Fehlalarmklassen - Ereignisse aus GPS-Drift im Stand (1 bis 4 m Weg) und
+// beim Rangieren (0,27 m/s²).
+#define CURVE_MIN_EVENT_DISTANCE_M            10.0f
+#define CURVE_MIN_EVENT_LATERAL_ACCEL          0.4f
 #define CURVE_REVERSAL_ANGLE_DEG               5.0f
 #define CURVE_MAX_DURATION_MS              60000UL
 #define CURVE_EVENT_COOLDOWN_MS              1000UL

@@ -362,13 +362,18 @@ Positionssprungbewertung und ereignisorientiertes Logging bleiben offen.
   Kurve wird als `SESSION_END` abgeschlossen statt verworfen, und der
   Detektor wird beim Messstart zurückgestellt. Wirksamkeit am Gerät noch
   nicht bestätigt.
-- Offen bleiben zwei bekannte Fehlalarmquellen: Kurvenereignisse im Stand und
-  beim Rangieren, weil das Geschwindigkeitsgatter nur die Momentangeschwindig-
-  keit prüft und GPS-Drift bis 8 km/h ausweisen kann, sowie langgezogene
-  Autobahnbögen mit über 300 Meter Radius. Für beide ist die
-  Querbeschleunigung beziehungsweise ein Mindestfahrweg der geeignete
-  Diskriminator; beides ist über `test_wiedergabe_referenzfahrten` zu messen,
-  bevor es geändert wird.
+- Ein Kurvenereignis benötigt zusätzlich mindestens 10 Meter Fahrweg und
+  0,4 m/s² mittlere Querbeschleunigung. Die Geschwindigkeitsfreigabe allein
+  reicht nicht, weil GPS-Drift im Stand bis 8 km/h als gültig ausgewiesen
+  wird. Der Radius ist ausdrücklich kein Kriterium: Ein Bogen mit 500 Meter
+  Radius bei 90 km/h ist eine markierte Referenzkurve, ein Autobahnbogen mit
+  1450 Meter Radius bei 116 km/h nicht; unterscheiden lassen sie sich nur
+  über die Querbeschleunigung.
+- Schwellwerte der Kurvenerkennung nur gegen
+  `test_wiedergabe_referenzfahrten` ändern, nie nach Augenschein. Die
+  Referenzintervalle der Beifahrerseite sind gut, aber nicht fehlerfrei:
+  einzelne Marker sitzen mehrere Sekunden versetzt, und drei markierte
+  Kurven drehen netto weniger als 10 Grad.
 - Ein vorübergehender SD-Ausfall wird in derselben Gerätesitzung automatisch
   durch eine separate Puffer-Recovery-Datei und eine neue, verknüpfte
   Messsitzung behandelt. Nach Reset oder Spannungsverlust bleibt ein

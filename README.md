@@ -742,6 +742,9 @@ Buslast steht in [OPTIMIERUNGEN.md](OPTIMIERUNGEN.md).
 - ✅ Eine beim Stoppen laufende Kurve wird als `SESSION_END` abgeschlossen
   statt verworfen
 - ✅ Kurvenerkennung wird beim Messstart zurückgestellt
+- ✅ Mindestfahrweg von 10 m und Mindest-Querbeschleunigung von 0,4 m/s² je
+  Ereignis; entfernt Fehlalarme aus GPS-Drift im Stand und beim Rangieren,
+  ohne eine der 55 markierten Referenzkurven zu verlieren
 - ✅ Wiedergabe aller fünf Referenzfahrten als Hosttest mit festgeschriebener
   Trefferzahl gegen 55 von Hand markierte Referenzkurven
 - ⚠️ Wirksamkeit am Gerät noch nicht bestätigt

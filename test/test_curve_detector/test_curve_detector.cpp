@@ -172,6 +172,60 @@ void test_winkel_knapp_unter_mindestgroesse_liefert_kein_ereignis() {
     TEST_ASSERT_EQUAL_UINT32(0, f.events.size());
 }
 
+// --- Mindestfahrweg --------------------------------------------------------
+//
+// Die Geschwindigkeitsfreigabe allein reicht nicht: GPS-Drift im Stand wird
+// mit bis zu 8 km/h als gueltig ausgewiesen. In 20260731_160627_085A6E1C
+// entstanden daraus zwei Kurven mit 2,5 und 3,4 m Radius ueber 1,6 und 1,8 m
+// Fahrweg, waehrend das Geraet in der Hand gedreht wurde.
+
+// 7,2 km/h sind 2 m/s; 6 s ergeben 12 m und damit knapp ueber der Grenze.
+void test_fahrweg_knapp_ueber_mindestwert_liefert_ereignis() {
+    Feeder f;
+    f.feed(5, 0.0f, 7.2f);
+    f.feed(60, 15.0f, 7.2f);     // 90 Grad ueber 12 m
+    f.feed(30, 0.0f, 7.2f);
+    TEST_ASSERT_EQUAL_UINT32(1, f.events.size());
+    TEST_ASSERT_TRUE(f.events[0].distanceM >= CURVE_MIN_EVENT_DISTANCE_M);
+}
+
+// Dieselbe Drehung ueber 8 m Fahrweg bleibt unter der Grenze.
+void test_fahrweg_knapp_unter_mindestwert_liefert_kein_ereignis() {
+    Feeder f;
+    f.feed(5, 0.0f, 7.2f);
+    f.feed(40, 22.5f, 7.2f);     // ebenfalls 90 Grad, aber nur 8 m
+    f.feed(30, 0.0f, 7.2f);
+    TEST_ASSERT_EQUAL_UINT32(0, f.events.size());
+}
+
+// --- Mindest-Querbeschleunigung --------------------------------------------
+//
+// Massgeblich ist die Querbeschleunigung, nicht der Radius. Ein Bogen mit
+// 500 m Radius bei 90 km/h wurde von der Beifahrerseite ausdruecklich als
+// Kurve markiert und traegt 1,5 m/s²; ein Autobahnbogen mit 1450 m Radius
+// bei 116 km/h dagegen 0,4 und ist keine gefahrene Kurve.
+
+// 72 km/h sind 20 m/s; 1,3 Grad/s ergeben 0,45 m/s².
+void test_querbeschleunigung_knapp_ueber_mindestwert_liefert_ereignis() {
+    Feeder f;
+    f.feed(5, 0.0f, 72.0f);
+    f.feed(120, 1.3f, 72.0f);    // 12 s, 15,6 Grad, 240 m
+    f.feed(30, 0.0f, 72.0f);
+    TEST_ASSERT_EQUAL_UINT32(1, f.events.size());
+    TEST_ASSERT_TRUE(
+        f.events[0].meanLateralAccel >= CURVE_MIN_EVENT_LATERAL_ACCEL);
+}
+
+// 1,0 Grad/s bei gleicher Geschwindigkeit sind 0,35 m/s². Der Winkel
+// qualifiziert weiterhin, die Kurve wird aber nicht gefahren.
+void test_querbeschleunigung_knapp_unter_mindestwert_liefert_kein_ereignis() {
+    Feeder f;
+    f.feed(5, 0.0f, 72.0f);
+    f.feed(150, 1.0f, 72.0f);    // 15 s, 15 Grad, 300 m
+    f.feed(30, 0.0f, 72.0f);
+    TEST_ASSERT_EQUAL_UINT32(0, f.events.size());
+}
+
 // --- S-Kurve ---------------------------------------------------------------
 
 void test_s_kurve_liefert_zwei_ereignisse_einer_gruppe() {
@@ -529,10 +583,11 @@ void test_wiedergabe_echter_fahrt() {
     // Aendert sich der Wert, ist das kein Testfehler, sondern eine
     // Verhaltensaenderung: Sie ist zu pruefen, zu begruenden und der Festwert
     // hier bewusst nachzuziehen.
-    // Der Wert stieg mit 1.5.29 von 32 auf 42: Das Ruhefenster laesst sich
-    // nicht mehr von Rauschen offen halten, zusammengelaufene Ereignisse
-    // trennen sich wieder auf.
-    const size_t kErwarteteKurven = 42;
+    // Der Wert stieg mit 1.5.29 von 32 auf 42, weil sich das Ruhefenster
+    // nicht mehr von Rauschen offen halten laesst und zusammengelaufene
+    // Ereignisse sich wieder auftrennen. Mindestfahrweg und
+    // Mindest-Querbeschleunigung nehmen davon zwei wieder heraus.
+    const size_t kErwarteteKurven = 40;
     TEST_ASSERT_EQUAL_UINT32(kErwarteteKurven, events.size());
 }
 
@@ -765,7 +820,13 @@ void test_wiedergabe_referenzfahrten() {
 
     // Vor 1.5.29 lagen hier 47 von 128 Ereignissen.
     TEST_ASSERT_EQUAL_UINT32(7, gesamt.geringeAbdeckung);
-    TEST_ASSERT_EQUAL_UINT32(158, gesamt.ereignisse);
+
+    // 128 vor 1.5.29, dann 158 durch die aufgetrennten Ereignisse, davon
+    // nehmen Mindestfahrweg und Mindest-Querbeschleunigung fuenf wieder
+    // heraus. Ueber alle neun Fahrten des Tages entfernen die beiden Regeln
+    // 25 Ereignisse, darunter alle vier bekannten Fehlalarme aus GPS-Drift
+    // im Stand und beim Rangieren, ohne eine Referenzkurve zu verlieren.
+    TEST_ASSERT_EQUAL_UINT32(153, gesamt.ereignisse);
 }
 
 int main(int, char**) {
@@ -779,6 +840,11 @@ int main(int, char**) {
     RUN_TEST(test_kleiner_winkel_erzeugt_kein_ereignis);
     RUN_TEST(test_winkel_knapp_ueber_mindestgroesse_liefert_ereignis);
     RUN_TEST(test_winkel_knapp_unter_mindestgroesse_liefert_kein_ereignis);
+    RUN_TEST(test_fahrweg_knapp_ueber_mindestwert_liefert_ereignis);
+    RUN_TEST(test_fahrweg_knapp_unter_mindestwert_liefert_kein_ereignis);
+    RUN_TEST(test_querbeschleunigung_knapp_ueber_mindestwert_liefert_ereignis);
+    RUN_TEST(
+        test_querbeschleunigung_knapp_unter_mindestwert_liefert_kein_ereignis);
     RUN_TEST(test_s_kurve_liefert_zwei_ereignisse_einer_gruppe);
     RUN_TEST(test_gyro_wird_bevorzugt_und_markiert);
     RUN_TEST(test_ohne_gyro_faellt_auf_kurs_zurueck);

@@ -50,12 +50,32 @@ Auswertung der fünf Beifahrer-Referenzfahrten vom 31.07.2026 mit zusammen
   zufälliger Überlappungen.
 
 ### Hinzugefügt
+- Mindestfahrweg `CURVE_MIN_EVENT_DISTANCE_M` von 10 Metern je Ereignis. Die
+  Geschwindigkeitsfreigabe allein reichte nicht: GPS-Drift im Stand wird mit
+  bis zu 8 km/h als gültig ausgewiesen. In `20260731_160627_085A6E1C`
+  entstanden daraus zwei Kurven mit 2,5 und 3,4 Meter Radius über 1,6 und
+  1,8 Meter Fahrweg, während das Gerät in der Hand gedreht wurde. Der
+  Streckenzähler filtert dasselbe Rauschen seit jeher über eine
+  Mindestsegmentlänge.
+- Mindest-Querbeschleunigung `CURVE_MIN_EVENT_LATERAL_ACCEL` von 0,4 m/s² je
+  Ereignis. Maßgeblich ist die Querbeschleunigung, nicht der Radius: Ein
+  Bogen mit 500 Meter Radius bei 90 km/h wurde von der Beifahrerseite
+  ausdrücklich als Kurve markiert und trägt 1,5 m/s²; ein Autobahnbogen mit
+  1450 Meter Radius bei 116 km/h dagegen 0,4 und ist keine gefahrene Kurve.
+- Beide Werte wurden gegen die 55 markierten Referenzkurven gewählt und
+  lassen dort keine einzige entfallen; die schwächste markierte Kurve fuhr
+  10,8 Meter Weg und 0,45 m/s². Über alle neun Fahrten des 31.07.2026
+  entfernen sie zusammen 25 von 211 Ereignissen, darunter alle vier bekannten
+  Fehlalarme aus Stand und Rangieren. Ereignisse unter 12 km/h fallen von 15
+  auf 2; beide verbliebenen sind echte enge Kurven, eine davon eine
+  markierte Referenz.
 - Hosttest `test_wiedergabe_referenzfahrten`: spielt alle fünf
   Referenzfahrten durch die Erkennung und schreibt Trefferzahl,
   Ereigniszahl und die Zahl der Ereignisse mit geringer Zeitabdeckung als
   Festwerte fest.
-- Hosttests für das entrauschte Ruhefenster mit je einem Fall knapp über und
-  knapp unter der Fortsetzungsschwelle sowie für `CurveDetector::finish()`.
+- Hosttests für das entrauschte Ruhefenster, den Mindestfahrweg und die
+  Mindest-Querbeschleunigung mit je einem Fall knapp über und knapp unter der
+  Schwelle sowie für `CurveDetector::finish()`. 49 Hosttests insgesamt.
 
 ## [Unveröffentlicht]
 
