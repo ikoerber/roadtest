@@ -532,6 +532,33 @@ def ebene_referenzen(ereignisse, punkte):
     return features
 
 
+def vollstaendigkeit(ende, gps_zeilen):
+    """Vergleicht die vorhandenen GPS-Zeilen mit dem Zähler der Firmware.
+
+    Die Firmware zählt in GPSSnapshots jeden geschriebenen Qualitäts-Snapshot.
+    Weicht die Zeilenzahl der Datei davon ab, fehlen Zeilen, und die Strecke
+    auf der Karte bricht entsprechend früh ab. In 20260801_114252_B9D1628B
+    standen 1122 Zeilen gegen 3534 gezählte Snapshots; die Linie endete nach
+    227 von 709 Sekunden. Ohne diesen Hinweis wirkt das wie ein Fehler der
+    Auswertung statt wie fehlende Daten.
+    """
+    gezaehlt = als_ganzzahl(ende.get("GPSSnapshots"))
+    vorhanden = len(gps_zeilen)
+    if gezaehlt is None or gezaehlt <= vorhanden:
+        return {}
+    fehlend = gezaehlt - vorhanden
+    return {
+        "gpsZeilenErwartet": gezaehlt,
+        "gpsZeilenFehlend": fehlend,
+        "hinweisDatenverlust": (
+            f"Unvollständig: {fehlend} von {gezaehlt} GPS-Zeilen fehlen in der "
+            "Datei. Die Firmware hat sie als geschrieben gezählt. Strecke und "
+            "Kurvenbögen enden dort, wo die GPS-Spur abbricht; Ereignisse mit "
+            "eigener Koordinate bleiben darüber hinaus sichtbar."
+        ),
+    }
+
+
 def ebene_sitzungskopf(verzeichnis, meta, summary, punkte, gps_zeilen):
     if not punkte:
         return []
@@ -569,6 +596,7 @@ def ebene_sitzungskopf(verzeichnis, meta, summary, punkte, gps_zeilen):
         "gpsVerfehlteSlots": wert(ende, "GPSMissedSlots"),
         "sensorVerfehlteSlots": wert(ende, "SensorMissedSlots"),
         "hinweisQuantisierung": QUANTISIERUNG_HINWEIS,
+        **vollstaendigkeit(ende, gps_zeilen),
         "marker-color": "#000000",
         "marker-size": "large",
         "marker-symbol": "star",
