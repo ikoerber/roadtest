@@ -55,6 +55,9 @@ unsigned long lastGPSRestart = 0;
 unsigned long lastCANRecoveryAttempt = 0;
 uint8_t bnoMissingChecks = 0;
 uint8_t oledMissingChecks = 0;
+// Verhindert, dass ein dauerhaft fehlendes Display den Zähler und die
+// serielle Ausgabe im Prüfintervall weiterlaufen lässt.
+bool oledReportedMissing = false;
 uint32_t bnoProbeFailureCount = 0;
 uint32_t oledProbeFailureCount = 0;
 uint8_t canModeFailureCount = 0;
@@ -920,19 +923,30 @@ void handleHardwareRecovery(unsigned long now) {
         i2cDeviceResponds(OLED_ADDRESS_A) ||
         i2cDeviceResponds(OLED_ADDRESS_B);
     if (oledDetectedAtLeastOnce) {
-        if (!oledResponding) {
-            oledProbeFailureCount++;
-            Serial.printf("⚠️ OLED-I2C-Prüfung fehlgeschlagen (%u/3, gesamt %lu)\n",
-                          oledMissingChecks + 1,
-                          static_cast<unsigned long>(oledProbeFailureCount));
-        } else if (oledMissingChecks > 0) {
-            Serial.printf("✅ OLED-I2C wieder stabil nach %u Fehlprüfung(en)\n",
-                          oledMissingChecks);
-        }
-        oledMissingChecks = oledResponding ? 0 : oledMissingChecks + 1;
-        if (oledMissingChecks >= 3) {
-            Serial.println("⚠️ OLED antwortet nicht mehr auf dem I²C-Bus");
+        if (oledResponding) {
+            if (oledMissingChecks > 0 || oledReportedMissing) {
+                Serial.printf(
+                    "✅ OLED-I2C wieder stabil nach %u Fehlprüfung(en)\n",
+                    oledMissingChecks);
+            }
             oledMissingChecks = 0;
+            oledReportedMissing = false;
+        } else if (!oledReportedMissing) {
+            // Nach dem festgestellten Verlust wird weder weiter gezählt noch
+            // gemeldet. Sonst liefe der Aussetzerzähler bei dauerhaft
+            // gezogenem Display im Sekundentakt hoch und die Meldung alle
+            // fünf Sekunden über die serielle Ausgabe.
+            oledProbeFailureCount++;
+            oledMissingChecks++;
+            Serial.printf("⚠️ OLED-I2C-Prüfung fehlgeschlagen (%u/3, gesamt %lu)\n",
+                          oledMissingChecks,
+                          static_cast<unsigned long>(oledProbeFailureCount));
+            if (oledMissingChecks >= 3) {
+                Serial.println(
+                    "⚠️ OLED antwortet nicht mehr auf dem I²C-Bus; "
+                    "weitere Meldungen bis zur Rückkehr unterdrückt");
+                oledReportedMissing = true;
+            }
         }
     } else if (oledResponding) {
         oledDetectedAtLeastOnce = true;
@@ -1579,10 +1593,9 @@ void loop() {
 
         {
             const LogStats logStats = sdLogger.getStatistics();
-            Serial.printf("   TEST: OLED=%s%s, I2C-Aussetzer BNO/OLED=%lu/%lu, "
+            Serial.printf("   TEST: OLED=%s, I2C-Aussetzer BNO/OLED=%lu/%lu, "
                           "SD-Schreibvorgänge=%lu Fehler=%lu Verworfen=%lu, WLAN=%s\n",
                           oledDetectedAtLeastOnce ? "am Bus" : "nicht am Bus",
-                          "",
                           static_cast<unsigned long>(bnoProbeFailureCount),
                           static_cast<unsigned long>(oledProbeFailureCount),
                           static_cast<unsigned long>(logStats.totalWrites),

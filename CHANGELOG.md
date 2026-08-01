@@ -5,6 +5,31 @@ Alle wichtigen Änderungen am ESP32-S3 Straßenqualitäts-Messsystem werden in d
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt hält sich an [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.34] - 2026-08-01
+
+### Behoben
+- Die Größenprüfung aus 1.5.31 verlor ihre Grundlinie. Die Rückstellung der
+  Byte-Zähler stand im gemeinsamen Rumpf hinter `FINALIZE` und lief damit
+  erst, nachdem `openLogFile()` die Ausgangswerte einschließlich Kopfzeile
+  gesetzt hatte. Die erwartete Größe fiel dadurch je Datei um die Kopfzeile
+  zu niedrig aus, und ein Verlust in genau dieser Größenordnung wäre
+  unentdeckt geblieben. Die Rückstellung steht jetzt in `PREPARE`, also vor
+  dem Öffnen.
+- Ein dauerhaft fehlendes OLED erzeugte seit 1.5.32 endlos Meldungen. Die
+  Verzweigung hing an `oledDetectedAtLeastOnce`, das nie zurückfällt; zuvor
+  schaltete `oledManager.end()` die Überwachung nach drei Fehlversuchen ab.
+  Ohne Displaytreiber lief sie weiter: alle fünf Sekunden eine Warnung und
+  ein im Prüfintervall hochlaufender Aussetzerzähler, der damit keine
+  Aussetzer mehr zählte, sondern Sekunden. Die Meldung wird jetzt einmal
+  abgesetzt und bis zur Rückkehr des Displays unterdrückt.
+- `recoverySummaryWritten` wird beim Kartenfehler zurückgestellt. Sonst hätte
+  ein zweiter Ausfall vor dem Schreiben des Fortsetzungsereignisses
+  fälschlich `ZusammenfassungNachgetragen=ja` gemeldet.
+
+### Entfernt
+- Sechs verwaiste Zählvariablen des Kurventests in `WebManager` sowie ein
+  leeres Formatargument in der seriellen Teststatuszeile.
+
 ## [1.5.33] - 2026-08-01
 
 ### Entfernt

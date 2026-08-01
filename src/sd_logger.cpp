@@ -308,6 +308,13 @@ void SDLogger::processLoggingStart() {
 
         case LoggingStartState::PREPARE:
             closeLogFiles();
+            // Vor dem Öffnen zurückstellen. Stünde die Rückstellung im
+            // gemeinsamen Rumpf hinter FINALIZE, würde sie die von
+            // openLogFile() gesetzten Ausgangswerte samt Kopfzeilengröße
+            // wieder verwerfen; die Größenprüfung verlöre ihre Grundlinie.
+            for (uint8_t i = 0; i < LOGFILE_COUNT; ++i) {
+                expectedFileBytes[i] = 0;
+            }
             sessionId = generateSessionId();
             sessionDirectory = "/sessions/" + sessionId;
             if (!SD.mkdir(sessionDirectory)) {
@@ -431,9 +438,6 @@ void SDLogger::processLoggingStart() {
         canSessionStartDiagnostics = CANHardwareDiagnostics{};
     }
     runtimeDiagnostics.resetSession();
-    for (uint8_t i = 0; i < LOGFILE_COUNT; ++i) {
-        expectedFileBytes[i] = 0;
-    }
     // Ohne Rückstellung überlebt ein vor dem Messstart angefangener
     // Kurvenverlauf den Sitzungsbeginn. In 20260731_152148_452707FB begann
     // das erste Ereignis dadurch 2,2 s vor der Sitzung.
@@ -861,6 +865,9 @@ void SDLogger::handleCardFailure(const char* reason, uint32_t droppedRecords) {
         recoveryBufferedRecordsAtFailure = bufferedRecordCount;
         recoveryRecoveredRecords = 0;
         recoveryBufferFileName = "";
+        // Sonst behauptete das naechste Fortsetzungsereignis faelschlich, die
+        // Zusammenfassung sei bereits nachgetragen.
+        recoverySummaryWritten = false;
         persistFailureState(recoveryFailureReason);
     }
 

@@ -95,13 +95,7 @@ WebManager::WebManager()
       otaInProgress(false),
       otaUploadRejected(false),
       otaBlockedByMeasurement(false),
-      otaUploadFileName(""),
-      curveStraightCount(0),
-      curveLeftWideCount(0),
-      curveRightWideCount(0),
-      curveLeftNormalCount(0),
-      curveRightNormalCount(0),
-      curveSCount(0) {}
+      otaUploadFileName("") {}
 
 bool WebManager::begin() {
     if (initialized) {

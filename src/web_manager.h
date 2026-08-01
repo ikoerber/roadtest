@@ -13,12 +13,6 @@ private:
     bool otaUploadRejected;
     bool otaBlockedByMeasurement;
     String otaUploadFileName;
-    uint16_t curveStraightCount;
-    uint16_t curveLeftWideCount;
-    uint16_t curveRightWideCount;
-    uint16_t curveLeftNormalCount;
-    uint16_t curveRightNormalCount;
-    uint16_t curveSCount;
 
     String buildStatusPage();
     String buildCalibrationPage(const String& message = "");

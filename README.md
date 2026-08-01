@@ -2,7 +2,7 @@
 
 Ein fortschrittliches Embedded-System zur Messung und Bewertung von Straßenqualität für kurvenreiche Motorradstrecken.
 
-Aktueller Firmwarestand: **1.5.33**. Der Stand ist ein Hardware- und
+Aktueller Firmwarestand: **1.5.34**. Der Stand ist ein Hardware- und
 Fahrzeugteststand. 1.5.28 misst Kurven über eine einbaulagenunabhängige
 Gyroskopprojektion, protokolliert Radius und vollständige Ereignisintervalle
 und stellt dafür einen geführten Beifahrertest bereit. 1.5.29 schärft die
@@ -674,6 +674,12 @@ Der priorisierte Backlog für gleichmäßigere Sensorabtastung und geringere
 Buslast steht in [OPTIMIERUNGEN.md](OPTIMIERUNGEN.md).
 
 ## 📈 Version History
+
+### v1.5.34 - Befunde aus dem Code-Review
+- ✅ Größenprüfung bekommt ihre Grundlinie zurück; Rückstellung der Zähler
+  jetzt vor dem Öffnen der Dateien
+- ✅ Keine Endlosmeldungen mehr bei dauerhaft fehlendem OLED
+- ✅ Verwaiste Zähler und Formatargumente entfernt
 
 ### v1.5.33 - Beifahrer-Kurventest entfernt
 - ✅ Seite `/curve-test` samt Routen und Zustandsverwaltung raus; 13.868 Byte
