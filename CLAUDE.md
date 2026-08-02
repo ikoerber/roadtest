@@ -279,9 +279,16 @@ Eigenschaften des Sitzungskopfes.
   in beiden Richtungen erkannt, 1,0 Grad Winkelabweichung im Median und 3,4
   Grad im Maximum. Diese Messung braucht keine markierten Referenzintervalle
   und ist mit `tools/vergleich_hin_rueck.py` jederzeit zu wiederholen.
-- In allen drei Fahrten vom 02.08.2026 hatte GPS keinen Fix. Der Empfänger
-  arbeitete, sah aber null Satelliten. Ursache offen; vor der nächsten Fahrt
-  im Stand abwarten, bis `diag` Satelliten meldet.
+- In allen drei Fahrten vom 02.08.2026 hatte GPS keinen Fix: 1.887 Zeilen mit
+  exakt null Satelliten, am Vortag dagegen 12 bei HDOP 0,68. Später am selben
+  Tag kam der Empfang ohne Eingriff von selbst zurück. Die Firmware ist als
+  Ursache ausgeschlossen — sie sendet dem BN-880 nichts, `gps_manager.cpp` ist
+  seit dem 30.07. unverändert, die NMEA-Kette war mit 2.440 gültigen Sätzen
+  und null Prüfsummenfehlern intakt, und die Fix-LED des Moduls blieb dunkel.
+  Null Satelliten über fünf Minuten schließen auch einen Kaltstart aus. Der
+  Verdacht liegt auf einem Wackelkontakt an der aufgelöteten Keramikantenne
+  oder der Versorgung. Vor jeder Fahrt im Stand abwarten, bis `diag`
+  Satelliten meldet, und die Satellitenzahl im Sitzungskopf gegenprüfen.
 - Zwei SD-Abbrüche desselben Tages wurden verlustfrei aufgefangen:
   `20260731_142359_514EDDF4` mit 38 von 38 geretteten Pufferzeilen nach
   81 Sekunden Ausfall und `20260731_160032_3D732AD1` mit 17 von 17 nach

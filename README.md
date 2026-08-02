@@ -691,7 +691,8 @@ Buslast steht in [OPTIMIERUNGEN.md](OPTIMIERUNGEN.md).
   Erkennungspfad, nicht die Kurve
 - ⚠️ GPS ohne Fix in allen drei Fahrten; `StreckeKm 0.000`, keine
   Kartenauswertung möglich. Kurvenerkennung nicht betroffen, Geschwindigkeit
-  kam aus OBD
+  kam aus OBD. Empfang kehrte von selbst zurück; Firmware als Ursache
+  ausgeschlossen, Verdacht auf Wackelkontakt am GPS-Modul
 - ⚠️ `LoopMaxMs` mit 251 ms nicht gesunken; der Wert stammt aus dem
   Sitzungsstart, nicht aus dem Flush
 

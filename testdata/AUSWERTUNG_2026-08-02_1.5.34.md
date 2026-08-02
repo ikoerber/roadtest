@@ -41,6 +41,35 @@ Die Kurvenerkennung ist davon **nicht** betroffen. Die Geschwindigkeit kam
 wie in `main.cpp` vorgesehen aus OBD, und OBD lief fehlerfrei: 609 Anfragen,
 609 Antworten, null Timeouts, null Sendefehler, null CAN-Recovery.
 
+### Nachtrag: Empfang kehrte von selbst zurück
+
+Noch am 02.08.2026 lieferte dasselbe Modul ohne jeden Eingriff wieder
+11 Satelliten. Damit ist der Ausfall sporadisch.
+
+Die Firmware scheidet als Ursache aus. Sie sendet dem BN-880 nichts - kein
+`Serial2.write`, kein UBX, kein PMTK -, sondern öffnet den UART und liest.
+`gps_manager.cpp` ist seit dem 30.07.2026 unverändert und damit älter als die
+Fahrten vom 01.08.2026, die 12 Satelliten bei HDOP 0,68 lieferten. Die
+OLED-Commits berührten GPS nur in gelöschten Anzeigezeilen; I²C liegt auf
+GPIO 8/9, GPS auf GPIO 15/16. Unabhängig davon blieb die Fix-LED des Moduls
+dunkel, und die hängt am BN-880, nicht am ESP32.
+
+Ein Kaltstart nach leerem Almanach scheidet ebenfalls aus: Dabei *sieht* der
+Empfänger Satelliten, die Zahl in GGA steigt schrittweise, nur der Fix
+braucht länger. Exakt null über fünf Minuten bedeutet, dass kein einziger
+Satellit ins Tracking kam.
+
+Der BN-880 trägt seine Keramikantenne fest aufgelötet; eine Steckverbindung,
+die sich lösen könnte, gibt es nicht. Bleibt als Verdacht ein
+**Wackelkontakt** an den Lötstellen des Keramikplättchens oder in der
+Versorgung. Ein Ausfall, der ohne Eingriff kommt und geht, passt zu nichts
+anderem - ein defekter Empfänger käme nicht von selbst zurück.
+
+Zu prüfen: Lötstellen des Keramikplättchens unter der Lupe auf Haarrisse,
+Versorgungsspannung am Modul unter Last. Bis dahin bei jeder Fahrt die
+Satellitenzahl im Sitzungskopf gegenprüfen, statt sich auf das Vorhandensein
+der GPS-Datei zu verlassen.
+
 ## Vollständigkeit
 
 Zeilenzahl je Datei gegen die Zähler der Metadatendatei, wie für jede

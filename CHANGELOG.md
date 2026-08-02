@@ -45,7 +45,12 @@ SD-Abbruch, keine Integritätsdatei. Vollständige Auswertung in
   `StreckeKm 0.000`, alle Ereignisse ohne Position, keine Kartenauswertung
   möglich. Die Kurvenerkennung ist davon nicht betroffen, weil die
   Geschwindigkeit wie vorgesehen aus OBD kam; OBD lief mit 609 Anfragen und
-  609 Antworten fehlerfrei.
+  609 Antworten fehlerfrei. Noch am selben Tag kehrte der Empfang ohne
+  Eingriff zurück. Die Firmware scheidet als Ursache aus: Sie sendet dem
+  BN-880 nichts, `gps_manager.cpp` ist seit dem 30.07.2026 unverändert, und
+  die Fix-LED des Moduls blieb dunkel. Verdacht ist ein Wackelkontakt an der
+  aufgelöteten Keramikantenne oder der Versorgung; Einzelheiten im
+  Auswertungsbericht.
 - **Das Ziel von 1.5.30 für `LoopMaxMs` wurde verfehlt**: 251 statt deutlich
   unter 247 Millisekunden. Der Wert steht aber schon fünf Sekunden nach dem
   Messstart bei 222 ms, als `SDMaxMs` erst 44 ms beträgt - das ist der
