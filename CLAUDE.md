@@ -260,7 +260,7 @@ Eigenschaften des Sitzungskopfes.
 ## Aktueller Teststand
 
 - Firmware 1.5.35 baut erfolgreich für `lolin_s3_mini`.
-- Letzter Build: 71.124 Byte RAM (21,7 %) und 1.227.154 Byte Flash (93,6 %).
+- Letzter Build: 71.124 Byte RAM (21,7 %) und 1.227.566 Byte Flash (93,7 %).
 - Am 31.07.2026 liefen fünf Beifahrer-Referenzfahrten mit 1.5.28 und je zwölf
   markierten Referenzintervallen. Sie sind der Prüfstand der Kurvenerkennung.
 - 1.5.29 ist am Fahrzeug bestätigt: vier Fahrten am 01.08.2026 über 21 Minuten
@@ -394,6 +394,16 @@ Verbindliche Punkte:
   keine Zugangsdaten eingeben soll. Sie kann ausschließlich Marker setzen.
 - Ohne laufende Aufzeichnung antworten die Endpunkte mit 409, statt Marker
   stillschweigend zu verwerfen.
+- **Die Aufzeichnung hängt nicht an der Bewertung.** `/fahrbahn` ruft
+  ausschließlich `logEvent()`; Start und Ende bleiben allein bei
+  `/ride/start` und `/ride/stop`. Bewerten ist jederzeit für beliebig lange
+  aussetzbar, auch mit geschlossener Seite.
+- **Ein Urteil gilt für seinen Abschnitt, nicht bis zum nächsten Marker.**
+  Jedes Urteil trägt dafür die laufende Abschnittsnummer und den Weg im
+  offenen Abschnitt mit. Diese Regel ist verbindlich für jede Auswertung:
+  Andernfalls zöge eine Pause von zehn Minuten die letzte Wertung über zehn
+  Minuten unbewertete Straße. Nicht bewertete Abschnitte bleiben ohne
+  Urteil - das ist der gewollte Zustand, keine Lücke, die zu füllen wäre.
 
 ## Bekannte Einschränkungen
 

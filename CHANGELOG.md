@@ -91,6 +91,20 @@ und dieses Projekt hält sich an [Semantic Versioning](https://semver.org/spec/v
 - Die Seite ist absichtlich nicht passwortgeschützt - der Beifahrer soll
   während der Fahrt keine Zugangsdaten eingeben. Sie kann ausschließlich
   Marker setzen.
+- **Bewerten ist jederzeit aussetzbar.** Die Aufzeichnung hängt in keiner
+  Weise an der Bewertung: `/fahrbahn` ruft ausschließlich `logEvent()`,
+  Start und Ende bleiben allein bei `/ride/start` und `/ride/stop`.
+
+  Damit eine Pause auch in der Auswertung folgenlos bleibt, trägt jedes
+  Urteil die laufende Abschnittsnummer und den Weg im offenen Abschnitt mit.
+  Ein Urteil gilt dadurch für **genau seinen Abschnitt** und nicht bis zum
+  nächsten Marker. Ohne diese Zuordnung zöge eine Pause von zehn Minuten die
+  letzte Wertung über zehn Minuten unbewertete Straße. Wer aussetzt,
+  hinterlässt jetzt eine Lücke - und eine Lücke ist ehrlich, eine
+  fortgeschriebene Wertung wäre es nicht.
+
+  Das Ereignis `ABSCHNITT` führt dieselbe Nummer in seiner Beschreibung,
+  `RoadSection` das Feld `number`. Der Zähler beginnt mit jeder Messung neu.
 - Kosten: 5.028 Byte Flash, 93,6 statt 93,2 Prozent. Die 2026 in 1.5.33
   entfernte Seite `/curve-test` brauchte 13.868 Byte; ihr Muster mit Start-
   und Endmarkern passt hier nicht, weil die Abschnittsgrenzen bereits von der

@@ -251,6 +251,9 @@ public:
     float getOpenSectionDistanceM() {
         return roadMetrics.openSectionDistanceM();
     }
+    uint32_t getCurrentSectionNumber() {
+        return roadMetrics.currentSectionNumber();
+    }
 
     // Status und Diagnose
     void printSystemStatus();

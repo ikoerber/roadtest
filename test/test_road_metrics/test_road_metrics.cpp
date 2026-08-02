@@ -613,6 +613,37 @@ void test_unbrauchbare_schwerkraft_liefert_nichts() {
     TEST_ASSERT_FLOAT_WITHIN(0.01f, 42.0f, vertikal);
 }
 
+// Abschnitte werden fortlaufend ab 1 nummeriert, und die Nummer des offenen
+// Abschnitts zeigt immer auf den nächsten. Ein Beifahrerurteil trägt diese
+// Nummer mit und gilt dadurch für genau seinen Abschnitt - wer minutenlang
+// aussetzt, hinterlässt eine Lücke statt einer fortgeschriebenen Wertung.
+void test_abschnitte_werden_fortlaufend_nummeriert() {
+    RoadMetricsAnalyzer a;
+    RoadSection s{};
+    TEST_ASSERT_EQUAL_UINT32(1, a.currentSectionNumber());
+    TEST_ASSERT_EQUAL_UINT32(0, a.completedSectionCount());
+
+    fahreAbschnitt(a, 0.5f, 72.0f, 110, s);
+    TEST_ASSERT_EQUAL_UINT32(1, s.number);
+    TEST_ASSERT_EQUAL_UINT32(2, a.currentSectionNumber());
+
+    fahreAbschnitt(a, 0.5f, 72.0f, 110, s, 100, 100000);
+    TEST_ASSERT_EQUAL_UINT32(2, s.number);
+    TEST_ASSERT_EQUAL_UINT32(2, a.completedSectionCount());
+}
+
+// Der Zähler beginnt mit jeder Messung neu, damit die Nummern einer Sitzung
+// eindeutig bleiben.
+void test_zaehler_faellt_beim_zuruecksetzen() {
+    RoadMetricsAnalyzer a;
+    RoadSection s{};
+    fahreAbschnitt(a, 0.5f, 72.0f, 110, s);
+    TEST_ASSERT_EQUAL_UINT32(1, a.completedSectionCount());
+    a.reset();
+    TEST_ASSERT_EQUAL_UINT32(0, a.completedSectionCount());
+    TEST_ASSERT_EQUAL_UINT32(1, a.currentSectionNumber());
+}
+
 // Zügige Kurvenfahrt auf glatter Bahn muss eine gute Note bekommen. Mit der
 // alten Achse bekam sie die schlechteste.
 void test_kurvenfahrt_auf_glatter_bahn_bleibt_gut() {
@@ -659,6 +690,8 @@ int main(int, char**) {
     RUN_TEST(test_querbeschleunigung_erzeugt_keine_vertikale);
     RUN_TEST(test_vertikalstoss_kommt_voll_an);
     RUN_TEST(test_unbrauchbare_schwerkraft_liefert_nichts);
+    RUN_TEST(test_abschnitte_werden_fortlaufend_nummeriert);
+    RUN_TEST(test_zaehler_faellt_beim_zuruecksetzen);
     RUN_TEST(test_kurvenfahrt_auf_glatter_bahn_bleibt_gut);
     return UNITY_END();
 }

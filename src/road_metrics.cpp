@@ -24,6 +24,7 @@ void RoadMetricsAnalyzer::reset() {
     potholeStartTime = 0;
     lastPotholeEvent = 0;
     resetSection();
+    sectionCounter = 0;
 }
 
 void RoadMetricsAnalyzer::resetSection() {
@@ -130,6 +131,7 @@ bool RoadMetricsAnalyzer::updateSection(
     completed.maxSpeedKmh = sectionMaxSpeed;
     completed.driveability = driveabilityFromRms(completed.rmsVertical);
     completed.samples = sectionSamples;
+    completed.number = ++sectionCounter;
 
     resetSection();
     return true;

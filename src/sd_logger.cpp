@@ -2199,8 +2199,11 @@ bool SDLogger::logRoadSection(
         return false;
     }
 
+    // Die Abschnittsnummer steht auch in der Beschreibung, damit sich ein
+    // Beifahrerurteil eindeutig auf seinen Abschnitt beziehen lässt.
     String description =
-        String("Note=") + String(section.driveability, 0) +
+        String("Abschnitt=") + String(section.number) +
+        ";Note=" + String(section.driveability, 0) +
         ";RMS=" + String(section.rmsVertical, 3) +
         ";Stoesse=" + String(section.shockCount);
     String logLine = formatTimestamp() + ",ABSCHNITT," +

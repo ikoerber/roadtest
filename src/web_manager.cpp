@@ -282,9 +282,16 @@ bool WebManager::begin() {
             return;
         }
         static const char* namen[] = {"SEHR_GUT", "GUT", "MAESSIG", "SCHLECHT"};
+        // Abschnittsnummer und zurückgelegter Weg gehören ins Ereignis. Das
+        // Urteil gilt dadurch für genau diesen Abschnitt und nicht bis zum
+        // nächsten Marker; wer minutenlang aussetzt, hinterlässt eine Lücke
+        // statt einer fortgeschriebenen Wertung.
         sdLogger.logEvent(
             "FAHRBAHN_URTEIL",
-            String("Stufe=") + stufe + ";Wertung=" + namen[stufe - 1],
+            String("Stufe=") + stufe + ";Wertung=" + namen[stufe - 1] +
+                ";Abschnitt=" + bnoManager.getCurrentSectionNumber() +
+                ";AbschnittWegM=" +
+                String(bnoManager.getOpenSectionDistanceM(), 0),
             0, 0, static_cast<float>(stufe));
         server.send(200, "text/plain; charset=utf-8", namen[stufe - 1]);
     });
@@ -295,7 +302,11 @@ bool WebManager::begin() {
                         "Keine Aufzeichnung aktiv");
             return;
         }
-        sdLogger.logEvent("FAHRBAHN_BELAGSWECHSEL", "Beifahrermarker");
+        sdLogger.logEvent(
+            "FAHRBAHN_BELAGSWECHSEL",
+            String("Abschnitt=") + bnoManager.getCurrentSectionNumber() +
+                ";AbschnittWegM=" +
+                String(bnoManager.getOpenSectionDistanceM(), 0));
         server.send(200, "text/plain; charset=utf-8", "Belagswechsel");
     });
 

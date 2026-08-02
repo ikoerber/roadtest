@@ -687,7 +687,7 @@ Buslast steht in [OPTIMIERUNGEN.md](OPTIMIERUNGEN.md).
 - ⚠️ Belagsarten sind bei 10 Hz nicht unterscheidbar: Pflaster regt mit
   42–83 Hz an, Kies über 160 Hz, Nyquist liegt bei 5 Hz
 - ✅ Beifahrerseite `/fahrbahn` mit vier Wertungsstufen und Belagswechsel;
-  zeigt den zuletzt abgeschlossenen Abschnitt, nicht den laufenden Wert
+  zeigt den zuletzt abgeschlossenen Abschnitt, nicht den laufenden Wert; Bewerten ist jederzeit aussetzbar, ein Urteil gilt nur für seinen Abschnitt
 - ⚠️ Notengrenzen stammen aus einer einzigen Fahrt; `/fahrbahn` liefert die
   Wertepaare, um sie zu bestimmen
 - ⚠️ Wirksamkeit am Gerät noch nicht bestätigt

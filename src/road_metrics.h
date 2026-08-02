@@ -47,6 +47,7 @@ struct RoadSection {
     float maxSpeedKmh;
     float driveability;     // 0 bis 100: 100 = zügig fahrbar
     uint32_t samples;
+    uint32_t number;        // laufende Nummer in der Sitzung, ab 1
 };
 
 class RoadMetricsAnalyzer {
@@ -89,6 +90,15 @@ public:
     void resetSection();
     bool hasOpenSection() const { return sectionSamples > 0; }
     float openSectionDistanceM() const { return sectionDistanceM; }
+
+    // Laufende Nummer des offenen Abschnitts, beginnend bei 1.
+    //
+    // Ein Beifahrerurteil trägt diese Nummer mit und gilt dadurch für genau
+    // seinen Abschnitt. Ohne sie müsste die Auswertung annehmen, ein Urteil
+    // gelte bis zum nächsten Marker - eine Pause von zehn Minuten zöge dann
+    // die letzte Wertung über zehn Minuten unbewertete Straße.
+    uint32_t currentSectionNumber() const { return sectionCounter + 1; }
+    uint32_t completedSectionCount() const { return sectionCounter; }
 
     VibrationMetrics analyzeVibration();
 
@@ -147,6 +157,7 @@ private:
     float sectionSpeedSum;
     float sectionMaxSpeed;
     uint32_t sectionSamples;
+    uint32_t sectionCounter;
 };
 
 #endif  // ROAD_METRICS_H
