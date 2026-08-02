@@ -1,7 +1,7 @@
 # ROADTEST Firmware
 
 ESP32-S3-Firmware zur Aufzeichnung von BNO055-, GPS-, Straßenqualitäts- und
-standardisierten OBD-II-Daten. Aktueller Firmwarestand: **1.5.35**.
+standardisierten OBD-II-Daten. Aktueller Firmwarestand: **1.5.36**.
 
 Der aktuelle Stand ist ein Hardware- und Fahrzeugteststand, nicht abschließend
 produktionsreif. Bekannte Einschränkungen stehen weiter unten.
@@ -259,8 +259,8 @@ Eigenschaften des Sitzungskopfes.
 
 ## Aktueller Teststand
 
-- Firmware 1.5.35 baut erfolgreich für `lolin_s3_mini`.
-- Letzter Build: 71.124 Byte RAM (21,7 %) und 1.227.566 Byte Flash (93,7 %).
+- Firmware 1.5.36 baut erfolgreich für `lolin_s3_mini`.
+- Letzter Build: 71.124 Byte RAM (21,7 %) und 1.227.570 Byte Flash (93,7 %).
 - Am 31.07.2026 liefen fünf Beifahrer-Referenzfahrten mit 1.5.28 und je zwölf
   markierten Referenzintervallen. Sie sind der Prüfstand der Kurvenerkennung.
 - 1.5.29 ist am Fahrzeug bestätigt: vier Fahrten am 01.08.2026 über 21 Minuten
@@ -369,8 +369,16 @@ Verbindliche Punkte:
   bleibt auch bei Unterabtastung ein gültiges Energiemaß, weil Aliasing die
   Frequenz verfälscht und nicht die Gesamtenergie.
 - Die Notengrenzen `ROAD_DRIVEABILITY_RMS_GOOD_MPS2` und
-  `ROAD_DRIVEABILITY_RMS_BAD_MPS2` stammen aus einer einzigen Fahrt und sind
-  gegen weitere nachzuziehen.
+  `ROAD_DRIVEABILITY_RMS_BAD_MPS2` sind seit 1.5.36 gegen 135 Beifahrerurteile
+  bestimmt, nicht mehr geschätzt. Sie stammen aus einer Fahrt eines Fahrzeugs
+  mit einem Beifahrer: belegt, aber nicht allgemeingültig. Änderungen nur
+  gegen neue Urteilsdaten, nie nach Augenschein.
+- Eine Geschwindigkeitsnormierung ist geprüft und verworfen: Der rohe
+  Effektivwert erreicht 0,73 Rangkorrelation zur Wertungsstufe, die beste
+  normierte Form 0,74.
+- Im schlechten Bereich ist die Note unschärfer als im mittleren. Auf sehr
+  schlechter Straße wird so langsam gefahren, dass die Anregung wieder sinkt;
+  Stufe 4 lag im Median unter Stufe 3.
 
 ### Beifahrerseite `/fahrbahn`
 

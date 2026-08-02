@@ -5,6 +5,52 @@ Alle wichtigen Änderungen am ESP32-S3 Straßenqualitäts-Messsystem werden in d
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt hält sich an [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.36] - 2026-08-02
+
+### Geändert
+- **Die Fahrbarkeitsnote ist gegen menschliches Urteil kalibriert.** Grundlage
+  sind 135 Beifahrerurteile auf 119 Abschnitten einer 52-Kilometer-Fahrt
+  (`20260802_113909_C8F1C2F3`). Vollständige Auswertung in
+  `testdata/AUSWERTUNG_2026-08-02_FAHRBARKEIT.md`.
+
+  Gemessene Effektivwerte je Wertungsstufe, im Median: sehr gut 0,663,
+  gut 0,843, mäßig 1,373, schlecht 1,316 m/s². Die beste Trennung zwischen
+  „geht noch“ und „geht nicht mehr“ liegt bei 1,08 m/s² und ordnet 100 von
+  119 Abschnitten richtig zu, also 84 Prozent.
+
+  `ROAD_DRIVEABILITY_RMS_GOOD_MPS2` steht deshalb auf 0,55 statt 0,5 und
+  `ROAD_DRIVEABILITY_RMS_BAD_MPS2` auf 1,60 statt 3,0. Die Note 50 liegt
+  damit genau auf der Trennschwelle. Die vier Stufen erhalten die Noten
+  89 / 72 / 22 / 28; mit den geschätzten Grenzen lagen sie zwischen 65 und 93,
+  die Skala unterschied also kaum. Über die 259 Abschnitte der Hauptfahrt
+  ergibt sich ein Median von 64 bei 7 Prozent Note 0 und 2 Prozent Note 100 -
+  weder Sättigung nach oben noch nach unten.
+- Eine Geschwindigkeitsnormierung entfällt endgültig. Der rohe Effektivwert
+  erreicht eine Rangkorrelation von 0,73 zur Wertungsstufe, die beste
+  normierte Form 0,74; das rechtfertigt keine zusätzliche Rechnung.
+
+### Bekannte Grenze
+- **Stufe 4 hat keinen höheren Effektivwert als Stufe 3** (1,316 gegen
+  1,373). Das mittlere Tempo fällt monoton mit der Wertung, von 78 auf
+  39 km/h: Auf sehr schlechter Straße wird so langsam gefahren, dass die
+  Anregung wieder sinkt. Die Note ist im schlechten Bereich dadurch
+  unschärfer. Vier Abschnitte sind zu wenig für eine belastbare Aussage;
+  Stufe 4 gehört auf weiteren Fahrten gezielt häufiger vergeben.
+
+### Am Gerät bestätigt
+- 1.5.35 lief über 1 Stunde 50 Minuten und 81,3 Kilometer in drei Sitzungen.
+  Alle Dateien vollständig, jede Zeilenzahl deckt sich mit dem Zähler der
+  Metadatendatei, `SDErrors` und `SDDropped` bleiben null, keine
+  Integritätsdatei. 402 Streckenabschnitte entstanden, in der Hauptfahrt 259
+  bei 52,19 Kilometern - genau die erwartete Zahl.
+- GPS lieferte wieder Positionen; die Streckenwerte sind belegt. Der Verdacht
+  auf einen Wackelkontakt bleibt bestehen.
+- `SensorMissedSlots` liegt bei 13,1 bis 15,9 je Minute gegenüber 12,2 am
+  Vormittag, `FlushMaxMs` bei 112 bis 119 gegenüber 101. Beides passt zum
+  gewachsenen Umfang: Die Ereignisdatei nimmt jetzt zusätzlich Abschnitte und
+  Urteile auf, und die Hauptfahrt dauerte fast zwölfmal so lange wie die
+  bisherigen Messungen. Der Anteil bleibt mit 2,2 bis 2,7 Prozent klein.
+
 ## [1.5.35] - 2026-08-02
 
 ### Behoben

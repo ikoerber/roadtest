@@ -675,6 +675,16 @@ Buslast steht in [OPTIMIERUNGEN.md](OPTIMIERUNGEN.md).
 
 ## 📈 Version History
 
+### v1.5.36 - Fahrbarkeitsnote kalibriert
+- ✅ Notengrenzen gegen 135 Beifahrerurteile auf 119 Abschnitten bestimmt
+  (52-km-Fahrt): 0,55 und 1,60 statt geschätzter 0,5 und 3,0
+- ✅ Trennschwelle „geht noch / geht nicht mehr" bei 1,08 m/s², trifft 84 %
+- ✅ Stufen erhalten jetzt die Noten 89 / 72 / 22 / 28 statt 93 / 86 / 65 / 68
+- ✅ 1.5.35 am Fahrzeug bestätigt: 1 h 50 min, 81,3 km, alle Dateien
+  vollständig, keine Fehler, 402 Abschnitte
+- ⚠️ Stufe 4 mit nur 4 Abschnitten unterbelegt und nicht von Stufe 3 getrennt:
+  auf sehr schlechter Straße wird so langsam gefahren, dass die Anregung sinkt
+
 ### v1.5.35 - Fahrbarkeit statt Fahrweise
 - ✅ Vertikalbeschleunigung wird auf die Schwerkraftrichtung projiziert; die
   bisher verwendete Sensorachse `accelZ` trug nur 19 % der Vertikalen und

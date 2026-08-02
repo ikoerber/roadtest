@@ -7,7 +7,7 @@
 // Zentrale Pin-Konfiguration für das Straßenqualitäts-Messsystem
 // Alle Hardware-spezifischen Pin-Zuordnungen sind hier definiert
 
-#define ROADTEST_FIRMWARE_VERSION "1.5.35"
+#define ROADTEST_FIRMWARE_VERSION "1.5.36"
 #define ROADTEST_FIRMWARE_FILE_NAME \
     "roadtest_" ROADTEST_FIRMWARE_VERSION ".bin"
 // Die Spaltenbelegung bleibt unverändert; hinzu kommt in der Ereignisdatei
@@ -171,12 +171,32 @@ extern const int GPS_BAUD_RATE;    // 9600    - GPS Baudrate
 
 // Fahrbarkeitsnote: Zuordnung von vertikalem Effektivwert zur Note 0 bis 100.
 //
-// Die Grenzen stammen aus der Fahrt 20260802_095708_84FD688D, dort lagen die
-// Abschnittswerte zwischen 0,61 und 2,10 m/s². Sie sind bewusst als erste
-// belegte Auslegung gesetzt und gegen weitere Fahrten nachzuziehen; die
-// Skala ist linear zwischen beiden Grenzen.
-#define ROAD_DRIVEABILITY_RMS_GOOD_MPS2        0.5f
-#define ROAD_DRIVEABILITY_RMS_BAD_MPS2         3.0f
+// Die Grenzen stammen aus 119 Beifahrerurteilen der Fahrt
+// 20260802_113909_C8F1C2F3 über 52 km. Sie sind gegen das menschliche Urteil
+// bestimmt, nicht gegen den beobachteten Wertebereich - die Fahrbarkeit ist
+// ein Urteil, keine physikalische Größe.
+//
+// Gemessene Effektivwerte je Wertungsstufe, jeweils im Median:
+//
+//   1 sehr gut  0,663 m/s²   (19 Abschnitte)
+//   2 gut       0,843 m/s²   (57 Abschnitte)
+//   3 mäßig     1,373 m/s²   (39 Abschnitte)
+//   4 schlecht  1,316 m/s²   ( 4 Abschnitte)
+//
+// Die beste Trennung zwischen "geht noch" (1 und 2) und "geht nicht mehr"
+// (3 und 4) liegt bei 1,08 m/s² und ordnet 100 von 119 Abschnitten richtig
+// zu, also 84 Prozent. Die Grenzen sind so gewählt, dass die Note 50 genau
+// auf dieser Schwelle liegt: (0,55 + 1,60) / 2 = 1,075.
+//
+// Daraus ergeben sich die Noten 89 / 72 / 22 / 28 für die vier Stufen. Mit
+// den zuvor geschätzten Grenzen 0,5 und 3,0 waren es 93 / 86 / 65 / 68 - die
+// Skala nutzte also nur ihr oberes Drittel.
+//
+// Eine Geschwindigkeitsnormierung verbessert nichts: Der rohe Effektivwert
+// erreicht eine Rangkorrelation von 0,73 zur Wertungsstufe, die beste
+// normierte Form 0,74. Deshalb bleibt es beim Rohwert.
+#define ROAD_DRIVEABILITY_RMS_GOOD_MPS2        0.55f
+#define ROAD_DRIVEABILITY_RMS_BAD_MPS2         1.60f
 
 // Zweistufige Kurvenerkennung:
 // - schnelle Kurven starten weiterhin unmittelbar über die Drehrate;
