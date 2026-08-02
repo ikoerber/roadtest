@@ -280,12 +280,27 @@ int columnIndex(
     return -1;
 }
 
+// Sucht eine Messdatei relativ zum Projektverzeichnis. Das Arbeitsverzeichnis
+// des Testlaufs steht nicht fest, deshalb die Praefixe.
+//
+// Archivierte Sitzungen werden mitgesucht: Wer testdata/ aufraeumt, soll den
+// Pruefstand nicht unbemerkt abschalten. Genau das passierte am 02.08.2026 -
+// sieben Sitzungen wanderten nach testdata/archiv/, und vier Wiedergabetests
+// meldeten fortan TEST_IGNORE. Die Suite blieb gruen, obwohl die
+// Messgrundlage jeder Schwellwertaenderung fehlte.
 std::string findFixture(const std::string& relative) {
     const char* prefixes[] = {"", "../", "../../", "../../../"};
+    std::vector<std::string> variants{relative};
+    const std::string marker = "testdata/";
+    if (relative.compare(0, marker.size(), marker) == 0) {
+        variants.push_back("testdata/archiv/" + relative.substr(marker.size()));
+    }
     for (const char* p : prefixes) {
-        std::string candidate = std::string(p) + relative;
-        std::ifstream in(candidate);
-        if (in.good()) return candidate;
+        for (const std::string& v : variants) {
+            std::string candidate = std::string(p) + v;
+            std::ifstream in(candidate);
+            if (in.good()) return candidate;
+        }
     }
     return std::string();
 }

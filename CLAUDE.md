@@ -183,6 +183,15 @@ Die Wiedergaben sind auf feste Kennzahlen festgeschrieben. Ändern sie sich,
 ist das kein Testfehler, sondern eine Verhaltensänderung: prüfen, begründen
 und den Festwert bewusst nachziehen.
 
+**Ein Testlauf mit `skipped` ist nicht grün.** Die vier Wiedergabetests
+überspringen sich selbst, wenn ihre Messdaten fehlen, denn die CSV-Dateien
+sind per `.gitignore` bewusst nicht im Repository und fehlen in einem frischen
+Clone. Am 02.08.2026 wanderten sieben Sitzungen nach `testdata/archiv/`, und
+die Suite meldete weiterhin Erfolg — bei abgeschaltetem Prüfstand.
+`findFixture()` sucht seitdem auch im Archiv. Vor jeder Schwellwertänderung an
+der Kurvenerkennung gilt: Der Lauf muss **49 von 49** melden, nicht
+„45 succeeded, 4 skipped“.
+
 `test_wiedergabe_referenzfahrten` misst die Kurvenerkennung gegen die
 55 von Hand markierten Referenzkurven der fünf Beifahrerfahrten vom
 31.07.2026. Die Geschwindigkeit wird dabei wie in `main.cpp` gewählt: zuerst
