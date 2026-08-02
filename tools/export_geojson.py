@@ -846,7 +846,22 @@ def ebene_sitzungskopf(verzeichnis, meta, summary, punkte, gps_zeilen):
 # ---------------------------------------------------------------------------
 
 
-def exportieren(verzeichnis: str, modus: str) -> dict:
+# Alle Ebenen in der Reihenfolge, in der sie erzeugt werden. Wer nur eine
+# Frage beantworten will, blendet den Rest aus: Eine 52-km-Fahrt ergibt
+# vollständig rund 2500 Merkmale, und geojson.io wird damit träge.
+EBENEN = (
+    "strecke",
+    "referenz",
+    "fahrbarkeit",
+    "kurve",
+    "schlagloch",
+    "beifahrerurteil",
+    "belagswechsel",
+    "sitzung",
+)
+
+
+def exportieren(verzeichnis: str, modus: str, ebenen=None) -> dict:
     gps_zeilen = lade_csv(verzeichnis, "road_gps")
     if not gps_zeilen:
         raise SystemExit(f"Keine GPS-Datei in {verzeichnis}")
@@ -887,18 +902,33 @@ def exportieren(verzeichnis: str, modus: str) -> dict:
         ]
     )
 
+    gewaehlt = set(ebenen) if ebenen else set(EBENEN)
+
     features = []
-    features += ebene_strecke(punkte, qualitaet, gps_speed, obd_speed, modus)
-    features += ebene_referenzen(ereignisse, punkte)
+    if "strecke" in gewaehlt:
+        features += ebene_strecke(
+            punkte, qualitaet, gps_speed, obd_speed, modus
+        )
+    if "referenz" in gewaehlt:
+        features += ebene_referenzen(ereignisse, punkte)
     # Die Abschnitte liegen vor den Kurven, damit deren schmalere Bögen
     # darüber sichtbar bleiben.
-    features += ebene_abschnitte(ereignisse, punkte, position)
-    features += ebene_kurven(ereignisse, punkte, position)
-    features += ebene_schlagloecher(ereignisse, position)
-    features += ebene_beifahrerurteile(ereignisse, position)
-    features += ebene_sitzungskopf(
-        verzeichnis, meta, summary, punkte, gps_zeilen
-    )
+    if "fahrbarkeit" in gewaehlt:
+        features += ebene_abschnitte(ereignisse, punkte, position)
+    if "kurve" in gewaehlt:
+        features += ebene_kurven(ereignisse, punkte, position)
+    if "schlagloch" in gewaehlt:
+        features += ebene_schlagloecher(ereignisse, position)
+    if gewaehlt & {"beifahrerurteil", "belagswechsel"}:
+        features += [
+            merkmal
+            for merkmal in ebene_beifahrerurteile(ereignisse, position)
+            if merkmal["properties"]["ebene"] in gewaehlt
+        ]
+    if "sitzung" in gewaehlt:
+        features += ebene_sitzungskopf(
+            verzeichnis, meta, summary, punkte, gps_zeilen
+        )
 
     return {"type": "FeatureCollection", "features": features}
 
@@ -918,11 +948,50 @@ def main() -> int:
         help="Einfärbung der Strecke: Straßenqualität oder Abweichung "
         "zwischen GPS- und OBD-Geschwindigkeit",
     )
+    zerleger.add_argument(
+        "--ebenen",
+        help="Kommaliste der auszugebenden Ebenen; Vorgabe sind alle. "
+        "Möglich sind " + ", ".join(EBENEN) + ".",
+    )
+    zerleger.add_argument(
+        "--nur-fahrbarkeit",
+        action="store_true",
+        help="Kurzform für --ebenen fahrbarkeit,beifahrerurteil,"
+        "belagswechsel,sitzung",
+    )
     argumente = zerleger.parse_args()
 
-    sammlung = exportieren(argumente.sitzung, argumente.modus)
+    if argumente.nur_fahrbarkeit and argumente.ebenen:
+        zerleger.error("--nur-fahrbarkeit und --ebenen schließen sich aus")
+    if argumente.nur_fahrbarkeit:
+        ebenen = ["fahrbarkeit", "beifahrerurteil", "belagswechsel", "sitzung"]
+    elif argumente.ebenen:
+        ebenen = [
+            teil.strip() for teil in argumente.ebenen.split(",") if teil.strip()
+        ]
+        unbekannt = [teil for teil in ebenen if teil not in EBENEN]
+        if unbekannt:
+            zerleger.error(
+                "Unbekannte Ebene: "
+                + ", ".join(unbekannt)
+                + ". Möglich sind "
+                + ", ".join(EBENEN)
+                + "."
+            )
+    else:
+        ebenen = None
+
+    sammlung = exportieren(argumente.sitzung, argumente.modus, ebenen)
     name = os.path.basename(os.path.normpath(argumente.sitzung))
-    ziel = argumente.ausgabe or f"{name}_{argumente.modus}.geojson"
+    # Der Dateiname nennt die Auswahl, damit mehrere Exporte derselben
+    # Sitzung nebeneinander bestehen. Das Präfix "ebenen-" trennt die freie
+    # Auswahl von der Kurzform, die sonst denselben Namen erzeugen könnte.
+    kennung = argumente.modus
+    if argumente.nur_fahrbarkeit:
+        kennung = "fahrbarkeit"
+    elif ebenen:
+        kennung = "ebenen-" + "-".join(ebenen)
+    ziel = argumente.ausgabe or f"{name}_{kennung}.geojson"
     with open(ziel, "w") as fh:
         # allow_nan=False: Python schriebe sonst NaN oder Infinity, was kein
         # gültiges JSON ist und von geojson.io abgelehnt würde. Ein Fehler

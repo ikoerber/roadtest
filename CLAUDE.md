@@ -235,7 +235,19 @@ simplestyle-Spezifikation, alle übrigen Werte erscheinen beim Anklicken.
 ```bash
 python3 tools/export_geojson.py testdata/20260730_095603_A41A2450
 python3 tools/export_geojson.py testdata/20260730_095603_A41A2450 --modus geschwindigkeit
+python3 tools/export_geojson.py testdata/20260802_113909_C8F1C2F3 --nur-fahrbarkeit
+python3 tools/export_geojson.py testdata/20260802_113909_C8F1C2F3 --ebenen fahrbarkeit,schlagloch
 ```
+
+`--ebenen` wählt aus `strecke`, `referenz`, `fahrbarkeit`, `kurve`,
+`schlagloch`, `beifahrerurteil`, `belagswechsel` und `sitzung`; ohne Angabe
+erscheinen alle. `--nur-fahrbarkeit` ist die Kurzform für die
+Fahrbarkeitsansicht samt Urteilen und Sitzungskopf. Das lohnt sich: Eine
+52-Kilometer-Fahrt ergibt vollständig rund 2.500 Merkmale und 1,8 MB, womit
+geojson.io träge wird; nur die Fahrbarkeit sind 395 Merkmale und 574 kB. Den
+größten Anteil trägt die Streckenebene mit einem Merkmal je GPS-Segment.
+Der Dateiname nennt die Auswahl, damit mehrere Ansichten derselben Sitzung
+nebeneinander bestehen.
 
 Ebenen: Strecke nach Straßenqualität oder nach der Abweichung zwischen GPS-
 und OBD-Geschwindigkeit eingefärbt, Fahrbarkeit je Streckenabschnitt als

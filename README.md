@@ -421,13 +421,21 @@ in [geojson.io](https://geojson.io):
 ```bash
 python3 tools/export_geojson.py testdata/20260730_095603_A41A2450
 python3 tools/export_geojson.py testdata/20260730_095603_A41A2450 --modus geschwindigkeit
+python3 tools/export_geojson.py testdata/20260802_113909_C8F1C2F3 --nur-fahrbarkeit
+python3 tools/export_geojson.py testdata/20260802_113909_C8F1C2F3 --ebenen fahrbarkeit,schlagloch
 ```
 
 Die Strecke wird nach Straßenqualität eingefärbt — oder wahlweise nach der
-Abweichung zwischen GPS- und OBD-Geschwindigkeit. Dazu kommen Schlaglöcher als
-Marker nach Schwere, Kurven als tatsächlich gefahrener Bogen, die
-Referenzintervalle des Beifahrer-Kurventests und ein Sitzungskopf mit allen
-Kennzahlen.
+Abweichung zwischen GPS- und OBD-Geschwindigkeit. Dazu kommen die Fahrbarkeit
+je 200-m-Abschnitt als breite Linie, Schlaglöcher als Marker nach Schwere,
+Kurven als tatsächlich gefahrener Bogen, Beifahrerurteile und Belagswechsel,
+die Referenzintervalle des Beifahrer-Kurventests und ein Sitzungskopf mit
+allen Kennzahlen.
+
+Mit `--ebenen` lässt sich auswählen, was erscheinen soll; `--nur-fahrbarkeit`
+ist die Kurzform für die Fahrbarkeitsansicht. Eine 52-km-Fahrt ergibt
+vollständig rund 2.500 Merkmale und 1,8 MB, womit geojson.io träge wird — nur
+die Fahrbarkeit sind 395 Merkmale und 574 kB.
 
 Damit wird sichtbar, **wo** die Fahrbahn schlecht war und welche markierte
 Kurve die Firmware erkannt hat — beides steht in den CSV-Dateien nur als Zahl.

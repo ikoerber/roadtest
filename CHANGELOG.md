@@ -45,6 +45,16 @@ und dieses Projekt hält sich an [Semantic Versioning](https://semver.org/spec/v
   84 zu 88 zu 45 zu 42. Der aufgezeichnete Wert bleibt als
   `noteAufzeichnung` erhalten. Die Grenzen liest das Skript aus
   `src/hardware_config.h`, statt sie zu duplizieren.
+- Der Export lässt sich auf einzelne Ebenen beschränken. `--ebenen` wählt aus
+  `strecke`, `referenz`, `fahrbarkeit`, `kurve`, `schlagloch`,
+  `beifahrerurteil`, `belagswechsel` und `sitzung`; `--nur-fahrbarkeit` ist
+  die Kurzform für die Fahrbarkeitsansicht samt Urteilen und Sitzungskopf.
+
+  Eine 52-Kilometer-Fahrt ergibt vollständig rund 2.500 Merkmale und 1,8 MB,
+  womit geojson.io träge wird. Nur die Fahrbarkeit sind 395 Merkmale und
+  574 kB, nur deren Linien 259 Merkmale und 529 kB. Den größten Anteil trägt
+  die Streckenebene mit einem Merkmal je GPS-Segment. Der Dateiname nennt die
+  Auswahl, damit mehrere Ansichten derselben Sitzung nebeneinander bestehen.
 - Der Zeitversatz zwischen Geräte- und Sitzungszeit wird bevorzugt aus einem
   Abschnittsereignis bestimmt. Es entsteht im selben Schleifendurchlauf, in
   dem der Abschnitt seine Länge erreicht, und kennt daher keinen
