@@ -549,7 +549,7 @@ def notengrenzen() -> tuple[float, float]:
         with open(pfad, encoding="utf-8") as datei:
             for zeile in datei:
                 treffer = re.match(
-                    r"\s*#define\s+(ROAD_DRIVEABILITY_RMS_\w+)\s+([\d.]+)f?",
+                    r"\s*#define\s+(ROAD_DRIVEABILITY_\w+)\s+([\d.]+)f?",
                     zeile,
                 )
                 if treffer:
@@ -559,18 +559,35 @@ def notengrenzen() -> tuple[float, float]:
     return (
         werte.get("ROAD_DRIVEABILITY_RMS_GOOD_MPS2", 0.55),
         werte.get("ROAD_DRIVEABILITY_RMS_BAD_MPS2", 1.60),
+        werte.get("ROAD_DRIVEABILITY_FAST_KMH", 100.0),
+        werte.get("ROAD_DRIVEABILITY_FAST_MIN_NOTE", 47.0),
     )
 
 
-def note_aus_effektivwert(rms, grenzen):
+def note_aus_effektivwert(rms, grenzen, maxSpeedKmh=None):
+    """Note aus dem Effektivwert, mit Plausibilitätsgrenze über das Tempo.
+
+    Wer schnell fährt, traut der Straße. Die Anregung steigt mit der
+    Geschwindigkeit, der Effektivwert allein stuft schnell gefahrene
+    Abschnitte deshalb zu schlecht ein. Die Regel wirkt nur nach oben:
+    Niedrige Geschwindigkeit belegt nichts, sie kann am Verkehr liegen.
+    """
     if rms is None:
         return None
-    gut, schlecht = grenzen
+    gut, schlecht, schnell, mindestnote = grenzen
     if rms <= gut:
-        return 100.0
-    if rms >= schlecht:
-        return 0.0
-    return 100.0 * (schlecht - rms) / (schlecht - gut)
+        note = 100.0
+    elif rms >= schlecht:
+        note = 0.0
+    else:
+        note = 100.0 * (schlecht - rms) / (schlecht - gut)
+    if (
+        maxSpeedKmh is not None
+        and maxSpeedKmh >= schnell
+        and note < mindestnote
+    ):
+        return mindestnote
+    return note
 
 
 def fahrbarkeit_farbe(note):
@@ -604,7 +621,9 @@ def ebene_abschnitte(ereignisse, punkte, position):
         )
         # Aus dem Effektivwert neu berechnet, damit Aufzeichnungen
         # verschiedener Firmwarestände dieselbe Skala verwenden.
-        note = note_aus_effektivwert(effektivwert, grenzen)
+        note = note_aus_effektivwert(
+            effektivwert, grenzen, als_zahl(zeile.get("MaxSpeedKmh"))
+        )
         note_geraet = als_zahl(zeile.get("Schwere")) or als_zahl(
             werte.get("Note")
         )

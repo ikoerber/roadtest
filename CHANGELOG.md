@@ -72,6 +72,34 @@ und dieses Projekt hält sich an [Semantic Versioning](https://semver.org/spec/v
   Sekunden Ruhefenster geschrieben wird. Das verbessert nebenbei die Lage der
   Kurvenbögen.
 
+### Hinzugefügt: Plausibilitätsgrenze über die gefahrene Geschwindigkeit
+- Wer schnell fährt, traut der Straße. Weil die Anregung mit der
+  Geschwindigkeit steigt, stufte der Effektivwert allein schnell gefahrene
+  Abschnitte zu schlecht ein: Zwei Abschnitte der Fahrt
+  `20260802_113909_C8F1C2F3` erhielten die Note 0 bei 130 km/h im
+  Durchschnitt.
+
+  Ab `ROAD_DRIVEABILITY_FAST_KMH` = 100 km/h fällt die Note deshalb nicht
+  unter `ROAD_DRIVEABILITY_FAST_MIN_NOTE` = 47, die Klassengrenze zwischen
+  „gut“ und „mäßig“. Über die 52-Kilometer-Fahrt betrifft das 8 von 259
+  Abschnitten; der Anteil „mäßig bis schlecht“ sinkt von 31 auf 27 Prozent.
+
+- **Die Regel wirkt bewusst nur in einer Richtung.** Hohe Geschwindigkeit
+  belegt eine tragfähige Fahrbahn, niedrige belegt nichts - sie kann ebenso
+  am Verkehr liegen. Von 14 bewerteten Abschnitten über 100 km/h erhielt kein
+  einziger das Urteil „mäßig“ oder schlechter, gegenüber 36 Prozent im Mittel
+  aller Abschnitte.
+
+- Geprüft und verworfen wurde die naheliegendere Variante, die Fahrdynamik
+  aus der Horizontalbeschleunigung zu bewerten. Sie erreicht nur 0,04
+  Rangkorrelation zur Wertungsstufe, und als Korrekturfaktor verschlechtert
+  sie das Ergebnis von 0,74 auf 0,48. Bremsen, Beschleunigen und Kurven
+  finden unabhängig von der Fahrbahnqualität statt. Auch die
+  Querbeschleunigung trennt kaum: Über 3,0 m/s² sinkt der Anteil schlechter
+  Urteile nur von 36 auf 26 Prozent.
+
+- Datenlage: 14 Abschnitte. Die Grenze ist belegt, aber dünn.
+
 ### Bekannte Grenze
 - **Stufe 4 hat keinen höheren Effektivwert als Stufe 3** (1,316 gegen
   1,373). Das mittlere Tempo fällt monoton mit der Wertung, von 78 auf

@@ -694,6 +694,9 @@ Buslast steht in [OPTIMIERUNGEN.md](OPTIMIERUNGEN.md).
   Beifahrerurteile und Belagswechsel als Marker
 - ✅ Note wird beim Export aus dem Effektivwert neu berechnet, damit
   Aufzeichnungen verschiedener Firmwarestände dieselbe Skala verwenden
+- ✅ Plausibilitätsgrenze: ab 100 km/h fällt die Note nicht unter 47, weil
+  hohe Geschwindigkeit eine tragfähige Fahrbahn belegt; wirkt nur nach oben,
+  da niedrige Geschwindigkeit auch am Verkehr liegen kann
 - ⚠️ Stufe 4 mit nur 4 Abschnitten unterbelegt und nicht von Stufe 3 getrennt:
   auf sehr schlechter Straße wird so langsam gefahren, dass die Anregung sinkt
 

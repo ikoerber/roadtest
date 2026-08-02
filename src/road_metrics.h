@@ -76,6 +76,14 @@ public:
     // Note von 0 bis 100 aus dem vertikalen Effektivwert.
     static float driveabilityFromRms(float rmsVertical);
 
+    // Note einschließlich der Plausibilitätsgrenze über die gefahrene
+    // Höchstgeschwindigkeit. Wer schnell fährt, traut der Straße; der
+    // Effektivwert allein stuft solche Abschnitte zu schlecht ein, weil die
+    // Anregung mit der Geschwindigkeit steigt. Die Regel wirkt nur nach
+    // oben: Niedrige Geschwindigkeit belegt nichts, sie kann am Verkehr
+    // liegen.
+    static float driveability(float rmsVertical, float maxSpeedKmh);
+
     // Lineare Beschleunigung auf die Schwerkraftrichtung projizieren.
     //
     // Ergebnis ist die Fahrbahnanregung, positiv entgegen der Schwerkraft.

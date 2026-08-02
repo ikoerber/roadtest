@@ -297,7 +297,7 @@ Eigenschaften des Sitzungskopfes.
 ## Aktueller Teststand
 
 - Firmware 1.5.36 baut erfolgreich für `lolin_s3_mini`.
-- Letzter Build: 71.124 Byte RAM (21,7 %) und 1.227.570 Byte Flash (93,7 %).
+- Letzter Build: 71.124 Byte RAM (21,7 %) und 1.227.598 Byte Flash (93,7 %).
 - Am 31.07.2026 liefen fünf Beifahrer-Referenzfahrten mit 1.5.28 und je zwölf
   markierten Referenzintervallen. Sie sind der Prüfstand der Kurvenerkennung.
 - 1.5.29 ist am Fahrzeug bestätigt: vier Fahrten am 01.08.2026 über 21 Minuten
@@ -416,6 +416,20 @@ Verbindliche Punkte:
 - Im schlechten Bereich ist die Note unschärfer als im mittleren. Auf sehr
   schlechter Straße wird so langsam gefahren, dass die Anregung wieder sinkt;
   Stufe 4 lag im Median unter Stufe 3.
+- **Ab `ROAD_DRIVEABILITY_FAST_KMH` gilt die Fahrbahn als tragfähig** und die
+  Note fällt nicht unter `ROAD_DRIVEABILITY_FAST_MIN_NOTE`. Wer schnell
+  fährt, traut der Straße; die Anregung steigt mit der Geschwindigkeit, und
+  der Effektivwert allein stufte solche Abschnitte zu schlecht ein.
+
+  Diese Regel wirkt **ausschließlich nach oben** und darf nicht zu einer
+  symmetrischen Umrechnung ausgebaut werden: Hohe Geschwindigkeit belegt eine
+  tragfähige Fahrbahn, niedrige belegt nichts, weil sie ebenso am Verkehr
+  liegen kann. Von 14 bewerteten Abschnitten über 100 km/h wurde keiner
+  schlechter als „gut“ beurteilt, gegenüber 36 Prozent im Mittel.
+- Die Fahrdynamik aus der Horizontalbeschleunigung ist geprüft und verworfen:
+  nur 0,04 Rangkorrelation zur Wertungsstufe, als Korrekturfaktor
+  verschlechtert sie das Ergebnis von 0,74 auf 0,48. Bremsen, Beschleunigen
+  und Kurven finden unabhängig von der Fahrbahnqualität statt.
 
 ### Beifahrerseite `/fahrbahn`
 

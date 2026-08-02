@@ -66,6 +66,16 @@ float RoadMetricsAnalyzer::driveabilityFromRms(float rmsVertical) {
     return 100.0f * (bad - rmsVertical) / (bad - good);
 }
 
+float RoadMetricsAnalyzer::driveability(
+    float rmsVertical, float maxSpeedKmh) {
+    const float note = driveabilityFromRms(rmsVertical);
+    if (maxSpeedKmh >= ROAD_DRIVEABILITY_FAST_KMH &&
+        note < ROAD_DRIVEABILITY_FAST_MIN_NOTE) {
+        return ROAD_DRIVEABILITY_FAST_MIN_NOTE;
+    }
+    return note;
+}
+
 bool RoadMetricsAnalyzer::updateSection(
     uint32_t timestampMs, float verticalAccel, float speedKmh,
     RoadSection& completed) {
@@ -129,7 +139,8 @@ bool RoadMetricsAnalyzer::updateSection(
     completed.shockCount = sectionShockCount;
     completed.meanSpeedKmh = sectionSpeedSum / sectionSamples;
     completed.maxSpeedKmh = sectionMaxSpeed;
-    completed.driveability = driveabilityFromRms(completed.rmsVertical);
+    completed.driveability =
+        driveability(completed.rmsVertical, completed.maxSpeedKmh);
     completed.samples = sectionSamples;
     completed.number = ++sectionCounter;
 

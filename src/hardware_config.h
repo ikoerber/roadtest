@@ -198,6 +198,27 @@ extern const int GPS_BAUD_RATE;    // 9600    - GPS Baudrate
 #define ROAD_DRIVEABILITY_RMS_GOOD_MPS2        0.55f
 #define ROAD_DRIVEABILITY_RMS_BAD_MPS2         1.60f
 
+// Plausibilitätsgrenze über die gefahrene Geschwindigkeit.
+//
+// Wer schnell fährt, traut der Straße. Bei hoher Geschwindigkeit steigt die
+// Anregung auch auf gutem Belag, und der Effektivwert allein stuft solche
+// Abschnitte zu schlecht ein: In der Fahrt 20260802_113909_C8F1C2F3 erhielten
+// zwei Abschnitte die Note 0 bei 130 km/h Durchschnitt.
+//
+// Die Regel wirkt bewusst nur in einer Richtung. Hohe Geschwindigkeit belegt
+// eine tragfähige Fahrbahn; niedrige belegt nichts, weil sie ebenso gut am
+// Verkehr liegen kann. Von 14 bewerteten Abschnitten über 100 km/h erhielt
+// kein einziger das Urteil "mäßig" oder schlechter, gegenüber 36 Prozent im
+// Mittel aller Abschnitte. Bei dieser Grundrate ist das kein Zufall.
+//
+// Die Untergrenze entspricht der Klassengrenze zwischen "gut" und "mäßig".
+// Sie hebt keine Note an, die ohnehin darüber liegt.
+//
+// Datenlage: 14 Abschnitte. Die Grenze ist belegt, aber dünn; sie gehört mit
+// weiteren Fahrten überprüft.
+#define ROAD_DRIVEABILITY_FAST_KMH           100.0f
+#define ROAD_DRIVEABILITY_FAST_MIN_NOTE       47.0f
+
 // Zweistufige Kurvenerkennung:
 // - schnelle Kurven starten weiterhin unmittelbar über die Drehrate;
 // - langgezogene Kurven werden über kumulierten Winkel und gefahrenen Weg

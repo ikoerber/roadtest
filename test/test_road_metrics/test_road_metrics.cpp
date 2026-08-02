@@ -548,6 +548,38 @@ void test_note_an_den_grenzen() {
             ROAD_DRIVEABILITY_RMS_BAD_MPS2 + 0.01f));
 }
 
+// Wer schnell fährt, traut der Straße: Ab ROAD_DRIVEABILITY_FAST_KMH gilt die
+// Fahrbahn als tragfähig, und die Note fällt nicht unter die Untergrenze. In
+// der Fahrt vom 02.08.2026 erhielten zwei Abschnitte die Note 0 bei 130 km/h
+// Durchschnitt; von 14 bewerteten Abschnitten über 100 km/h wurde keiner
+// schlechter als "gut" beurteilt.
+void test_hohe_geschwindigkeit_hebt_die_note_an() {
+    // Rauer Abschnitt, langsam gefahren: Note bleibt schlecht.
+    const float rau = ROAD_DRIVEABILITY_RMS_BAD_MPS2 + 0.5f;
+    TEST_ASSERT_FLOAT_WITHIN(
+        0.1f, 0.0f,
+        RoadMetricsAnalyzer::driveability(
+            rau, ROAD_DRIVEABILITY_FAST_KMH - 0.1f));
+    // Derselbe Abschnitt mit hoher Geschwindigkeit: Untergrenze greift.
+    TEST_ASSERT_FLOAT_WITHIN(
+        0.1f, ROAD_DRIVEABILITY_FAST_MIN_NOTE,
+        RoadMetricsAnalyzer::driveability(
+            rau, ROAD_DRIVEABILITY_FAST_KMH + 0.1f));
+}
+
+// Die Regel wirkt nur nach oben. Eine bereits gute Note wird durch hohe
+// Geschwindigkeit nicht verändert - und schon gar nicht abgesenkt.
+void test_geschwindigkeitsregel_senkt_keine_note() {
+    const float glatt = ROAD_DRIVEABILITY_RMS_GOOD_MPS2 - 0.1f;
+    TEST_ASSERT_FLOAT_WITHIN(
+        0.1f, 100.0f,
+        RoadMetricsAnalyzer::driveability(glatt, 200.0f));
+    // Und ohne Geschwindigkeitsangabe bleibt es beim reinen Effektivwert.
+    TEST_ASSERT_FLOAT_WITHIN(
+        0.1f, RoadMetricsAnalyzer::driveabilityFromRms(1.2f),
+        RoadMetricsAnalyzer::driveability(1.2f, 30.0f));
+}
+
 // Raue Fahrbahn bekommt eine schlechtere Note als glatte.
 void test_raue_fahrbahn_schlechtere_note() {
     RoadMetricsAnalyzer glatt, rau;
@@ -686,6 +718,8 @@ int main(int, char**) {
     RUN_TEST(test_abtastluecke_erfindet_keinen_weg);
     RUN_TEST(test_zu_langer_abschnitt_wird_verworfen);
     RUN_TEST(test_note_an_den_grenzen);
+    RUN_TEST(test_hohe_geschwindigkeit_hebt_die_note_an);
+    RUN_TEST(test_geschwindigkeitsregel_senkt_keine_note);
     RUN_TEST(test_raue_fahrbahn_schlechtere_note);
     RUN_TEST(test_querbeschleunigung_erzeugt_keine_vertikale);
     RUN_TEST(test_vertikalstoss_kommt_voll_an);
