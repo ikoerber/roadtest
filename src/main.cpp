@@ -1220,6 +1220,9 @@ void loop() {
         CurveEvent curveEvent;
         bool curveCompleted =
             bnoManager.detectCurve(sensorData, speedKmh, curveEvent);
+        RoadSection roadSection;
+        bool sectionCompleted =
+            bnoManager.updateRoadSection(sensorData, speedKmh, roadSection);
 
         // Daten auf SD-Karte loggen
         if (sdLogger.isLogging()) {
@@ -1247,6 +1250,17 @@ void loop() {
             if (curveCompleted) {
                 sdLogger.logCurve(
                     curveEvent,
+                    lastGPSData.valid_fix ? lastGPSData.latitude : 0.0f,
+                    lastGPSData.valid_fix ? lastGPSData.longitude : 0.0f);
+            }
+
+            // Fahrbarkeit je Streckenabschnitt. Bewusst in der vorhandenen
+            // Ereignisdatei statt in einer zehnten Logdatei: Ein
+            // Flush-Schritt kostet bereits bis zu 101 ms und damit einen
+            // vollen Sensorslot.
+            if (sectionCompleted) {
+                sdLogger.logRoadSection(
+                    roadSection,
                     lastGPSData.valid_fix ? lastGPSData.latitude : 0.0f,
                     lastGPSData.valid_fix ? lastGPSData.longitude : 0.0f);
             }

@@ -102,6 +102,15 @@ struct SensorData {
     // ist keine feste Sensorachse als Fahrzeug-Hochachse vorausgesetzt.
     float yawRateDps;   // vorzeichenbehaftete Drehrate um die Vertikale
     bool yawRateValid;
+
+    // Einbaulagenunabhängige Vertikalbeschleunigung, aus demselben Grund und
+    // nach demselben Verfahren wie yawRateDps: Die lineare Beschleunigung
+    // wird auf die Schwerkraftrichtung projiziert. Die zuvor verwendete
+    // Sensorachse accelZ trug im Fahrzeug nur 19 Prozent der Vertikalen und
+    // korrelierte mit ihr zu -0,06; die Fahrbahnbewertung maß damit
+    // überwiegend Längs- und Querbeschleunigung, also die Fahrweise.
+    float verticalAccel;  // m/s², positiv entgegen der Schwerkraft
+    bool verticalAccelValid;
     
     // Zusätzliche Metriken
     float temperature;  // °C
@@ -225,7 +234,12 @@ public:
     float getSmoothness();
     bool detectPothole(
         const SensorData& data, float speedKmh, float threshold = 2.0);
-    
+
+    // Streckenabschnitt der Fahrbarkeit fortschreiben. Liefert true genau in
+    // dem Aufruf, in dem ein Abschnitt abgeschlossen wird.
+    bool updateRoadSection(
+        const SensorData& data, float speedKmh, RoadSection& completed);
+
     // Status und Diagnose
     void printSystemStatus();
     String getStatusString();

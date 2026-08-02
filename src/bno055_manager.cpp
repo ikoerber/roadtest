@@ -473,6 +473,15 @@ SensorData BNO055Manager::getCurrentData() {
             gravityMagnitude;
         data.yawRateValid = isfinite(data.yawRateDps);
     }
+
+    // Vertikalbeschleunigung nach demselben Verfahren. accelX/Y/Z stammen aus
+    // VECTOR_LINEARACCEL, die Schwerkraft ist also bereits abgezogen; die
+    // Projektion liefert damit unmittelbar die Fahrbahnanregung. Die
+    // Rechnung steht im hardwarefreien RoadMetricsAnalyzer, damit sie ohne
+    // Gerät prüfbar bleibt.
+    data.verticalAccelValid = RoadMetricsAnalyzer::verticalFromGravity(
+        data.accelX, data.accelY, data.accelZ, data.gravX, data.gravY,
+        data.gravZ, data.verticalAccel);
     
     // Temperatur und Kalibrierung
     data.temperature = sensor->getTemp();
@@ -499,7 +508,13 @@ void BNO055Manager::processSample(const SensorData& data) {
     if (!initialized || data.timestamp == 0) {
         return;
     }
-    roadMetrics.addSample(data.accelZ);
+    // Nur die projizierte Vertikale beschreibt die Fahrbahn. Ist die
+    // Schwerkraftrichtung unbrauchbar, entsteht lieber kein Messwert als
+    // einer aus einer beliebigen Sensorachse.
+    if (!data.verticalAccelValid) {
+        return;
+    }
+    roadMetrics.addSample(data.verticalAccel);
 }
 
 VibrationMetrics BNO055Manager::analyzeVibration() {
@@ -558,10 +573,18 @@ float BNO055Manager::getSmoothness() {
 
 bool BNO055Manager::detectPothole(
     const SensorData& data, float speedKmh, float threshold) {
-    if (!initialized) return false;
+    if (!initialized || !data.verticalAccelValid) return false;
     return roadMetrics.detectPothole(
-        static_cast<uint32_t>(data.timestamp), data.accelZ, speedKmh,
+        static_cast<uint32_t>(data.timestamp), data.verticalAccel, speedKmh,
         threshold);
+}
+
+bool BNO055Manager::updateRoadSection(
+    const SensorData& data, float speedKmh, RoadSection& completed) {
+    if (!initialized || !data.verticalAccelValid) return false;
+    return roadMetrics.updateSection(
+        static_cast<uint32_t>(data.timestamp), data.verticalAccel, speedKmh,
+        completed);
 }
 
 

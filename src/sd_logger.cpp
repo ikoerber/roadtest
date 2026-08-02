@@ -2186,9 +2186,62 @@ bool SDLogger::logCurve(
     return logged;
 }
 
+// Fahrbarkeit eines Streckenabschnitts.
+//
+// Nutzt die Spalten der Ereignisdatei, die dieselbe Bedeutung haben wie beim
+// Kurvenereignis: Start, Ende, Dauer, Weg, mittlere und höchste
+// Geschwindigkeit sowie die Stichprobenzahl. Die Note steht in `Schwere`,
+// damit die Auswertung sie ohne Sonderfall findet. Kurvenbezogene Spalten
+// bleiben leer beziehungsweise null.
+bool SDLogger::logRoadSection(
+    const RoadSection& section, float lat, float lon) {
+    if (!logging || !config.enableEventLog || section.samples == 0) {
+        return false;
+    }
+
+    String description =
+        String("Note=") + String(section.driveability, 0) +
+        ";RMS=" + String(section.rmsVertical, 3) +
+        ";Stoesse=" + String(section.shockCount);
+    String logLine = formatTimestamp() + ",ABSCHNITT," +
+                     description + "," +
+                     String(lat, 6) + "," +
+                     String(lon, 6) + "," +
+                     String(section.driveability, 2) + "," +
+                     String(section.startMs) + "," +
+                     String(section.endMs) + "," +
+                     String(section.endMs - section.startMs) + "," +
+                     "UNBEKANNT,0,0.00,0.00," +
+                     String(section.distanceM, 2) + "," +
+                     String(section.meanSpeedKmh, 2) + "," +
+                     String(section.maxSpeedKmh, 2) + "," +
+                     "0.000,0.000,0.00," +
+                     String(section.rmsVertical, 3) + "," +
+                     String(section.maxShock, 3) + "," +
+                     String(section.samples) + "," +
+                     "SECTION,LENGTH," +
+                     String(section.shockCount) + "\n";
+
+    bool logged =
+        eventLogFile &&
+        writeFileTimed(
+            eventLogFile, expectedFileBytes[LOGFILE_EVENT],
+            logLine.c_str(), logLine.length()) ==
+            logLine.length();
+    if (logged) {
+        flushFileTimed(eventLogFile);
+        stats.totalWrites++;
+        stats.totalBytes += logLine.length();
+    } else {
+        handleCardFailure(
+            "Streckenabschnitt konnte nicht geschrieben werden", 1);
+    }
+    return logged;
+}
+
 bool SDLogger::logSystemStatus(const String& status) {
     if (!logging || !config.enableSystemLog) return false;
-    
+
     return logEvent("SYSTEM", status);
 }
 

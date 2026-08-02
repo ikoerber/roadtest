@@ -7,10 +7,12 @@
 // Zentrale Pin-Konfiguration für das Straßenqualitäts-Messsystem
 // Alle Hardware-spezifischen Pin-Zuordnungen sind hier definiert
 
-#define ROADTEST_FIRMWARE_VERSION "1.5.34"
+#define ROADTEST_FIRMWARE_VERSION "1.5.35"
 #define ROADTEST_FIRMWARE_FILE_NAME \
     "roadtest_" ROADTEST_FIRMWARE_VERSION ".bin"
-#define ROADTEST_CSV_SCHEMA_VERSION "1.5.28-quality-v10"
+// Die Spaltenbelegung bleibt unverändert; hinzu kommt in der Ereignisdatei
+// nur der Ereignistyp ABSCHNITT, der dieselben Spalten belegt.
+#define ROADTEST_CSV_SCHEMA_VERSION "1.5.35-quality-v11"
 #define ROADTEST_VEHICLE_PROFILE "Porsche Carrera S 2012 PDK"
 
 // -----------------------------------------------------------------------------
@@ -146,6 +148,35 @@ extern const int GPS_BAUD_RATE;    // 9600    - GPS Baudrate
 #define ROAD_QUALITY_REFERENCE_SPEED_KMH      30.0f
 #define ROAD_QUALITY_SPEED_FACTOR_MIN          0.7f
 #define ROAD_QUALITY_SPEED_FACTOR_MAX          1.5f
+
+// Streckenabschnitte für die Fahrbarkeit.
+//
+// Die Frage lautet nicht "wo liegt ein Schlagloch", sondern "kann man auf
+// diesem Stück zügig fahren". Deshalb wird über eine feste Weglänge gemittelt
+// statt über eine feste Zeit: Ein Abschnitt beschreibt so immer dasselbe
+// Stück Straße, unabhängig vom gefahrenen Tempo.
+//
+// 200 Meter sind kurz genug, um einen Belagswechsel zu treffen, und lang
+// genug, dass die Spurwahl sich herausmittelt. Hin- und Rückfahrt derselben
+// Strecke wichen in der Messung vom 02.08.2026 über kurze Abschnitte um 27
+// Prozent voneinander ab, weil beide Richtungen verschiedene Fahrspuren und
+// damit verschiedene Fahrbahnbereiche benutzen.
+//
+// Ein Abschnitt verfällt, wenn er zu lange offen steht - etwa bei einem Halt
+// an der Ampel. Ohne diese Grenze verbände er Fahrbahn vor und hinter einer
+// mehrminütigen Pause zu einer Bewertung.
+#define ROAD_SECTION_LENGTH_M               200.0f
+#define ROAD_SECTION_MAX_DURATION_MS      120000UL
+#define ROAD_SECTION_MIN_SAMPLES               20
+
+// Fahrbarkeitsnote: Zuordnung von vertikalem Effektivwert zur Note 0 bis 100.
+//
+// Die Grenzen stammen aus der Fahrt 20260802_095708_84FD688D, dort lagen die
+// Abschnittswerte zwischen 0,61 und 2,10 m/s². Sie sind bewusst als erste
+// belegte Auslegung gesetzt und gegen weitere Fahrten nachzuziehen; die
+// Skala ist linear zwischen beiden Grenzen.
+#define ROAD_DRIVEABILITY_RMS_GOOD_MPS2        0.5f
+#define ROAD_DRIVEABILITY_RMS_BAD_MPS2         3.0f
 
 // Zweistufige Kurvenerkennung:
 // - schnelle Kurven starten weiterhin unmittelbar über die Drehrate;

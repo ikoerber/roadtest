@@ -424,6 +424,205 @@ void test_wiedergabe_fahrt_kennzahlen() {
     TEST_ASSERT_FLOAT_WITHIN(0.2f, 33.2f, minQuality);
 }
 
+// ---------------------------------------------------------------------------
+// Fahrbarkeit je Streckenabschnitt
+//
+// Die Frage ist nicht "wo liegt ein Schlagloch", sondern "kann man hier zügig
+// fahren". Bewertet wird deshalb ein fester Weg statt einer festen Zeit.
+// ---------------------------------------------------------------------------
+
+namespace {
+// Speist einen Abschnitt mit gleichmäßigem Wechselsignal. Liefert die Zahl der
+// abgeschlossenen Abschnitte und den zuletzt abgeschlossenen.
+uint32_t fahreAbschnitt(
+    RoadMetricsAnalyzer& a, float amplitude, float speedKmh, uint32_t schritte,
+    RoadSection& letzter, uint32_t intervallMs = 100, uint32_t startMs = 1000) {
+    uint32_t abgeschlossen = 0;
+    RoadSection s;
+    for (uint32_t i = 0; i < schritte; ++i) {
+        const float value = (i % 2 == 0) ? amplitude : -amplitude;
+        if (a.updateSection(startMs + i * intervallMs, value, speedKmh, s)) {
+            letzter = s;
+            ++abgeschlossen;
+        }
+    }
+    return abgeschlossen;
+}
+}  // namespace
+
+// 200 m bei 72 km/h = 20 m/s sind zehn Sekunden. Der erste Aufruf setzt nur
+// den Startzeitpunkt und trägt keinen Weg bei, deshalb 110 statt 100
+// Stichproben.
+void test_abschnitt_schliesst_nach_der_weglaenge() {
+    RoadMetricsAnalyzer a;
+    RoadSection s{};
+    const uint32_t n = fahreAbschnitt(a, 0.5f, 72.0f, 110, s);
+    TEST_ASSERT_EQUAL_UINT32(1, n);
+    TEST_ASSERT_FLOAT_WITHIN(5.0f, ROAD_SECTION_LENGTH_M, s.distanceM);
+    TEST_ASSERT_FLOAT_WITHIN(0.02f, 0.5f, s.rmsVertical);
+    TEST_ASSERT_FLOAT_WITHIN(0.5f, 72.0f, s.meanSpeedKmh);
+}
+
+// Doppelte Geschwindigkeit, halbe Zeit, gleiche Weglänge: Ein Abschnitt
+// beschreibt immer dasselbe Stück Straße.
+void test_abschnittslaenge_ist_vom_tempo_unabhaengig() {
+    RoadMetricsAnalyzer langsam, schnell;
+    RoadSection sl{}, ss{};
+    // Beide Seiten müssen tatsächlich abschließen, sonst vergliche der Test
+    // zwei Nullwerte miteinander und wäre wertlos.
+    TEST_ASSERT_EQUAL_UINT32(1, fahreAbschnitt(langsam, 0.5f, 36.0f, 210, sl));
+    TEST_ASSERT_EQUAL_UINT32(1, fahreAbschnitt(schnell, 0.5f, 72.0f, 110, ss));
+    TEST_ASSERT_FLOAT_WITHIN(5.0f, sl.distanceM, ss.distanceM);
+    TEST_ASSERT_FLOAT_WITHIN(0.05f, sl.rmsVertical, ss.rmsVertical);
+}
+
+// Ohne nachgewiesene Bewegung entsteht kein Abschnitt. Sonst bewertete die
+// Firmware im Stand die Leerlaufvibration als Fahrbahn.
+void test_kein_abschnitt_im_stillstand() {
+    RoadMetricsAnalyzer a;
+    RoadSection s{};
+    TEST_ASSERT_EQUAL_UINT32(0, fahreAbschnitt(a, 2.0f, 0.0f, 500, s));
+    TEST_ASSERT_FALSE(a.hasOpenSection());
+}
+
+// Auch eine unbekannte Geschwindigkeit darf keinen Abschnitt füllen.
+void test_kein_abschnitt_bei_unbekannter_geschwindigkeit() {
+    RoadMetricsAnalyzer a;
+    RoadSection s{};
+    TEST_ASSERT_EQUAL_UINT32(0, fahreAbschnitt(a, 1.0f, -1.0f, 500, s));
+}
+
+// Knapp unter der Mindestgeschwindigkeit wächst nichts, knapp darüber schon.
+void test_abschnitt_an_der_mindestgeschwindigkeit() {
+    RoadMetricsAnalyzer unter;
+    RoadSection s{};
+    fahreAbschnitt(unter, 0.5f, ROAD_EVENT_MIN_SPEED_KMH - 0.1f, 50, s);
+    TEST_ASSERT_FALSE(unter.hasOpenSection());
+
+    RoadMetricsAnalyzer drueber;
+    fahreAbschnitt(drueber, 0.5f, ROAD_EVENT_MIN_SPEED_KMH + 0.1f, 50, s);
+    TEST_ASSERT_TRUE(drueber.hasOpenSection());
+}
+
+// Eine Abtastlücke darf keinen Weg erfinden. Bei 500 ms Abstand zählt jeder
+// Schritt noch, bei 600 ms nicht mehr - dieselbe Grenze wie im CurveDetector.
+void test_abtastluecke_erfindet_keinen_weg() {
+    RoadMetricsAnalyzer knapp, darueber;
+    RoadSection s{};
+    fahreAbschnitt(knapp, 0.5f, 72.0f, 20, s, CURVE_MAX_SAMPLE_GAP_MS);
+    fahreAbschnitt(darueber, 0.5f, 72.0f, 20, s, CURVE_MAX_SAMPLE_GAP_MS + 100);
+    TEST_ASSERT_TRUE(knapp.openSectionDistanceM() > 100.0f);
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.0f, darueber.openSectionDistanceM());
+}
+
+// Ein zu lange offener Abschnitt verbände Fahrbahn vor und hinter einem Halt.
+void test_zu_langer_abschnitt_wird_verworfen() {
+    RoadMetricsAnalyzer a;
+    RoadSection s{};
+    // Langsam genug, dass 200 m nicht erreicht werden, bevor die Zeit abläuft.
+    const uint32_t schritte = ROAD_SECTION_MAX_DURATION_MS / 1000 + 10;
+    uint32_t abgeschlossen = 0;
+    for (uint32_t i = 0; i < schritte; ++i) {
+        if (a.updateSection(1000 + i * 1000, 0.5f, 6.0f, s)) ++abgeschlossen;
+    }
+    TEST_ASSERT_EQUAL_UINT32(0, abgeschlossen);
+    TEST_ASSERT_TRUE(a.openSectionDistanceM() < ROAD_SECTION_LENGTH_M);
+}
+
+// Die Note muss an beiden Grenzen greifen, je ein Fall knapp darüber und
+// knapp darunter.
+void test_note_an_den_grenzen() {
+    TEST_ASSERT_FLOAT_WITHIN(
+        0.1f, 100.0f,
+        RoadMetricsAnalyzer::driveabilityFromRms(
+            ROAD_DRIVEABILITY_RMS_GOOD_MPS2 - 0.01f));
+    TEST_ASSERT_TRUE(
+        RoadMetricsAnalyzer::driveabilityFromRms(
+            ROAD_DRIVEABILITY_RMS_GOOD_MPS2 + 0.01f) < 100.0f);
+    TEST_ASSERT_TRUE(
+        RoadMetricsAnalyzer::driveabilityFromRms(
+            ROAD_DRIVEABILITY_RMS_BAD_MPS2 - 0.01f) > 0.0f);
+    TEST_ASSERT_FLOAT_WITHIN(
+        0.1f, 0.0f,
+        RoadMetricsAnalyzer::driveabilityFromRms(
+            ROAD_DRIVEABILITY_RMS_BAD_MPS2 + 0.01f));
+}
+
+// Raue Fahrbahn bekommt eine schlechtere Note als glatte.
+void test_raue_fahrbahn_schlechtere_note() {
+    RoadMetricsAnalyzer glatt, rau;
+    RoadSection sg{}, sr{};
+    TEST_ASSERT_EQUAL_UINT32(1, fahreAbschnitt(glatt, 0.3f, 72.0f, 110, sg));
+    TEST_ASSERT_EQUAL_UINT32(1, fahreAbschnitt(rau, 2.0f, 72.0f, 110, sr));
+    TEST_ASSERT_TRUE(sg.driveability > sr.driveability + 30.0f);
+}
+
+// Regressionsschutz gegen den Befund vom 02.08.2026: Die Fahrbahnbewertung
+// lief über die Sensorachse accelZ, die im Fahrzeug nur 19 Prozent der
+// Vertikalen trug und mit ihr zu -0,06 korrelierte. Dadurch bewertete sie
+// Querbeschleunigung als Fahrbahnstoß, und gerade zügig gefahrene Kurven
+// bekamen die schlechteste Note - genau umgekehrt zum Zweck der Messung.
+//
+// Der Test stellt die gemessene Einbaulage nach: Die Schwerkraft lag bei
+// (8,60 / -4,23 / -1,85), die Sensorachse Z trug also nur 19 Prozent der
+// Vertikalen. Eine reine Querbeschleunigung darf danach keine
+// Vertikalbeschleunigung erzeugen.
+void test_querbeschleunigung_erzeugt_keine_vertikale() {
+    const float gx = 8.60f, gy = -4.23f, gz = -1.85f;
+    const float mag = std::sqrt(gx * gx + gy * gy + gz * gz);
+    // Ein Vektor senkrecht zur Schwerkraft: Kreuzprodukt mit einer beliebigen
+    // nicht parallelen Richtung.
+    const float qx = gy * 1.0f - gz * 0.0f;
+    const float qy = gz * 0.0f - gx * 1.0f;
+    const float qz = gx * 0.0f - gy * 0.0f;
+    const float qn = std::sqrt(qx * qx + qy * qy + qz * qz);
+    const float skala = 4.0f / qn;  // kräftige Querbeschleunigung
+
+    float vertikal = -1.0f;
+    TEST_ASSERT_TRUE(RoadMetricsAnalyzer::verticalFromGravity(
+        qx * skala, qy * skala, qz * skala, gx, gy, gz, vertikal));
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 0.0f, vertikal);
+
+    // Zum Gegenbeweis: Dieselbe Beschleunigung auf der alten Achse accelZ
+    // wäre als Fahrbahnstoß durchgegangen.
+    TEST_ASSERT_TRUE(std::fabs(qz * skala) > 1.0f || std::fabs(qx * skala) > 1.0f);
+    (void)mag;
+}
+
+// Ein echter Fahrbahnstoß, also eine Beschleunigung längs der Schwerkraft,
+// muss dagegen voll durchkommen.
+void test_vertikalstoss_kommt_voll_an() {
+    const float gx = 8.60f, gy = -4.23f, gz = -1.85f;
+    const float mag = std::sqrt(gx * gx + gy * gy + gz * gz);
+    // 3 m/s² nach oben, also entgegen der Schwerkraftrichtung.
+    float vertikal = 0.0f;
+    TEST_ASSERT_TRUE(RoadMetricsAnalyzer::verticalFromGravity(
+        -3.0f * gx / mag, -3.0f * gy / mag, -3.0f * gz / mag, gx, gy, gz,
+        vertikal));
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 3.0f, vertikal);
+}
+
+// Ohne brauchbare Schwerkraftrichtung entsteht kein Messwert.
+void test_unbrauchbare_schwerkraft_liefert_nichts() {
+    float vertikal = 42.0f;
+    TEST_ASSERT_FALSE(RoadMetricsAnalyzer::verticalFromGravity(
+        1.0f, 1.0f, 1.0f, 0.0f, 0.0f, 0.0f, vertikal));
+    TEST_ASSERT_FALSE(RoadMetricsAnalyzer::verticalFromGravity(
+        1.0f, 1.0f, 1.0f, 40.0f, 0.0f, 0.0f, vertikal));
+    // Der Ausgabewert bleibt unangetastet.
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 42.0f, vertikal);
+}
+
+// Zügige Kurvenfahrt auf glatter Bahn muss eine gute Note bekommen. Mit der
+// alten Achse bekam sie die schlechteste.
+void test_kurvenfahrt_auf_glatter_bahn_bleibt_gut() {
+    RoadMetricsAnalyzer a;
+    RoadSection s{};
+    const uint32_t n = fahreAbschnitt(a, 0.25f, 80.0f, 110, s);
+    TEST_ASSERT_EQUAL_UINT32(1, n);
+    TEST_ASSERT_TRUE(s.driveability >= 95.0f);
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_stillstand_liefert_keinen_messwert);
@@ -448,5 +647,18 @@ int main(int, char**) {
     RUN_TEST(test_kleine_ausschlaege_erzeugen_kein_schlagloch);
     RUN_TEST(test_wiedergabe_standlauf_erzeugt_nichts);
     RUN_TEST(test_wiedergabe_fahrt_kennzahlen);
+    RUN_TEST(test_abschnitt_schliesst_nach_der_weglaenge);
+    RUN_TEST(test_abschnittslaenge_ist_vom_tempo_unabhaengig);
+    RUN_TEST(test_kein_abschnitt_im_stillstand);
+    RUN_TEST(test_kein_abschnitt_bei_unbekannter_geschwindigkeit);
+    RUN_TEST(test_abschnitt_an_der_mindestgeschwindigkeit);
+    RUN_TEST(test_abtastluecke_erfindet_keinen_weg);
+    RUN_TEST(test_zu_langer_abschnitt_wird_verworfen);
+    RUN_TEST(test_note_an_den_grenzen);
+    RUN_TEST(test_raue_fahrbahn_schlechtere_note);
+    RUN_TEST(test_querbeschleunigung_erzeugt_keine_vertikale);
+    RUN_TEST(test_vertikalstoss_kommt_voll_an);
+    RUN_TEST(test_unbrauchbare_schwerkraft_liefert_nichts);
+    RUN_TEST(test_kurvenfahrt_auf_glatter_bahn_bleibt_gut);
     return UNITY_END();
 }

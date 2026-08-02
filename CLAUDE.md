@@ -1,7 +1,7 @@
 # ROADTEST Firmware
 
 ESP32-S3-Firmware zur Aufzeichnung von BNO055-, GPS-, Straßenqualitäts- und
-standardisierten OBD-II-Daten. Aktueller Firmwarestand: **1.5.34**.
+standardisierten OBD-II-Daten. Aktueller Firmwarestand: **1.5.35**.
 
 Der aktuelle Stand ist ein Hardware- und Fahrzeugteststand, nicht abschließend
 produktionsreif. Bekannte Einschränkungen stehen weiter unten.
@@ -259,8 +259,8 @@ Eigenschaften des Sitzungskopfes.
 
 ## Aktueller Teststand
 
-- Firmware 1.5.34 baut erfolgreich für `lolin_s3_mini`.
-- Letzter Build: 71.036 Byte RAM (21,7 %) und 1.219.190 Byte Flash (93,0 %).
+- Firmware 1.5.35 baut erfolgreich für `lolin_s3_mini`.
+- Letzter Build: 71.084 Byte RAM (21,7 %) und 1.222.078 Byte Flash (93,2 %).
 - Am 31.07.2026 liefen fünf Beifahrer-Referenzfahrten mit 1.5.28 und je zwölf
   markierten Referenzintervallen. Sie sind der Prüfstand der Kurvenerkennung.
 - 1.5.29 ist am Fahrzeug bestätigt: vier Fahrten am 01.08.2026 über 21 Minuten
@@ -331,9 +331,46 @@ Sitzungszähler, Gültigkeitsfelder, Zeitbasis und PASS/WARN/FAIL-Kriterien
 berücksichtigen.
 
 BNO055, SD, OLED und WLAN laufen bei diesen Tests als Stabilitätskontrolle mit.
-Nach der Kurvenauswertung folgt die getrennte Verbesserung der
-Straßenqualitätsbewertung anhand derselben Rohfahrt. Beide Bewertungsmodelle
-werden nicht gleichzeitig neu parametriert.
+Beide Bewertungsmodelle werden nicht gleichzeitig neu parametriert.
+
+## Fahrbarkeit der Strecke
+
+Seit 1.5.35 beantwortet die Fahrbahnbewertung eine andere Frage als zuvor.
+Nicht "wo liegt ein Schlagloch", sondern **"kann man auf diesem Stück zügig
+fahren"**. Schlechte Beläge - Pflaster auf Nebenstrecken, Kies, lange
+vernachlässigter Asphalt - sind dabei nur insoweit interessant, als sie
+sportliches Fahren verhindern. Die Ortsgenauigkeit einer einzelnen
+Schadstelle ist ausdrücklich nachrangig.
+
+Verbindliche Punkte:
+
+- Bewertet wird die auf die Schwerkraftrichtung **projizierte**
+  Vertikalbeschleunigung, niemals eine rohe Sensorachse. Bis 1.5.34 lief die
+  Bewertung über `accelZ`; im Fahrzeug trug diese Achse 19 Prozent der
+  Vertikalen und korrelierte mit ihr zu -0,06. Die Bewertung maß dadurch
+  Quer- und Längsbeschleunigung, also die Fahrweise, und benotete gerade
+  zügig gefahrene Kurven am schlechtesten.
+- Ein Abschnitt umfasst einen festen **Weg** von `ROAD_SECTION_LENGTH_M`,
+  keine feste Zeit. Nur so beschreibt er unabhängig vom Tempo dasselbe Stück
+  Straße.
+- Die Rauheit ist eine Eigenschaft der **befahrenen Spur**, nicht der
+  Straßengeometrie. Hin- und Rückfahrt derselben Strecke sind deshalb kein
+  Prüfstand für die Fahrbahnbewertung, obwohl sie einer für die
+  Kurvenerkennung sind: Über kurze Abschnitte wichen sie am 02.08.2026 um
+  27 Prozent voneinander ab, und der größte Ausreißer war genau der
+  Abschnitt, in dem eine Richtung über zwei Schlaglöcher fuhr und die andere
+  nicht.
+- **Belagsarten sind bei 10 Hz Abtastung nicht unterscheidbar.**
+  Kopfsteinpflaster regt bei 30 km/h mit rund 83 Hz an, Großpflaster mit
+  42 Hz, Kies mit über 160 Hz; die Nyquist-Grenze liegt bei 5 Hz. Keine
+  Frequenzschätzung einbauen, die das verschweigt - `VibrationMetrics`
+  führt `frequency` bewusst als 0. Messbar bleibt die Aufbaubewegung bei 1
+  bis 2 Hz, und die entscheidet über die Fahrbarkeit. Der Effektivwert
+  bleibt auch bei Unterabtastung ein gültiges Energiemaß, weil Aliasing die
+  Frequenz verfälscht und nicht die Gesamtenergie.
+- Die Notengrenzen `ROAD_DRIVEABILITY_RMS_GOOD_MPS2` und
+  `ROAD_DRIVEABILITY_RMS_BAD_MPS2` stammen aus einer einzigen Fahrt und sind
+  gegen weitere nachzuziehen.
 
 ## Bekannte Einschränkungen
 

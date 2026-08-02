@@ -5,6 +5,77 @@ Alle wichtigen Änderungen am ESP32-S3 Straßenqualitäts-Messsystem werden in d
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt hält sich an [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.35] - 2026-08-02
+
+### Behoben
+- **Die Fahrbahnbewertung maß die Fahrweise statt der Straße.** Sie lief über
+  die rohe Sensorachse `accelZ`. Im Fahrzeug liegt die Vertikale dort aber
+  nicht: Gemessen an der Fahrt `20260802_095708_84FD688D` verteilt sich die
+  Schwerkraft auf (8,60 / -4,23 / -1,85) m/s², die Z-Achse trägt also
+  19 Prozent der Vertikalen. Die Korrelation zwischen `accelZ` und der
+  tatsächlichen Vertikalen betrug **-0,06**.
+
+  Folge: Quer- und Längsbeschleunigung gingen als Fahrbahnstöße durch. Die
+  Straßenqualität lag in Kurven im Median bei 72,6 und außerhalb bei 92,1,
+  und die Zahl der Stichproben über der Stoßschwelle war mit 838 gegenüber
+  127 um das 6,6-fache überhöht. Drei von fünf Schlaglöchern lagen innerhalb
+  eines Kurvenereignisses. Für den Zweck der Messung war das Ergebnis genau
+  verkehrt herum: Je zügiger gefahren wurde, desto schlechter die Note.
+
+  Die lineare Beschleunigung wird jetzt auf die Schwerkraftrichtung
+  projiziert, nach demselben Verfahren wie die Drehrate seit 1.5.28. Das
+  Übersprechen der Querbeschleunigung fällt damit von Faktor 2,59 auf 1,23.
+  `SensorData` führt dafür `verticalAccel` und `verticalAccelValid`; ohne
+  brauchbare Schwerkraftrichtung entsteht bewusst kein Messwert.
+
+### Hinzugefügt
+- **Fahrbarkeit je Streckenabschnitt.** Alle `ROAD_SECTION_LENGTH_M` = 200
+  Meter entsteht eine Note von 0 bis 100 für die Frage, ob sich auf diesem
+  Stück zügig fahren lässt. Bewertet wird ein fester Weg statt einer festen
+  Zeit, damit ein Abschnitt unabhängig vom Tempo dasselbe Stück Straße
+  beschreibt.
+
+  200 Meter sind kurz genug für einen Belagswechsel und lang genug, dass die
+  Spurwahl sich herausmittelt. Über kürzere Abschnitte wichen Hin- und
+  Rückfahrt derselben Strecke um 27 Prozent voneinander ab, weil beide
+  Richtungen verschiedene Fahrspuren benutzen. Anders als der Kurvenwinkel
+  ist die Rauheit keine Eigenschaft der Straßengeometrie, sondern der
+  befahrenen Spur.
+
+  Der Abschnitt erscheint als Ereignis `ABSCHNITT` in der vorhandenen
+  Ereignisdatei, nicht in einer zehnten Logdatei: Ein Flush-Schritt kostet
+  bereits bis zu 101 ms und damit einen vollen Sensorslot. Die Note steht in
+  `Schwere`, Weg und Geschwindigkeiten in den Spalten des Kurvenereignisses.
+  `DetectionMode` trägt `SECTION`, `CompletionReason` trägt `LENGTH`.
+
+  In der Wiedergabe der Fahrt vom 02.08.2026 entstehen 21 Abschnitte mit
+  Noten zwischen 58 und 96. Die Korrelation der Note zum Kurvenanteil sinkt
+  gegenüber der bisherigen Qualitätszahl von -0,71 auf -0,46.
+
+### Geändert
+- `ROADTEST_CSV_SCHEMA_VERSION` steht auf `1.5.35-quality-v11`. Die
+  Spaltenbelegung ist unverändert; hinzu kommt allein der Ereignistyp
+  `ABSCHNITT`.
+
+### Bekannte Grenze
+- **Belagsarten sind bei 10 Hz Abtastung nicht unterscheidbar.** Kopfstein-
+  pflaster regt bei 30 km/h mit rund 83 Hz an, Großpflaster mit 42 Hz, Kies
+  mit über 160 Hz; die Nyquist-Grenze liegt bei 5 Hz. `VibrationMetrics`
+  führt `frequency` deshalb weiterhin als 0 und nicht etwa als Schätzwert.
+
+  Messbar bleibt die Aufbaubewegung des Fahrzeugs bei 1 bis 2 Hz - und genau
+  die entscheidet, ob zügiges Fahren angenehm bleibt. Der Effektivwert ist
+  auch bei Unterabtastung ein brauchbares Energiemaß, weil Aliasing die
+  Frequenz verfälscht, nicht die Gesamtenergie. Die Note beantwortet damit
+  "wie gut lässt sich hier fahren", nicht "welcher Belag ist das".
+
+### Noch offen
+- Die Grenzen `ROAD_DRIVEABILITY_RMS_GOOD_MPS2` = 0,5 und
+  `ROAD_DRIVEABILITY_RMS_BAD_MPS2` = 3,0 stammen aus einer einzigen Fahrt und
+  sind gegen weitere nachzuziehen.
+- Der GeoJSON-Export kennt den Ereignistyp `ABSCHNITT` noch nicht.
+- Wirksamkeit am Gerät nicht bestätigt.
+
 ## [1.5.34] - 2026-08-01
 
 ### Am Gerät bestätigt

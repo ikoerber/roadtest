@@ -322,6 +322,9 @@ public:
     bool logPothole(float severity, float lat = 0, float lon = 0);
     bool logCurve(
         const CurveEvent& event, float lat = 0, float lon = 0);
+    // Fahrbarkeit eines Streckenabschnitts, als Ereignis ABSCHNITT.
+    bool logRoadSection(
+        const RoadSection& section, float lat = 0, float lon = 0);
     
     // System-Status loggen
     bool logSystemStatus(const String& status);

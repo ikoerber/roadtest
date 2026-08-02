@@ -17,8 +17,36 @@
 struct VibrationMetrics {
     float rmsAccel;       // Effektivwert der Vertikalbeschleunigung
     float maxShock;       // größter Betrag im Fenster
-    float frequency;      // derzeit nicht bestimmt, bleibt 0
+    float frequency;      // nicht bestimmbar, siehe unten; bleibt 0
     uint32_t shockCount;  // zusammenhängende Überschreitungen der Schwelle
+};
+
+// Bewerteter Streckenabschnitt: "kann man hier zügig fahren?"
+//
+// Ein Abschnitt umfasst ROAD_SECTION_LENGTH_M gefahrenen Weg und wird als
+// Ganzes bewertet. Die Note beschreibt die Fahrbahn, nicht die Fahrweise -
+// Voraussetzung dafür ist, dass die Vertikalbeschleunigung projiziert
+// übergeben wird und nicht als feste Sensorachse.
+//
+// Zur Frequenz: Belagsarten über ihre Anregungsfrequenz zu unterscheiden ist
+// mit der Abtastung von 10 Hz ausgeschlossen. Kopfsteinpflaster regt bei
+// 30 km/h mit rund 83 Hz an, Großpflaster mit 42 Hz, Kies mit über 160 Hz;
+// die Nyquist-Grenze liegt bei 5 Hz. Messbar bleibt die Aufbaubewegung des
+// Fahrzeugs bei 1 bis 2 Hz - und genau die entscheidet, ob zügiges Fahren
+// angenehm bleibt. Der Effektivwert bleibt auch bei Unterabtastung ein
+// brauchbares Energiemaß; Aliasing verfälscht die Frequenz, nicht die
+// Gesamtenergie.
+struct RoadSection {
+    uint32_t startMs;
+    uint32_t endMs;
+    float distanceM;
+    float rmsVertical;      // Effektivwert der Vertikalbeschleunigung, m/s²
+    float maxShock;         // größter Einzelausschlag im Abschnitt, m/s²
+    uint32_t shockCount;    // Überschreitungen der Stoßschwelle
+    float meanSpeedKmh;
+    float maxSpeedKmh;
+    float driveability;     // 0 bis 100: 100 = zügig fahrbar
+    uint32_t samples;
 };
 
 class RoadMetricsAnalyzer {
@@ -28,7 +56,39 @@ public:
     void reset();
 
     // Eine Vertikalbeschleunigung in das gleitende Fenster aufnehmen.
-    void addSample(float accelZ);
+    //
+    // Erwartet wird die auf die Schwerkraftrichtung projizierte lineare
+    // Beschleunigung, nicht eine rohe Sensorachse. Siehe SensorData.
+    void addSample(float verticalAccel);
+
+    // Streckenabschnitt fortschreiben.
+    //
+    // Liefert true genau in dem Aufruf, in dem ein Abschnitt seine Länge
+    // erreicht und in `completed` abgeschlossen wird. Ohne nachgewiesene
+    // Bewegung ab ROAD_EVENT_MIN_SPEED_KMH wächst kein Abschnitt; steht einer
+    // länger als ROAD_SECTION_MAX_DURATION_MS offen, wird er verworfen, damit
+    // Fahrbahn vor und hinter einem Halt nicht zusammenfällt.
+    bool updateSection(
+        uint32_t timestampMs, float verticalAccel, float speedKmh,
+        RoadSection& completed);
+
+    // Note von 0 bis 100 aus dem vertikalen Effektivwert.
+    static float driveabilityFromRms(float rmsVertical);
+
+    // Lineare Beschleunigung auf die Schwerkraftrichtung projizieren.
+    //
+    // Ergebnis ist die Fahrbahnanregung, positiv entgegen der Schwerkraft.
+    // Liefert false, wenn der Schwerkraftvektor unbrauchbar ist; dann
+    // entsteht bewusst kein Messwert statt eines aus einer beliebigen
+    // Sensorachse. Steht hier statt im BNO055Manager, damit die Projektion
+    // ohne Hardware prüfbar bleibt - sie ist der Kern der Bewertung.
+    static bool verticalFromGravity(
+        float accelX, float accelY, float accelZ, float gravX, float gravY,
+        float gravZ, float& verticalAccel);
+
+    void resetSection();
+    bool hasOpenSection() const { return sectionSamples > 0; }
+    float openSectionDistanceM() const { return sectionDistanceM; }
 
     VibrationMetrics analyzeVibration();
 
@@ -73,6 +133,20 @@ private:
     bool potholeArmed;
     uint32_t potholeStartTime;
     uint32_t lastPotholeEvent;
+
+    // Laufender Streckenabschnitt. Der Effektivwert entsteht aus der Summe
+    // der Quadrate, damit kein Zwischenpuffer über die volle Abschnittslänge
+    // nötig ist.
+    uint32_t sectionStartMs;
+    uint32_t sectionLastMs;
+    float sectionDistanceM;
+    float sectionSquareSum;
+    float sectionMaxShock;
+    uint32_t sectionShockCount;
+    bool sectionShockOpen;
+    float sectionSpeedSum;
+    float sectionMaxSpeed;
+    uint32_t sectionSamples;
 };
 
 #endif  // ROAD_METRICS_H

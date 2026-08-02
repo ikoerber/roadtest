@@ -675,6 +675,20 @@ Buslast steht in [OPTIMIERUNGEN.md](OPTIMIERUNGEN.md).
 
 ## 📈 Version History
 
+### v1.5.35 - Fahrbarkeit statt Fahrweise
+- ✅ Vertikalbeschleunigung wird auf die Schwerkraftrichtung projiziert; die
+  bisher verwendete Sensorachse `accelZ` trug nur 19 % der Vertikalen und
+  korrelierte mit ihr zu −0,06
+- ✅ Übersprechen der Querbeschleunigung fällt von Faktor 2,59 auf 1,23
+- ✅ Fahrbarkeitsnote je 200 m Streckenabschnitt als Ereignis `ABSCHNITT`;
+  bewertet wird ein fester Weg, nicht eine feste Zeit
+- ✅ 21 Abschnitte in der Testfahrt mit Noten zwischen 58 und 96; Korrelation
+  zum Kurvenanteil sinkt von −0,71 auf −0,46
+- ⚠️ Belagsarten sind bei 10 Hz nicht unterscheidbar: Pflaster regt mit
+  42–83 Hz an, Kies über 160 Hz, Nyquist liegt bei 5 Hz
+- ⚠️ Notengrenzen stammen aus einer einzigen Fahrt
+- ⚠️ Wirksamkeit am Gerät noch nicht bestätigt
+
 ### v1.5.34 - Befunde aus dem Code-Review
 - ✅ Größenprüfung bekommt ihre Grundlinie zurück; Rückstellung der Zähler
   jetzt vor dem Öffnen der Dateien

@@ -23,10 +23,120 @@ void RoadMetricsAnalyzer::reset() {
     potholeArmed = false;
     potholeStartTime = 0;
     lastPotholeEvent = 0;
+    resetSection();
 }
 
-void RoadMetricsAnalyzer::addSample(float accelZ) {
-    accelBuffer[bufferIndex] = accelZ;
+void RoadMetricsAnalyzer::resetSection() {
+    sectionStartMs = 0;
+    sectionLastMs = 0;
+    sectionDistanceM = 0;
+    sectionSquareSum = 0;
+    sectionMaxShock = 0;
+    sectionShockCount = 0;
+    sectionShockOpen = false;
+    sectionSpeedSum = 0;
+    sectionMaxSpeed = 0;
+    sectionSamples = 0;
+}
+
+bool RoadMetricsAnalyzer::verticalFromGravity(
+    float accelX, float accelY, float accelZ, float gravX, float gravY,
+    float gravZ, float& verticalAccel) {
+    const float magnitude =
+        std::sqrt(gravX * gravX + gravY * gravY + gravZ * gravZ);
+    if (!std::isfinite(magnitude) || magnitude < CURVE_GRAVITY_MIN_MPS2 ||
+        magnitude > CURVE_GRAVITY_MAX_MPS2) {
+        return false;
+    }
+    // Vorzeichen gedreht: Der Schwerkraftvektor zeigt nach unten, ein Stoß
+    // von der Fahrbahn nach oben soll positiv erscheinen.
+    const float value =
+        -(accelX * gravX + accelY * gravY + accelZ * gravZ) / magnitude;
+    if (!std::isfinite(value)) return false;
+    verticalAccel = value;
+    return true;
+}
+
+float RoadMetricsAnalyzer::driveabilityFromRms(float rmsVertical) {
+    const float good = ROAD_DRIVEABILITY_RMS_GOOD_MPS2;
+    const float bad = ROAD_DRIVEABILITY_RMS_BAD_MPS2;
+    if (rmsVertical <= good) return 100.0f;
+    if (rmsVertical >= bad) return 0.0f;
+    return 100.0f * (bad - rmsVertical) / (bad - good);
+}
+
+bool RoadMetricsAnalyzer::updateSection(
+    uint32_t timestampMs, float verticalAccel, float speedKmh,
+    RoadSection& completed) {
+    if (timestampMs == 0) return false;
+
+    // Ohne nachgewiesene Bewegung wächst kein Abschnitt. Ein bereits
+    // begonnener bleibt dabei erhalten: Eine kurze Verzögerung an einer
+    // Kreuzung soll die Bewertung der Strecke nicht verwerfen.
+    if (!(speedKmh >= ROAD_EVENT_MIN_SPEED_KMH)) {
+        sectionLastMs = timestampMs;
+        return false;
+    }
+
+    if (sectionSamples == 0) {
+        sectionStartMs = timestampMs;
+        sectionLastMs = timestampMs;
+    }
+
+    // Ein zu lange offener Abschnitt beschreibt keine zusammenhängende
+    // Strecke mehr und wird verworfen statt bewertet.
+    if (timestampMs - sectionStartMs > ROAD_SECTION_MAX_DURATION_MS) {
+        resetSection();
+        sectionStartMs = timestampMs;
+        sectionLastMs = timestampMs;
+    }
+
+    // Eine Abtastlücke darf keinen Weg erfinden. Dieselbe Grenze wie im
+    // CurveDetector: Über 500 ms ist die Zwischenzeit nicht mehr belegt.
+    const uint32_t deltaMs = timestampMs - sectionLastMs;
+    sectionLastMs = timestampMs;
+    if (deltaMs <= CURVE_MAX_SAMPLE_GAP_MS) {
+        sectionDistanceM += speedKmh / 3.6f * (deltaMs / 1000.0f);
+    }
+
+    sectionSquareSum += verticalAccel * verticalAccel;
+    const float magnitude = verticalAccel < 0 ? -verticalAccel : verticalAccel;
+    if (magnitude > sectionMaxShock) sectionMaxShock = magnitude;
+    // Ein zusammenhängender Stoß zählt nur einmal, wie in analyzeVibration().
+    if (magnitude > vibrationThreshold) {
+        if (!sectionShockOpen) {
+            sectionShockCount++;
+            sectionShockOpen = true;
+        }
+    } else {
+        sectionShockOpen = false;
+    }
+    sectionSpeedSum += speedKmh;
+    if (speedKmh > sectionMaxSpeed) sectionMaxSpeed = speedKmh;
+    sectionSamples++;
+
+    if (sectionDistanceM < ROAD_SECTION_LENGTH_M ||
+        sectionSamples < ROAD_SECTION_MIN_SAMPLES) {
+        return false;
+    }
+
+    completed.startMs = sectionStartMs;
+    completed.endMs = timestampMs;
+    completed.distanceM = sectionDistanceM;
+    completed.rmsVertical = std::sqrt(sectionSquareSum / sectionSamples);
+    completed.maxShock = sectionMaxShock;
+    completed.shockCount = sectionShockCount;
+    completed.meanSpeedKmh = sectionSpeedSum / sectionSamples;
+    completed.maxSpeedKmh = sectionMaxSpeed;
+    completed.driveability = driveabilityFromRms(completed.rmsVertical);
+    completed.samples = sectionSamples;
+
+    resetSection();
+    return true;
+}
+
+void RoadMetricsAnalyzer::addSample(float verticalAccel) {
+    accelBuffer[bufferIndex] = verticalAccel;
     bufferIndex = (bufferIndex + 1) % BUFFER_SIZE;
     if (bufferCount < BUFFER_SIZE) {
         bufferCount++;
