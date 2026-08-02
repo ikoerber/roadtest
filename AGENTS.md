@@ -1,7 +1,7 @@
 # ROADTEST Firmware
 
 ESP32-S3-Firmware zur Aufzeichnung von BNO055-, GPS-, Straßenqualitäts- und
-standardisierten OBD-II-Daten. Aktueller Firmwarestand: **1.5.28**.
+standardisierten OBD-II-Daten. Aktueller Firmwarestand: **1.5.34**.
 
 Der aktuelle Stand ist ein Hardware- und Fahrzeugteststand, nicht abschließend
 produktionsreif. Bekannte Einschränkungen stehen weiter unten.
@@ -16,6 +16,8 @@ produktionsreif. Bekannte Einschränkungen stehen weiter unten.
 | `pio run -t clean` | PlatformIO-Buildartefakte löschen |
 | `pio test -e native` | Hosttests der hardwarefreien Auswertelogik ausführen |
 | `python3 tools/export_geojson.py <Sitzung>` | Messsitzung als Karte für geojson.io exportieren |
+| `c++ -std=gnu++17 -O1 -I src -o /tmp/vergleich tools/vergleich_kurvenwiedergabe.cpp src/curve_detector.cpp` | Wiedergabe gegen die Firmwareereignisse derselben Fahrt prüfen |
+| `python3 tools/vergleich_hin_rueck.py <Sitzung>` | Kurvenerkennung einer hin und zurück gefahrenen Strecke gegen sich selbst prüfen |
 
 Die Web-OTA-Datei entsteht unter:
 
@@ -45,7 +47,6 @@ src/curve_detector.{h,cpp}      Kurvenerkennung, hardwarefrei und hosttestbar
 src/road_metrics.{h,cpp}        Vibration, Straßenqualität, Schlaglöcher;
                                 ebenfalls hardwarefrei und hosttestbar
 src/road_quality.h              Datenstruktur RoadMetrics für Auswertungen
-src/oled_manager.{h,cpp}        Optionale Statusanzeige
 src/web_manager.{h,cpp}         ROADTEST-WLAN, Statusseite und Browser-OTA
 src/runtime_diagnostics.{h,cpp} Laufzeit-, Web- und SD-Pausendiagnose
 src/integration_tests.{h,cpp}   Serielle Hardware- und Integrationstests
@@ -55,7 +56,8 @@ Systemablauf:
 
 1. WLAN und Webseite starten vor den externen Hardwareprüfungen.
 2. BNO055, GPS, SD und optionales CAN werden nicht blockierend geprüft.
-3. Das OLED ist reine Komfortausstattung und darf den Betrieb nie blockieren.
+3. Das OLED ist verbaut, wird aber seit 1.5.32 nicht mehr angesteuert; es
+   dient nur noch als zweiter I²C-Teilnehmer für die Buszustandsdiagnose.
 4. Die Hauptschleife bedient zuerst Web/OTA und anschließend Sensoren,
    Logging, CAN/OBD und Diagnose.
 5. `VehicleDataDiscovery` übernimmt während einer Discovery-Sitzung die
@@ -181,6 +183,37 @@ Die Wiedergaben sind auf feste Kennzahlen festgeschrieben. Ändern sie sich,
 ist das kein Testfehler, sondern eine Verhaltensänderung: prüfen, begründen
 und den Festwert bewusst nachziehen.
 
+**Ein Testlauf mit `skipped` ist nicht grün.** Die vier Wiedergabetests
+überspringen sich selbst, wenn ihre Messdaten fehlen, denn die CSV-Dateien
+sind per `.gitignore` bewusst nicht im Repository und fehlen in einem frischen
+Clone. Am 02.08.2026 wanderten sieben Sitzungen nach `testdata/archiv/`, und
+die Suite meldete weiterhin Erfolg — bei abgeschaltetem Prüfstand.
+`findFixture()` sucht seitdem auch im Archiv. Vor jeder Schwellwertänderung an
+der Kurvenerkennung gilt: Der Lauf muss **49 von 49** melden, nicht
+„45 succeeded, 4 skipped“.
+
+`test_wiedergabe_referenzfahrten` misst die Kurvenerkennung gegen die
+55 von Hand markierten Referenzkurven der fünf Beifahrerfahrten vom
+31.07.2026. Die Geschwindigkeit wird dabei wie in `main.cpp` gewählt: zuerst
+OBD, sonst GPS, sonst unbekannt. Diese Reihenfolge ist verbindlich, denn nur
+mit ihr gibt die Wiedergabe die Firmwareläufe ereignisgenau wieder — 174 zu
+174 Ereignissen bei 0,1 Grad mittlerer Winkelabweichung. Allein mit der
+GPS-Geschwindigkeit waren es 128 statt 174. Neben der Trefferzahl ist die Zahl der Ereignisse mit einer
+Zeitabdeckung unter 60 Prozent festgeschrieben: Ereignisse, deren Dauer nur
+zu einem kleinen Teil aus echten Drehstichproben besteht, umfassen mehrere
+Kurven, und ihr Radius beschreibt dann nichts Bestimmtes mehr. Dieser
+Prüfstand ist die Messgrundlage für weitere Parameteränderungen an der
+Kurvenerkennung.
+
+Daneben steht eine zweite, unabhängige Messung: `tools/vergleich_hin_rueck.py`
+vergleicht die Kurven einer hin und zurück gefahrenen Strecke gegen sich
+selbst. Jede Kurve wird zweimal durchfahren, mit anderer Richtung, Linie und
+Geschwindigkeit; stimmen die Winkel überein, misst die Erkennung die Straße
+und nicht die Fahrweise. Das braucht keine markierten Referenzintervalle. Die
+Zuordnung läuft über die Kurvenfolge statt über die Position, weil Ereignisse
+ohne GPS-Fix keine Koordinate tragen. Am 02.08.2026 ergab das über acht
+gemeinsame Kurven 1,0 Grad Abweichung im Median.
+
 Neue Schwellwerte gehören mit einem Fall knapp darüber und knapp darunter
 abgesichert. Ein Mutationstest beim Aufbau der Suite zeigte, dass weit von
 der Schwelle entfernte Testfälle eine Parameteränderung nicht bemerken.
@@ -226,8 +259,42 @@ Eigenschaften des Sitzungskopfes.
 
 ## Aktueller Teststand
 
-- Firmware 1.5.28 baut erfolgreich für `lolin_s3_mini`.
-- Letzter Build: 71.052 Byte RAM (21,7 %) und 1.251.998 Byte Flash (95,5 %).
+- Firmware 1.5.34 baut erfolgreich für `lolin_s3_mini`.
+- Letzter Build: 71.036 Byte RAM (21,7 %) und 1.219.190 Byte Flash (93,0 %).
+- Am 31.07.2026 liefen fünf Beifahrer-Referenzfahrten mit 1.5.28 und je zwölf
+  markierten Referenzintervallen. Sie sind der Prüfstand der Kurvenerkennung.
+- 1.5.29 ist am Fahrzeug bestätigt: vier Fahrten am 01.08.2026 über 21 Minuten
+  und 9,1 km, Zeitabdeckung der Ereignisse 97 % im Median gegenüber 67 % mit
+  1.5.28, nur 1 von 66 Ereignissen unter 60 %, keine Ausreißer über die
+  Höchstdauer, kein Ereignis im Stand. Der Abgleich der Wiedergabe gegen die
+  Firmwareereignisse ordnete 65 von 66 zu, drei der vier Fahrten
+  ereignisgenau bei 0,0 bis 0,1 Grad.
+- 1.5.34 ist am Fahrzeug bestätigt: drei Fahrten am 02.08.2026, alle
+  Sitzungen vollständig, kein SD-Abbruch, keine Integritätsdatei, Wiedergabe
+  33 zu 33 bei 0,1 Grad. Der Abschlussgrund `SESSION_END` ist dreimal belegt.
+  Die vollständige Auswertung steht in
+  `testdata/AUSWERTUNG_2026-08-02_1.5.34.md`.
+- Die Hauptfahrt vom 02.08.2026 lief hin und zurück über dieselbe Strecke und
+  belegt die Reproduzierbarkeit der Kurvenerkennung: acht gemeinsame Kurven,
+  in beiden Richtungen erkannt, 1,0 Grad Winkelabweichung im Median und 3,4
+  Grad im Maximum. Diese Messung braucht keine markierten Referenzintervalle
+  und ist mit `tools/vergleich_hin_rueck.py` jederzeit zu wiederholen.
+- In allen drei Fahrten vom 02.08.2026 hatte GPS keinen Fix: 1.887 Zeilen mit
+  exakt null Satelliten, am Vortag dagegen 12 bei HDOP 0,68. Später am selben
+  Tag kam der Empfang ohne Eingriff von selbst zurück. Die Firmware ist als
+  Ursache ausgeschlossen — sie sendet dem BN-880 nichts, `gps_manager.cpp` ist
+  seit dem 30.07. unverändert, die NMEA-Kette war mit 2.440 gültigen Sätzen
+  und null Prüfsummenfehlern intakt, und die Fix-LED des Moduls blieb dunkel.
+  Null Satelliten über fünf Minuten schließen auch einen Kaltstart aus. Der
+  Verdacht liegt auf einem Wackelkontakt an der aufgelöteten Keramikantenne
+  oder der Versorgung. Vor jeder Fahrt im Stand abwarten, bis `diag`
+  Satelliten meldet, und die Satellitenzahl im Sitzungskopf gegenprüfen.
+- Zwei SD-Abbrüche desselben Tages wurden verlustfrei aufgefangen:
+  `20260731_142359_514EDDF4` mit 38 von 38 geretteten Pufferzeilen nach
+  81 Sekunden Ausfall und `20260731_160032_3D732AD1` mit 17 von 17 nach
+  11 Sekunden. Die Fortsetzung schloss zeitlich lückenlos und ohne Dublette
+  an. Die abgebrochene Sitzung bleibt jedoch ohne END-Record und ohne
+  Zusammenfassung; deren Kennzahlen sind nachträglich zu rekonstruieren.
 - BNO055-Selbsttest, SD-Logging, WLAN, optionales OLED und MCP2515-
   Grundkommunikation wurden am System geprüft.
 - Am Porsche Carrera S, Baujahr 2012, PDK wurden standardisierte Antworten von
@@ -295,10 +362,26 @@ werden nicht gleichzeitig neu parametriert.
   auch nach erfolgreicher Wiedererkennung als abgeschlossener Abnahmeschritt
   erhalten.
 
-Nächster sinnvoller Schritt: 20- bis 30-minütige Überlandfahrt mit 1.5.28 und
-der Beifahrerseite `/curve-test`: eine gerade Referenz, vier weite, vier
-normale beziehungsweise enge und drei S-Kurven. Der vollständige
-ECU-Recovery-Ablauf muss dabei nicht erneut durchgeführt werden.
+Die Beifahrerfahrten dieser Art sind am 31.07.2026 fünfmal gelaufen und
+liegen als Prüfstand in `testdata/` vor. Die Bestätigungsfahrt mit 1.5.29 lief
+am 01.08.2026 in vier Sitzungen und belegte die geschärften Ereignisgrenzen.
+Referenzmarker braucht eine solche Fahrt nicht: Die Schwellwerte sind über die
+Fahrten vom 31.07.2026 bestimmt und im Hosttest festgeschrieben; eine
+Bestätigungsfahrt prüft die Übereinstimmung von Gerät und Wiedergabe, und dafür
+genügt normales Fahren. Der vollständige ECU-Recovery-Ablauf muss dabei nicht
+erneut durchgeführt werden.
+
+Am 02.08.2026 liefen drei Fahrten mit 1.5.34: eine Strecke hin und zurück
+sowie zwei Kreise auf dem Parkplatz. `SESSION_END` ist damit belegt, ebenso
+die Reproduzierbarkeit der Kurvenerkennung über beide Fahrtrichtungen. Von den
+Zielen aus 1.5.30 ist nur der gleichmäßige Fünf-Sekunden-Abstand der
+Statuszeilen erreicht; `LoopMaxMs` blieb bei 251 ms, `SensorMissedSlots` sank
+von 19 auf 12,2 je Minute.
+
+Offen sind der GPS-Fix, der in allen drei Fahrten fehlte, und der
+Flush-Schritt: Mit `FlushMaxMs=101` überschreitet ein einzelner Schritt die
+Slotbreite von 100 ms und kostet je Fünf-Sekunden-Umlauf genau eine
+Sensorstichprobe. Das erklärt die verbliebene Fehlrate vollständig.
 
 ### GPS
 
@@ -334,11 +417,60 @@ Positionssprungbewertung und ereignisorientiertes Logging bleiben offen.
   1.5.28 verwendet dafür die auf die Schwerkraftrichtung projizierte
   Gyroskop-Drehrate, protokolliert vollständige Ereignisintervalle und nutzt
   das relative Heading als gekennzeichneten Rückfall und Qualitätsvergleich.
-  Wirksamkeit und Fehlalarmrate müssen mit der Beifahrerfahrt bestätigt werden.
+  Die fünf Beifahrerfahrten vom 31.07.2026 bestätigten den Gyro-Pfad: kein
+  einziger Heading-Rückfall in 174 Ereignissen, 96 Prozent der markierten
+  Referenzkurven erkannt.
+- 1.5.29 schärft die Ereignisgrenzen. Das Ruhefenster bewertet die
+  Netto-Kursänderung statt einzelner Stichproben, weil die Gierrate unter
+  Fahrt über `CURVE_LONG_MIN_RATE_DPS` hinaus rauscht und Ereignisse dadurch
+  über mehrere Kurven hinweg zusammenliefen. Eine beim Stoppen laufende
+  Kurve wird als `SESSION_END` abgeschlossen statt verworfen, und der
+  Detektor wird beim Messstart zurückgestellt. Am 01.08.2026 bestätigt,
+  `SESSION_END` selbst am 02.08.2026 dreimal.
+- `DetectionMode` ist kein Merkmal der Kurve, sondern des Erkennungspfads.
+  In den Hin- und Rückfahrten vom 02.08.2026 stand für 4 von 8 gemeinsamen
+  Kurven einmal `SHARP` und einmal `LONG`, bei auf ein Grad gleichem Winkel;
+  entschieden hat die Anfahrgeschwindigkeit. Das Feld nicht als
+  Kurveneigenschaft auswerten und nicht gegen einen Festwert prüfen.
+- Ein Kurvenereignis benötigt zusätzlich mindestens 10 Meter Fahrweg und
+  0,4 m/s² mittlere Querbeschleunigung. Die Geschwindigkeitsfreigabe allein
+  reicht nicht, weil GPS-Drift im Stand bis 8 km/h als gültig ausgewiesen
+  wird. Der Radius ist ausdrücklich kein Kriterium: Ein Bogen mit 500 Meter
+  Radius bei 90 km/h ist eine markierte Referenzkurve, ein Autobahnbogen mit
+  1450 Meter Radius bei 116 km/h nicht; unterscheiden lassen sie sich nur
+  über die Querbeschleunigung.
+- Schwellwerte der Kurvenerkennung nur gegen
+  `test_wiedergabe_referenzfahrten` ändern, nie nach Augenschein. Die
+  Referenzintervalle der Beifahrerseite sind gut, aber nicht fehlerfrei:
+  einzelne Marker sitzen mehrere Sekunden versetzt, und drei markierte
+  Kurven drehen netto weniger als 10 Grad.
 - Ein vorübergehender SD-Ausfall wird in derselben Gerätesitzung automatisch
   durch eine separate Puffer-Recovery-Datei und eine neue, verknüpfte
-  Messsitzung behandelt. Nach Reset oder Spannungsverlust bleibt ein
-  manueller Messstart verbindlich.
+  Messsitzung behandelt. Seit 1.5.30 bekommt die abgebrochene Sitzung
+  zusätzlich ihre Zusammenfassung nachgetragen; das Fortsetzungsereignis
+  führt dazu das Feld `ZusammenfassungNachgetragen`. Nach Reset oder
+  Spannungsverlust bleibt ein manueller Messstart verbindlich, und es
+  entsteht bewusst keine Zusammenfassung: Der Sitzungsmarker überlebt im NVS,
+  die Kennzahlen nicht.
+- Ein erfolgreich gemeldeter Schreibvorgang beweist nicht, dass die Zeile die
+  Karte erreicht hat. In `20260801_114252_B9D1628B` fehlten 68 Prozent der
+  GPS-Spur bei null Fehlerzählern und schlüssiger firmwareseitiger
+  Buchführung. Seit 1.5.31 prüft die Firmware am Sitzungsende jede Logdatei
+  gegen die tatsächliche Größe auf der Karte und legt bei Abweichung
+  `road_integritaet_<Sitzung>.csv` an. Die Prüfung erkennt den Verlust, sie
+  verhindert ihn nicht; die Ursache liegt unterhalb der Firmware und ist noch
+  offen. Der naheliegende Gegentest mit einer zweiten SD-Karte ist
+  zurückgestellt, weil keine Ersatzkarte vorhanden ist. Vorher lohnt keine
+  weitere Ursachensuche in der Firmware: Ihre Buchführung war in diesem Fall
+  nachweislich in sich schlüssig.
+- Bei Auswertungen jeder Sitzung zuerst die Zeilenzahl jeder Datei gegen die
+  Zähler der Metadatendatei stellen. Vollständigkeit nicht aus dem Vorhandensein
+  eines END-Records und einer Zusammenfassung schließen.
+- Der SD-Flush läuft seit 1.5.30 in Einzelschritten. `flushStep()` gehört in
+  die Hauptschleife und sichert je Aufruf höchstens eine Datei; `flush()`
+  sichert alles in einem Zug und bleibt Sitzungsenden vorbehalten. Die
+  Felder `FlushLastMs`, `FlushMaxMs` und `FlushCycles` beziehen sich dadurch
+  auf den einzelnen Schritt statt auf den vollen Durchlauf.
 - Absolute Kurswerte benötigen eine ausreichende Magnetometer- und
   Systemkalibrierung; relative Beschleunigungen bleiben davon weitgehend
   unabhängig.
@@ -348,16 +480,26 @@ Positionssprungbewertung und ereignisorientiertes Logging bleiben offen.
 - Bestehende, fest verdrahtete Pinbelegung beibehalten.
 - Hardwarezugriffe nicht blockierend halten; WLAN, Webseite und OTA müssen
   erreichbar bleiben.
-- OLED und CAN dürfen die allgemeine Bereitschaft nicht blockieren.
+- CAN darf die allgemeine Bereitschaft nicht blockieren.
+- Den OLED-Treiber nicht wieder einführen. Das Display bleibt verbaut und
+  wird angepingt, aber nicht bespielt; die Statusseite und die serielle
+  Ausgabe zeigen dieselben Informationen.
 - SD-Aufzeichnung über die vorhandene nicht blockierende Startlogik öffnen.
 - Die entfernte Web-Downloadfunktion für SD-Dateien nicht wieder einführen;
   sie war auf dem Gerät zu langsam.
 - GPS- oder OBD-Werte nur als gültig ausgeben, wenn ihre Aktualität
   nachweisbar ist; unbekannte Werte nicht als Nullwert ausgeben.
 - Firmwareversion zentral in `src/hardware_config.h` sowie `CHANGELOG.md` und
-  `README.md` gemeinsam aktualisieren; Web, OLED und Bootmeldung verwenden
+  `README.md` gemeinsam aktualisieren; Web und Bootmeldung verwenden
   dieses zentrale Makro. Der Firmwaredateiname wird beim Build automatisch
   daraus erzeugt und darf nicht manuell abweichend benannt werden.
+- `AGENTS.md` und `CLAUDE.md` sind wortgleich und immer gemeinsam zu ändern.
+  Sie richten sich an verschiedene Werkzeuge, beschreiben aber dasselbe
+  Projekt; eine der beiden allein zu pflegen führt dazu, dass ein Werkzeug
+  nach veralteten Regeln arbeitet. Bis zum 02.08.2026 stand `AGENTS.md` sechs
+  Versionen zurück und nannte noch den ausgebauten OLED-Treiber sowie die
+  entfernte Beifahrerseite. Nach einer Änderung prüfen:
+  `diff AGENTS.md CLAUDE.md` muss leer bleiben.
 - Rohmessungen, Fotos, `.sal`-Dateien, `.codex/`, `.claude/` und temporäre
   Dateien nur auf ausdrückliche Anforderung committen.
 - Bestehende Nutzeränderungen im Arbeitsbaum nicht verwerfen oder

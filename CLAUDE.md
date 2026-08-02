@@ -493,6 +493,13 @@ Positionssprungbewertung und ereignisorientiertes Logging bleiben offen.
   `README.md` gemeinsam aktualisieren; Web und Bootmeldung verwenden
   dieses zentrale Makro. Der Firmwaredateiname wird beim Build automatisch
   daraus erzeugt und darf nicht manuell abweichend benannt werden.
+- `AGENTS.md` und `CLAUDE.md` sind wortgleich und immer gemeinsam zu ändern.
+  Sie richten sich an verschiedene Werkzeuge, beschreiben aber dasselbe
+  Projekt; eine der beiden allein zu pflegen führt dazu, dass ein Werkzeug
+  nach veralteten Regeln arbeitet. Bis zum 02.08.2026 stand `AGENTS.md` sechs
+  Versionen zurück und nannte noch den ausgebauten OLED-Treiber sowie die
+  entfernte Beifahrerseite. Nach einer Änderung prüfen:
+  `diff AGENTS.md CLAUDE.md` muss leer bleiben.
 - Rohmessungen, Fotos, `.sal`-Dateien, `.codex/`, `.claude/` und temporäre
   Dateien nur auf ausdrückliche Anforderung committen.
 - Bestehende Nutzeränderungen im Arbeitsbaum nicht verwerfen oder
