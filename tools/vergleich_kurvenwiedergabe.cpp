@@ -23,7 +23,8 @@
 // gegen die Aufzeichnungen vom 31.07.2026 lautet das Ergebnis 174 zu 174
 // Ereignissen, 0,1 Grad mittlere Winkelabweichung und 7 bis 21 Millisekunden
 // Startversatz in den Fahrten mit belastbarer Zeitbasis. So sieht ein
-// bestandener Abgleich aus.
+// bestandener Abgleich aus. Mit den Quellen von 1.5.34 gegen die drei Fahrten
+// vom 02.08.2026 lautet es 33 zu 33 bei ebenfalls 0,1 Grad.
 //
 // Die Geschwindigkeit wird wie in main.cpp gewaehlt: zuerst OBD, sonst GPS,
 // sonst unbekannt. Nur so misst die Wiedergabe dasselbe System - mit der
@@ -111,8 +112,8 @@ struct Firmwareereignis {
 int main(int argc, char** argv) {
     const std::string basis = argc > 1 ? argv[1] : "testdata/";
     const char* sitzungen[] = {
-        "20260801_114252_B9D1628B", "20260801_115523_058A2486",
-        "20260801_121133_CE143DA9", "20260801_121741_97BE23A1"};
+        "20260802_095708_84FD688D", "20260802_100225_B067E95B",
+        "20260802_100356_CF34940C"};
 
     size_t gesamtFirmware = 0, gesamtWiedergabe = 0, gesamtPaare = 0;
     double winkelAbwSumme = 0;

@@ -680,6 +680,20 @@ Buslast steht in [OPTIMIERUNGEN.md](OPTIMIERUNGEN.md).
   jetzt vor dem Öffnen der Dateien
 - ✅ Keine Endlosmeldungen mehr bei dauerhaft fehlendem OLED
 - ✅ Verwaiste Zähler und Formatargumente entfernt
+- ✅ Am Fahrzeug bestätigt (drei Fahrten am 02.08.2026): alle Sitzungen
+  vollständig, kein SD-Abbruch, keine Integritätsdatei
+- ✅ Abschlussgrund `SESSION_END` dreimal belegt; letzter offener Punkt aus
+  1.5.29 erledigt
+- ✅ Wiedergabe gegen die Firmwareereignisse: 33 zu 33, 0,1 Grad
+- ✅ Kurvenerkennung reproduzierbar: dieselbe Strecke hin und zurück ergibt
+  1,0 Grad Winkelabweichung im Median über acht gemeinsame Kurven
+- ⚠️ `DetectionMode` weicht in 4 von 8 Paaren ab; das Feld beschreibt den
+  Erkennungspfad, nicht die Kurve
+- ⚠️ GPS ohne Fix in allen drei Fahrten; `StreckeKm 0.000`, keine
+  Kartenauswertung möglich. Kurvenerkennung nicht betroffen, Geschwindigkeit
+  kam aus OBD
+- ⚠️ `LoopMaxMs` mit 251 ms nicht gesunken; der Wert stammt aus dem
+  Sitzungsstart, nicht aus dem Flush
 
 ### v1.5.33 - Beifahrer-Kurventest entfernt
 - ✅ Seite `/curve-test` samt Routen und Zustandsverwaltung raus; 13.868 Byte
@@ -705,8 +719,10 @@ Buslast steht in [OPTIMIERUNGEN.md](OPTIMIERUNGEN.md).
   voller Umlauf dauert unverändert fünf Sekunden
 - ✅ Abgebrochene Sitzung bekommt ihre Zusammenfassung nachgetragen, sobald
   die Karte wieder beschreibbar ist
-- ✅ Statuszeilen wieder in gleichmäßigem Fünf-Sekunden-Abstand
-- ⚠️ Wirksamkeit am Gerät noch nicht bestätigt
+- ✅ Statuszeilen wieder in gleichmäßigem Fünf-Sekunden-Abstand; am Gerät mit
+  5,00 bis 5,04 Sekunden bestätigt
+- ⚠️ `SensorMissedSlots` sank nur von 19 auf 12,2 je Minute; ein einzelner
+  Flush-Schritt braucht mit 101 ms weiterhin mehr als eine Slotbreite
 
 ### v1.5.29 - Scharfe Kurvenintervalle und Abschluss beim Messende
 - ✅ Ruhefenster bewertet die Netto-Kursänderung statt einzelner Stichproben;
@@ -726,7 +742,7 @@ Buslast steht in [OPTIMIERUNGEN.md](OPTIMIERUNGEN.md).
   60 Prozent, keine Ausreißer über die Höchstdauer, kein Ereignis im Stand
 - ✅ Wiedergabe gibt die Firmwareläufe wieder: 65 von 66 Ereignissen
   zugeordnet, drei von vier Fahrten ereignisgenau bei 0,0 bis 0,1 Grad
-- ⚠️ Abschlussgrund `SESSION_END` am Gerät noch nicht beobachtet
+- ✅ Abschlussgrund `SESSION_END` am 02.08.2026 dreimal am Gerät belegt
 
 ### v1.5.28 - Einbaulagenunabhängige Drehrate und Hosttests
 - ✅ Fahrzeug-Drehrate aus der Projektion des Gyroskopvektors auf die

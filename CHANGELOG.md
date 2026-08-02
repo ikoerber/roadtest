@@ -7,6 +7,60 @@ und dieses Projekt hält sich an [Semantic Versioning](https://semver.org/spec/v
 
 ## [1.5.34] - 2026-08-01
 
+### Am Gerät bestätigt
+
+Drei Fahrten am 02.08.2026: eine Strecke hin und zurück über 304 Sekunden
+sowie zwei Kreise auf dem Parkplatz. Alle drei Sitzungen vollständig, kein
+SD-Abbruch, keine Integritätsdatei. Vollständige Auswertung in
+`testdata/AUSWERTUNG_2026-08-02_1.5.34.md`.
+
+- **`SESSION_END` ist belegt**, dreimal: 356,9 Grad bei 18,7 km/h, 327,2 Grad
+  bei 23,0 km/h und 34,1 Grad bei 36,4 km/h. Die Werte sind in sich stimmig -
+  57,9 Meter Bogenlänge auf 356,9 Grad ergeben 9,3 Meter Radius, und v²/r
+  trifft die protokollierte Querbeschleunigung von 2,89 m/s² genau. Damit ist
+  der letzte offene Punkt aus 1.5.29 erledigt.
+- Abgleich der Wiedergabe gegen die Firmwareereignisse: **33 zu 33**, alle
+  zugeordnet, 0,1 Grad mittlere Winkelabweichung.
+- **Die Kurvenerkennung ist reproduzierbar.** Die Hauptfahrt lief hin und
+  zurück über dieselbe Strecke. Acht gemeinsame Kurven, in beiden Richtungen
+  erkannt, mit korrekt kippendem Vorzeichen: **1,0 Grad Winkelabweichung im
+  Median, 3,4 Grad im Maximum**, relativ 2,0 Prozent. Radius weicht 7 Prozent
+  ab, mittlere Querbeschleunigung 16 Prozent, Geschwindigkeit 6 Prozent. Dass
+  die beiden letzteren stärker streuen, ist erwartet: Sie hängen an der
+  gefahrenen Linie, die Netto-Kursänderung nicht. Diese Messung braucht keine
+  von Hand markierten Referenzintervalle; Werkzeug ist
+  `tools/vergleich_hin_rueck.py`.
+- **`DetectionMode` ist keine Kurveneigenschaft.** In 4 von 8 Paaren steht
+  `SHARP` für die Hin- und `LONG` für die Rückfahrt derselben Kurve, bei auf
+  ein Grad gleichem Winkel. Das Feld beschreibt, welches Tor die Kurve
+  geöffnet hat, und hängt an der Anfahrgeschwindigkeit. Es darf nicht als
+  Kurveneigenschaft ausgewertet oder gegen einen Festwert geprüft werden.
+
+### Nicht bestätigt
+
+- **GPS hatte in keiner der drei Sitzungen einen Fix.** Über alle 1.887
+  GPS-Zeilen gilt `Satellites=0`, `ValidFix=0`, `HDOP=99.99` und
+  `RejectionReason=111`. Der Empfänger arbeitete - 90.364 NMEA-Zeichen, 2.440
+  gültige Sätze, null Prüfsummenfehler -, er sah nur nichts. Folge:
+  `StreckeKm 0.000`, alle Ereignisse ohne Position, keine Kartenauswertung
+  möglich. Die Kurvenerkennung ist davon nicht betroffen, weil die
+  Geschwindigkeit wie vorgesehen aus OBD kam; OBD lief mit 609 Anfragen und
+  609 Antworten fehlerfrei.
+- **Das Ziel von 1.5.30 für `LoopMaxMs` wurde verfehlt**: 251 statt deutlich
+  unter 247 Millisekunden. Der Wert steht aber schon fünf Sekunden nach dem
+  Messstart bei 222 ms, als `SDMaxMs` erst 44 ms beträgt - das ist der
+  Sitzungsstart mit neun geöffneten Dateien, nicht der Flush. Der
+  Dauerbetrieb liegt bei `LoopLastMs=2`.
+- `SensorMissedSlots` sank von 19 auf 12,2 je Minute, wächst aber streng
+  linear mit rund einer je fünf Sekunden - dem Takt eines vollen
+  Flush-Umlaufs. Dazu passt `FlushMaxMs=101` für einen **einzelnen** Schritt:
+  Er überschreitet die Slotbreite von 100 ms und kostet damit zwangsläufig
+  eine Stichprobe. Die Aufteilung aus 1.5.30 hat den 235-ms-Block beseitigt;
+  übrig bleibt die größte Einzeldatei knapp über der Slotbreite.
+- Die Statuszeilen standen in gleichmäßigem Abstand von 5,00 bis 5,04
+  Sekunden mit einem Ausreißer bei 5,22 Sekunden. Dieses Ziel aus 1.5.30 ist
+  erfüllt.
+
 ### Behoben
 - Die Größenprüfung aus 1.5.31 verlor ihre Grundlinie. Die Rückstellung der
   Byte-Zähler stand im gemeinsamen Rumpf hinter `FINALIZE` und lief damit

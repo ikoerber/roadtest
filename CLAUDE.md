@@ -17,6 +17,7 @@ produktionsreif. Bekannte Einschränkungen stehen weiter unten.
 | `pio test -e native` | Hosttests der hardwarefreien Auswertelogik ausführen |
 | `python3 tools/export_geojson.py <Sitzung>` | Messsitzung als Karte für geojson.io exportieren |
 | `c++ -std=gnu++17 -O1 -I src -o /tmp/vergleich tools/vergleich_kurvenwiedergabe.cpp src/curve_detector.cpp` | Wiedergabe gegen die Firmwareereignisse derselben Fahrt prüfen |
+| `python3 tools/vergleich_hin_rueck.py <Sitzung>` | Kurvenerkennung einer hin und zurück gefahrenen Strecke gegen sich selbst prüfen |
 
 Die Web-OTA-Datei entsteht unter:
 
@@ -195,6 +196,15 @@ Kurven, und ihr Radius beschreibt dann nichts Bestimmtes mehr. Dieser
 Prüfstand ist die Messgrundlage für weitere Parameteränderungen an der
 Kurvenerkennung.
 
+Daneben steht eine zweite, unabhängige Messung: `tools/vergleich_hin_rueck.py`
+vergleicht die Kurven einer hin und zurück gefahrenen Strecke gegen sich
+selbst. Jede Kurve wird zweimal durchfahren, mit anderer Richtung, Linie und
+Geschwindigkeit; stimmen die Winkel überein, misst die Erkennung die Straße
+und nicht die Fahrweise. Das braucht keine markierten Referenzintervalle. Die
+Zuordnung läuft über die Kurvenfolge statt über die Position, weil Ereignisse
+ohne GPS-Fix keine Koordinate tragen. Am 02.08.2026 ergab das über acht
+gemeinsame Kurven 1,0 Grad Abweichung im Median.
+
 Neue Schwellwerte gehören mit einem Fall knapp darüber und knapp darunter
 abgesichert. Ein Mutationstest beim Aufbau der Suite zeigte, dass weit von
 der Schwelle entfernte Testfälle eine Parameteränderung nicht bemerken.
@@ -250,11 +260,19 @@ Eigenschaften des Sitzungskopfes.
   Höchstdauer, kein Ereignis im Stand. Der Abgleich der Wiedergabe gegen die
   Firmwareereignisse ordnete 65 von 66 zu, drei der vier Fahrten
   ereignisgenau bei 0,0 bis 0,1 Grad.
-- Offen bleibt der Abschlussgrund `SESSION_END`: Er greift nur, wenn die
-  Aufzeichnung gestoppt wird, während das Fahrzeug über 5 km/h fährt und eine
-  Kurve läuft. Wird vorher angehalten, schließt bereits das
-  Geschwindigkeitsgatter die Kurve als `QUIET` ab. Zum Prüfen einen Kreis bei
-  etwa 15 km/h fahren und im Kreisen stoppen, ohne vorher auszurollen.
+- 1.5.34 ist am Fahrzeug bestätigt: drei Fahrten am 02.08.2026, alle
+  Sitzungen vollständig, kein SD-Abbruch, keine Integritätsdatei, Wiedergabe
+  33 zu 33 bei 0,1 Grad. Der Abschlussgrund `SESSION_END` ist dreimal belegt.
+  Die vollständige Auswertung steht in
+  `testdata/AUSWERTUNG_2026-08-02_1.5.34.md`.
+- Die Hauptfahrt vom 02.08.2026 lief hin und zurück über dieselbe Strecke und
+  belegt die Reproduzierbarkeit der Kurvenerkennung: acht gemeinsame Kurven,
+  in beiden Richtungen erkannt, 1,0 Grad Winkelabweichung im Median und 3,4
+  Grad im Maximum. Diese Messung braucht keine markierten Referenzintervalle
+  und ist mit `tools/vergleich_hin_rueck.py` jederzeit zu wiederholen.
+- In allen drei Fahrten vom 02.08.2026 hatte GPS keinen Fix. Der Empfänger
+  arbeitete, sah aber null Satelliten. Ursache offen; vor der nächsten Fahrt
+  im Stand abwarten, bis `diag` Satelliten meldet.
 - Zwei SD-Abbrüche desselben Tages wurden verlustfrei aufgefangen:
   `20260731_142359_514EDDF4` mit 38 von 38 geretteten Pufferzeilen nach
   81 Sekunden Ausfall und `20260731_160032_3D732AD1` mit 17 von 17 nach
@@ -337,11 +355,17 @@ Bestätigungsfahrt prüft die Übereinstimmung von Gerät und Wiedergabe, und da
 genügt normales Fahren. Der vollständige ECU-Recovery-Ablauf muss dabei nicht
 erneut durchgeführt werden.
 
-Offen ist allein noch eine zweiminütige Parkplatzrunde für `SESSION_END`.
-Dabei lässt sich 1.5.30 gleich mitprüfen: `LoopMaxMs` und
-`SensorMissedSlots` müssen gegenüber 247 ms und 19 je Minute deutlich
-zurückgehen, und die Statuszeilen der Metadatendatei müssen in gleichmäßigem
-Fünf-Sekunden-Abstand stehen.
+Am 02.08.2026 liefen drei Fahrten mit 1.5.34: eine Strecke hin und zurück
+sowie zwei Kreise auf dem Parkplatz. `SESSION_END` ist damit belegt, ebenso
+die Reproduzierbarkeit der Kurvenerkennung über beide Fahrtrichtungen. Von den
+Zielen aus 1.5.30 ist nur der gleichmäßige Fünf-Sekunden-Abstand der
+Statuszeilen erreicht; `LoopMaxMs` blieb bei 251 ms, `SensorMissedSlots` sank
+von 19 auf 12,2 je Minute.
+
+Offen sind der GPS-Fix, der in allen drei Fahrten fehlte, und der
+Flush-Schritt: Mit `FlushMaxMs=101` überschreitet ein einzelner Schritt die
+Slotbreite von 100 ms und kostet je Fünf-Sekunden-Umlauf genau eine
+Sensorstichprobe. Das erklärt die verbliebene Fehlrate vollständig.
 
 ### GPS
 
@@ -385,8 +409,13 @@ Positionssprungbewertung und ereignisorientiertes Logging bleiben offen.
   Fahrt über `CURVE_LONG_MIN_RATE_DPS` hinaus rauscht und Ereignisse dadurch
   über mehrere Kurven hinweg zusammenliefen. Eine beim Stoppen laufende
   Kurve wird als `SESSION_END` abgeschlossen statt verworfen, und der
-  Detektor wird beim Messstart zurückgestellt. Wirksamkeit am Gerät noch
-  nicht bestätigt.
+  Detektor wird beim Messstart zurückgestellt. Am 01.08.2026 bestätigt,
+  `SESSION_END` selbst am 02.08.2026 dreimal.
+- `DetectionMode` ist kein Merkmal der Kurve, sondern des Erkennungspfads.
+  In den Hin- und Rückfahrten vom 02.08.2026 stand für 4 von 8 gemeinsamen
+  Kurven einmal `SHARP` und einmal `LONG`, bei auf ein Grad gleichem Winkel;
+  entschieden hat die Anfahrgeschwindigkeit. Das Feld nicht als
+  Kurveneigenschaft auswerten und nicht gegen einen Festwert prüfen.
 - Ein Kurvenereignis benötigt zusätzlich mindestens 10 Meter Fahrweg und
   0,4 m/s² mittlere Querbeschleunigung. Die Geschwindigkeitsfreigabe allein
   reicht nicht, weil GPS-Drift im Stand bis 8 km/h als gültig ausgewiesen
