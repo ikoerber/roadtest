@@ -582,9 +582,14 @@ bool BNO055Manager::detectPothole(
 bool BNO055Manager::updateRoadSection(
     const SensorData& data, float speedKmh, RoadSection& completed) {
     if (!initialized || !data.verticalAccelValid) return false;
-    return roadMetrics.updateSection(
+    const bool done = roadMetrics.updateSection(
         static_cast<uint32_t>(data.timestamp), data.verticalAccel, speedKmh,
         completed);
+    if (done) {
+        lastSection = completed;
+        lastSectionValid = true;
+    }
+    return done;
 }
 
 

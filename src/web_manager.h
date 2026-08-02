@@ -16,6 +16,7 @@ private:
 
     String buildStatusPage();
     String buildCalibrationPage(const String& message = "");
+    String buildRoadRatingPage();
     String buildUpdatePage();
     String buildUpdateResultPage(bool success);
     bool authenticateOTA();

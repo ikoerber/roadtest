@@ -69,10 +69,37 @@ und dieses Projekt hält sich an [Semantic Versioning](https://semver.org/spec/v
   Frequenz verfälscht, nicht die Gesamtenergie. Die Note beantwortet damit
   "wie gut lässt sich hier fahren", nicht "welcher Belag ist das".
 
+### Hinzugefügt: Beifahrerseite `/fahrbahn`
+- Vier Wertungsstufen von „sehr gut“ bis „schlecht“ und ein Knopf
+  „Belagswechsel hier“. Jeder Druck schreibt ein Ereignis
+  `FAHRBAHN_URTEIL` beziehungsweise `FAHRBAHN_BELAGSWECHSEL`; die Stufe steht
+  zusätzlich in `Schwere`.
+
+  Anlass ist die Natur der Zielgröße: Die Fahrbarkeit ist ein Urteil, keine
+  physikalische Größe. Ob 1,42 m/s² noch zügiges Fahren zulassen, kann keine
+  Messung beantworten. Erst die Wertepaare aus Beifahrerurteil und gemessenem
+  Effektivwert machen aus den beiden Notengrenzen eine Messung statt einer
+  Konvention. Das unterscheidet den Fall von der Kurvenerkennung, deren
+  Referenzmarker nur bestätigten, was ohnehin objektiv vorlag.
+- Die Seite zeigt den **zuletzt abgeschlossenen** Abschnitt mit Note,
+  Effektivwert und Tempo sowie den Weg im laufenden Abschnitt. Bewusst nicht
+  den laufenden Wert: Der abgeschlossene liegt bereits hinter dem Fahrzeug
+  und kann das Urteil über die Strecke unter den Rädern nicht vorwegnehmen.
+- Kein Seitenwechsel beim Drücken, damit ein Funkloch keine Wertung
+  verschluckt; jeder Druck wird einzeln quittiert. Ohne laufende Aufzeichnung
+  antworten die Endpunkte mit 409 statt stillschweigend zu verwerfen.
+- Die Seite ist absichtlich nicht passwortgeschützt - der Beifahrer soll
+  während der Fahrt keine Zugangsdaten eingeben. Sie kann ausschließlich
+  Marker setzen.
+- Kosten: 5.028 Byte Flash, 93,6 statt 93,2 Prozent. Die 2026 in 1.5.33
+  entfernte Seite `/curve-test` brauchte 13.868 Byte; ihr Muster mit Start-
+  und Endmarkern passt hier nicht, weil die Abschnittsgrenzen bereits von der
+  Firmware gesetzt werden.
+
 ### Noch offen
 - Die Grenzen `ROAD_DRIVEABILITY_RMS_GOOD_MPS2` = 0,5 und
   `ROAD_DRIVEABILITY_RMS_BAD_MPS2` = 3,0 stammen aus einer einzigen Fahrt und
-  sind gegen weitere nachzuziehen.
+  sind gegen weitere nachzuziehen. Genau dafür ist `/fahrbahn` gedacht.
 - Der GeoJSON-Export kennt den Ereignistyp `ABSCHNITT` noch nicht.
 - Wirksamkeit am Gerät nicht bestätigt.
 

@@ -260,7 +260,7 @@ Eigenschaften des Sitzungskopfes.
 ## Aktueller Teststand
 
 - Firmware 1.5.35 baut erfolgreich für `lolin_s3_mini`.
-- Letzter Build: 71.084 Byte RAM (21,7 %) und 1.222.078 Byte Flash (93,2 %).
+- Letzter Build: 71.124 Byte RAM (21,7 %) und 1.227.154 Byte Flash (93,6 %).
 - Am 31.07.2026 liefen fünf Beifahrer-Referenzfahrten mit 1.5.28 und je zwölf
   markierten Referenzintervallen. Sie sind der Prüfstand der Kurvenerkennung.
 - 1.5.29 ist am Fahrzeug bestätigt: vier Fahrten am 01.08.2026 über 21 Minuten
@@ -371,6 +371,29 @@ Verbindliche Punkte:
 - Die Notengrenzen `ROAD_DRIVEABILITY_RMS_GOOD_MPS2` und
   `ROAD_DRIVEABILITY_RMS_BAD_MPS2` stammen aus einer einzigen Fahrt und sind
   gegen weitere nachzuziehen.
+
+### Beifahrerseite `/fahrbahn`
+
+Vier Wertungsstufen und ein Knopf für den Belagswechsel. Die Marker heißen
+`FAHRBAHN_URTEIL` mit der Stufe 1 bis 4 in `Schwere` sowie
+`FAHRBAHN_BELAGSWECHSEL`.
+
+Der Zweck ist die Kalibrierung der Notenskala, nicht die Bestätigung der
+Erkennung. Das ist der Unterschied zur früheren Seite `/curve-test`: Ein
+Kurvenwinkel ist objektiv, die Fahrbarkeit ist ein Urteil. Ohne
+Beifahrerurteil bleiben die beiden Notengrenzen Konvention.
+
+Verbindliche Punkte:
+
+- Angezeigt wird der **zuletzt abgeschlossene** Abschnitt, niemals der
+  laufende Wert. Der abgeschlossene liegt hinter dem Fahrzeug und kann das
+  Urteil über die Strecke unter den Rädern nicht vorwegnehmen.
+- Kein Seitenwechsel beim Drücken; jeder Marker wird einzeln quittiert, damit
+  ein Funkloch keine Wertung verschluckt.
+- Die Seite bleibt ohne Passwortschutz, weil der Beifahrer während der Fahrt
+  keine Zugangsdaten eingeben soll. Sie kann ausschließlich Marker setzen.
+- Ohne laufende Aufzeichnung antworten die Endpunkte mit 409, statt Marker
+  stillschweigend zu verwerfen.
 
 ## Bekannte Einschränkungen
 

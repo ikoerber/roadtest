@@ -145,6 +145,8 @@ private:
     // in RoadMetricsAnalyzer und CurveDetector und ist dort ohne Hardware
     // testbar; dieser Manager reicht nur noch die Sensorwerte durch.
     RoadMetricsAnalyzer roadMetrics;
+    RoadSection lastSection{};
+    bool lastSectionValid = false;
     CurveDetector curveDetector;
 
 public:
@@ -239,6 +241,16 @@ public:
     // dem Aufruf, in dem ein Abschnitt abgeschlossen wird.
     bool updateRoadSection(
         const SensorData& data, float speedKmh, RoadSection& completed);
+
+    // Zuletzt abgeschlossener Abschnitt, für die Anzeige auf der
+    // Beifahrerseite. Bewusst der abgeschlossene und nicht der laufende
+    // Wert: Er liegt bereits hinter dem Fahrzeug und kann das Urteil über
+    // die Strecke unter den Rädern nicht mehr vorwegnehmen.
+    bool hasLastRoadSection() const { return lastSectionValid; }
+    const RoadSection& getLastRoadSection() const { return lastSection; }
+    float getOpenSectionDistanceM() {
+        return roadMetrics.openSectionDistanceM();
+    }
 
     // Status und Diagnose
     void printSystemStatus();
