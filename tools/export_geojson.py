@@ -84,6 +84,26 @@ KURVEN_FARBEN = [
     (0.0, "#a50026", "sehr eng"),
 ]
 
+# Fahrbarkeit je Streckenabschnitt. Die Grenzen folgen der Notenskala aus
+# hardware_config.h: Note 50 liegt auf der Schwelle, an der die Beifahrer der
+# Fahrt vom 02.08.2026 von "geht noch" auf "geht nicht mehr" umschwenkten.
+FAHRBARKEIT_FARBEN = [
+    (75.0, "#1a9850", "zuegig fahrbar"),
+    (50.0, "#a6d96a", "gut fahrbar"),
+    (25.0, "#fdae61", "maessig"),
+    (0.0, "#d73027", "nicht mehr zuegig"),
+]
+
+# Beifahrerurteile. Vier Stufen, absichtlich andere Farbtöne als die
+# gemessene Fahrbarkeit: Auf der Karte muss unterscheidbar bleiben, was
+# gemessen und was geurteilt wurde.
+URTEIL_STUFEN = {
+    1: ("#08519c", "SEHR_GUT"),
+    2: ("#4292c6", "GUT"),
+    3: ("#9e3ea1", "MAESSIG"),
+    4: ("#67000d", "SCHLECHT"),
+}
+
 REFERENZ_FARBEN = {
     "STRAIGHT": "#6a51a3",
     "LEFT_WIDE": "#2171b5",
@@ -364,16 +384,29 @@ def kurven_zeitversatz(ereignisse):
     auseinander, und kein einziger GPS-Punkt fällt in ein Kurvenintervall.
 
     Ein Referenzmarker der Beifahrerseite wird ohne Verzögerung geschrieben
-    und liefert den Versatz exakt. Sonst bleibt der Rückschluss aus den
-    Kurvenereignissen: EndUptimeMs minus UptimeMs ergibt den Versatz
-    abzüglich des Schreibverzugs, und der hängt vom Abschlussgrund ab. Das
-    Maximum trifft ihn deshalb am besten.
+    und liefert den Versatz exakt. Ebenso ein Abschnittsereignis ab Schema
+    1.5.35: Es entsteht im selben Schleifendurchlauf, in dem der Abschnitt
+    seine Länge erreicht, und kennt daher keinen Schreibverzug.
+
+    Sonst bleibt der Rückschluss aus den Kurvenereignissen: EndUptimeMs minus
+    UptimeMs ergibt den Versatz abzüglich des Schreibverzugs, und der hängt
+    vom Abschlussgrund ab. Nach QUIET vergeht das volle Ruhefenster von zwei
+    Sekunden, nach REVERSAL fast nichts. Das Maximum trifft ihn deshalb am
+    besten.
     """
     for zeile in ereignisse:
         if zeile.get("Ereignis") != "CURVE_REFERENCE_END":
             continue
         werte = beschreibung_zerlegen(zeile.get("Beschreibung", ""))
         ende = als_ganzzahl(werte.get("EndMs"))
+        zeit = als_ganzzahl(zeile.get("UptimeMs"))
+        if ende is not None and zeit is not None:
+            return ende - zeit
+
+    for zeile in ereignisse:
+        if zeile.get("Ereignis") != "ABSCHNITT":
+            continue
+        ende = als_ganzzahl(zeile.get("EndUptimeMs"))
         zeit = als_ganzzahl(zeile.get("UptimeMs"))
         if ende is not None and zeit is not None:
             return ende - zeit
@@ -480,6 +513,204 @@ def ebene_kurven(ereignisse, punkte, position):
                 "type": "Feature",
                 "geometry": {"type": "Point", "coordinates": koordinate},
                 "properties": eigenschaften,
+            }
+        )
+    return features
+
+
+def notengrenzen() -> tuple[float, float]:
+    """Liest die Notengrenzen aus src/hardware_config.h.
+
+    Die Firmware schreibt die fertig berechnete Note in die Logdatei. Wird
+    die Skala nachkalibriert, tragen ältere Aufzeichnungen weiterhin die
+    Noten ihrer Aufzeichnungsversion und wären untereinander nicht
+    vergleichbar. Der Export rechnet die Note deshalb aus dem gespeicherten
+    Effektivwert neu: Der Effektivwert ist die Messung, die Note die
+    Auslegung.
+
+    Gelesen statt dupliziert, damit Skript und Firmware nicht auseinander
+    laufen. Fehlt der Header, gilt die Auslegung von 1.5.36.
+    """
+    pfad = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "src",
+        "hardware_config.h",
+    )
+    werte = {}
+    try:
+        with open(pfad, encoding="utf-8") as datei:
+            for zeile in datei:
+                treffer = re.match(
+                    r"\s*#define\s+(ROAD_DRIVEABILITY_RMS_\w+)\s+([\d.]+)f?",
+                    zeile,
+                )
+                if treffer:
+                    werte[treffer.group(1)] = float(treffer.group(2))
+    except OSError:
+        pass
+    return (
+        werte.get("ROAD_DRIVEABILITY_RMS_GOOD_MPS2", 0.55),
+        werte.get("ROAD_DRIVEABILITY_RMS_BAD_MPS2", 1.60),
+    )
+
+
+def note_aus_effektivwert(rms, grenzen):
+    if rms is None:
+        return None
+    gut, schlecht = grenzen
+    if rms <= gut:
+        return 100.0
+    if rms >= schlecht:
+        return 0.0
+    return 100.0 * (schlecht - rms) / (schlecht - gut)
+
+
+def fahrbarkeit_farbe(note):
+    if note is None:
+        return FARBE_UNBEKANNT, "unbekannt"
+    for schwelle, farbe, name in FAHRBARKEIT_FARBEN:
+        if note >= schwelle:
+            return farbe, name
+    return FARBE_UNBEKANNT, "unbekannt"
+
+
+def ebene_abschnitte(ereignisse, punkte, position):
+    """Fahrbarkeit je Streckenabschnitt als eingefärbte Linie.
+
+    Ein Abschnitt umfasst rund 200 Meter Fahrweg und beantwortet die Frage,
+    ob sich dort zügig fahren lässt. Er wird über sein Zeitintervall aus der
+    GPS-Spur gezeichnet, genau wie ein Kurvenbogen.
+    """
+    features = []
+    versatz = kurven_zeitversatz(ereignisse)
+    grenzen = notengrenzen()
+    for zeile in ereignisse:
+        if zeile.get("Ereignis") != "ABSCHNITT":
+            continue
+        werte = beschreibung_zerlegen(zeile.get("Beschreibung", ""))
+        zeit = als_ganzzahl(zeile.get("UptimeMs"))
+        start = als_ganzzahl(zeile.get("StartUptimeMs"))
+        ende = als_ganzzahl(zeile.get("EndUptimeMs"))
+        effektivwert = als_zahl(werte.get("RMS")) or als_zahl(
+            zeile.get("MeanYawRateDps")
+        )
+        # Aus dem Effektivwert neu berechnet, damit Aufzeichnungen
+        # verschiedener Firmwarestände dieselbe Skala verwenden.
+        note = note_aus_effektivwert(effektivwert, grenzen)
+        note_geraet = als_zahl(zeile.get("Schwere")) or als_zahl(
+            werte.get("Note")
+        )
+        farbe, klasse = fahrbarkeit_farbe(note)
+
+        eigenschaften = {
+            "ebene": "fahrbarkeit",
+            "klasse": klasse,
+            "note": round(note, 1) if note is not None else None,
+            "noteAufzeichnung": note_geraet,
+            "abschnitt": als_ganzzahl(werte.get("Abschnitt")),
+            "effektivwertMps2": effektivwert,
+            "groessterStossMps2": als_zahl(zeile.get("MaxYawRateDps")),
+            "stoesse": als_ganzzahl(werte.get("Stoesse")),
+            "wegM": als_zahl(zeile.get("DistanceM")),
+            "mittlereGeschwindigkeitKmh": als_zahl(zeile.get("MeanSpeedKmh")),
+            "maxGeschwindigkeitKmh": als_zahl(zeile.get("MaxSpeedKmh")),
+            "stichproben": als_ganzzahl(zeile.get("Samples")),
+            "utc": zeile.get("UTC"),
+            "uptimeMs": zeit,
+        }
+
+        linie = None
+        if start is not None and ende is not None and ende > start and versatz is not None:
+            von = start - versatz
+            bis = ende - versatz
+            eigenschaften["vonUptimeMs"] = von
+            eigenschaften["bisUptimeMs"] = bis
+            linie = [[lon, lat] for t, lon, lat, _ in punkte if von <= t <= bis]
+        if linie and len(linie) >= 2:
+            eigenschaften.update(
+                {"stroke": farbe, "stroke-width": 9, "stroke-opacity": 0.85}
+            )
+            features.append(
+                {
+                    "type": "Feature",
+                    "geometry": {"type": "LineString", "coordinates": linie},
+                    "properties": eigenschaften,
+                }
+            )
+            continue
+
+        koordinate = position_fuer(zeile, position, zeit)
+        if koordinate is None:
+            continue
+        eigenschaften.update(
+            {
+                "marker-color": farbe,
+                "marker-size": "small",
+                "marker-symbol": "square",
+                "hinweis": "Keine GPS-Punkte im Abschnittsintervall",
+            }
+        )
+        features.append(
+            {
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": koordinate},
+                "properties": eigenschaften,
+            }
+        )
+    return features
+
+
+def ebene_beifahrerurteile(ereignisse, position):
+    """Urteile und Belagswechsel des Beifahrers.
+
+    Ein Urteil gilt ausdrücklich für seinen Abschnitt und nicht bis zum
+    nächsten Marker; wer eine Weile aussetzt, hinterlässt eine Lücke. Die
+    Punkte werden deshalb einzeln gezeichnet und nicht zu Strecken verbunden.
+    """
+    features = []
+    for zeile in ereignisse:
+        art = zeile.get("Ereignis")
+        if art not in ("FAHRBAHN_URTEIL", "FAHRBAHN_BELAGSWECHSEL"):
+            continue
+        werte = beschreibung_zerlegen(zeile.get("Beschreibung", ""))
+        zeit = als_ganzzahl(zeile.get("UptimeMs"))
+        koordinate = position_fuer(zeile, position, zeit)
+        if koordinate is None:
+            continue
+
+        gemeinsam = {
+            "utc": zeile.get("UTC"),
+            "uptimeMs": zeit,
+            "abschnitt": als_ganzzahl(werte.get("Abschnitt")),
+            "abschnittWegM": als_zahl(werte.get("AbschnittWegM")),
+        }
+        if art == "FAHRBAHN_URTEIL":
+            stufe = als_ganzzahl(werte.get("Stufe"))
+            farbe, name = URTEIL_STUFEN.get(stufe, (FARBE_UNBEKANNT, "unbekannt"))
+            gemeinsam.update(
+                {
+                    "ebene": "beifahrerurteil",
+                    "stufe": stufe,
+                    "wertung": werte.get("Wertung") or name,
+                    "marker-color": farbe,
+                    "marker-size": "medium",
+                    "marker-symbol": str(stufe) if stufe else "circle",
+                }
+            )
+        else:
+            gemeinsam.update(
+                {
+                    "ebene": "belagswechsel",
+                    "marker-color": "#000000",
+                    "marker-size": "medium",
+                    "marker-symbol": "roadblock",
+                }
+            )
+        features.append(
+            {
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": koordinate},
+                "properties": gemeinsam,
             }
         )
     return features
@@ -659,8 +890,12 @@ def exportieren(verzeichnis: str, modus: str) -> dict:
     features = []
     features += ebene_strecke(punkte, qualitaet, gps_speed, obd_speed, modus)
     features += ebene_referenzen(ereignisse, punkte)
+    # Die Abschnitte liegen vor den Kurven, damit deren schmalere Bögen
+    # darüber sichtbar bleiben.
+    features += ebene_abschnitte(ereignisse, punkte, position)
     features += ebene_kurven(ereignisse, punkte, position)
     features += ebene_schlagloecher(ereignisse, position)
+    features += ebene_beifahrerurteile(ereignisse, position)
     features += ebene_sitzungskopf(
         verzeichnis, meta, summary, punkte, gps_zeilen
     )

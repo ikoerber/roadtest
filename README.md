@@ -682,6 +682,10 @@ Buslast steht in [OPTIMIERUNGEN.md](OPTIMIERUNGEN.md).
 - ✅ Stufen erhalten jetzt die Noten 89 / 72 / 22 / 28 statt 93 / 86 / 65 / 68
 - ✅ 1.5.35 am Fahrzeug bestätigt: 1 h 50 min, 81,3 km, alle Dateien
   vollständig, keine Fehler, 402 Abschnitte
+- ✅ GeoJSON-Export zeigt Fahrbarkeit als eingefärbte Strecke sowie
+  Beifahrerurteile und Belagswechsel als Marker
+- ✅ Note wird beim Export aus dem Effektivwert neu berechnet, damit
+  Aufzeichnungen verschiedener Firmwarestände dieselbe Skala verwenden
 - ⚠️ Stufe 4 mit nur 4 Abschnitten unterbelegt und nicht von Stufe 3 getrennt:
   auf sehr schlechter Straße wird so langsam gefahren, dass die Anregung sinkt
 

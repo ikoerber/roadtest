@@ -238,12 +238,30 @@ python3 tools/export_geojson.py testdata/20260730_095603_A41A2450 --modus geschw
 ```
 
 Ebenen: Strecke nach Straßenqualität oder nach der Abweichung zwischen GPS-
-und OBD-Geschwindigkeit eingefärbt, Schlaglöcher als Marker nach Schwere,
-Kurven als tatsächlicher Bogen (ab Schema 1.5.28 mit Anfangs- und Endzeit,
-sonst als Punkt), Referenzintervalle des Beifahrer-Kurventests sowie ein
-Sitzungskopf mit Firmware, Kennzahlen und Laufzeitdiagnose.
+und OBD-Geschwindigkeit eingefärbt, Fahrbarkeit je Streckenabschnitt als
+breite eingefärbte Linie (ab Schema 1.5.35), Schlaglöcher als Marker nach
+Schwere, Kurven als tatsächlicher Bogen (ab Schema 1.5.28 mit Anfangs- und
+Endzeit, sonst als Punkt), Beifahrerurteile und Belagswechsel als Marker,
+Referenzintervalle des Beifahrer-Kurventests sowie ein Sitzungskopf mit
+Firmware, Kennzahlen und Laufzeitdiagnose.
 
 Verbindliche Regeln der Auswertung:
+
+- **Die Fahrbarkeitsnote wird beim Export aus dem Effektivwert neu
+  berechnet**, nicht aus der Logdatei übernommen. Der Effektivwert ist die
+  Messung, die Note die Auslegung. Die Firmware schreibt die Note ihres
+  eigenen Standes ins Log; nach einer Nachkalibrierung wären Aufzeichnungen
+  verschiedener Versionen sonst nicht vergleichbar. Die Fahrt vom 02.08.2026
+  trägt Noten der Skala von 1.5.35 und verteilte sich damit auf 181 zu 68 zu
+  10 zu 0 Abschnitte je Klasse - die Karte wäre fast einfarbig gewesen. Mit
+  der Skala von 1.5.36 sind es 84 zu 88 zu 45 zu 42. Der aufgezeichnete Wert
+  bleibt als `noteAufzeichnung` erhalten.
+- `tools/export_geojson.py` liest die Notengrenzen aus
+  `src/hardware_config.h`, statt sie zu duplizieren. Diese Kopplung nicht
+  auflösen.
+- Beifahrerurteile werden als Einzelpunkte gezeichnet und nie zu Strecken
+  verbunden: Ein Urteil gilt für seinen Abschnitt, nicht bis zum nächsten
+  Marker.
 
 - Nur nachgewiesen gültige Positionen werden verwendet.
 - Über eine Qualitäts- oder Zeitlücke hinweg wird keine Linie gezogen.

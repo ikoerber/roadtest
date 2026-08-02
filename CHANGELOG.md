@@ -29,6 +29,29 @@ und dieses Projekt hält sich an [Semantic Versioning](https://semver.org/spec/v
   erreicht eine Rangkorrelation von 0,73 zur Wertungsstufe, die beste
   normierte Form 0,74; das rechtfertigt keine zusätzliche Rechnung.
 
+### Hinzugefügt: Fahrbarkeit auf der Karte
+- `tools/export_geojson.py` kennt die Ereignisse `ABSCHNITT`,
+  `FAHRBAHN_URTEIL` und `FAHRBAHN_BELAGSWECHSEL`. Abschnitte erscheinen als
+  breite eingefärbte Linie entlang der tatsächlich gefahrenen Spur, Urteile
+  und Belagswechsel als Marker. Die Urteilsfarben sind bewusst andere
+  Farbtöne als die der gemessenen Fahrbarkeit, damit auf der Karte
+  unterscheidbar bleibt, was gemessen und was geurteilt wurde.
+- **Die Note wird beim Export aus dem Effektivwert neu berechnet.** Die
+  Firmware schreibt die Note ihres eigenen Standes ins Log; ohne
+  Neuberechnung wären Aufzeichnungen vor und nach einer Nachkalibrierung
+  nicht vergleichbar. Die Fahrt vom 02.08.2026 verteilte sich mit ihren
+  aufgezeichneten Noten auf 181 zu 68 zu 10 zu 0 Abschnitte je Klasse, die
+  Karte wäre also fast einfarbig gewesen; mit der Skala von 1.5.36 sind es
+  84 zu 88 zu 45 zu 42. Der aufgezeichnete Wert bleibt als
+  `noteAufzeichnung` erhalten. Die Grenzen liest das Skript aus
+  `src/hardware_config.h`, statt sie zu duplizieren.
+- Der Zeitversatz zwischen Geräte- und Sitzungszeit wird bevorzugt aus einem
+  Abschnittsereignis bestimmt. Es entsteht im selben Schleifendurchlauf, in
+  dem der Abschnitt seine Länge erreicht, und kennt daher keinen
+  Schreibverzug - anders als ein Kurvenereignis, das erst nach bis zu zwei
+  Sekunden Ruhefenster geschrieben wird. Das verbessert nebenbei die Lage der
+  Kurvenbögen.
+
 ### Bekannte Grenze
 - **Stufe 4 hat keinen höheren Effektivwert als Stufe 3** (1,316 gegen
   1,373). Das mittlere Tempo fällt monoton mit der Wertung, von 78 auf
