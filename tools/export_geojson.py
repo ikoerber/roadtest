@@ -84,14 +84,22 @@ KURVEN_FARBEN = [
     (0.0, "#a50026", "sehr eng"),
 ]
 
-# Fahrbarkeit je Streckenabschnitt. Die Grenzen folgen der Notenskala aus
-# hardware_config.h: Note 50 liegt auf der Schwelle, an der die Beifahrer der
-# Fahrt vom 02.08.2026 von "geht noch" auf "geht nicht mehr" umschwenkten.
+# Fahrbarkeit je Streckenabschnitt.
+#
+# Die Klassen tragen die Namen der Beifahrerstufen und liegen jeweils in der
+# Mitte zwischen deren Notenmedianen aus der Fahrt vom 02.08.2026: Stufe 1
+# erreichte 89, Stufe 2 dann 72, Stufe 3 noch 22. Frei gewählte Grenzen wären
+# irreführend - eine erste Fassung nannte alles unter 25 "nicht mehr zuegig",
+# obwohl der Beifahrer dieselben Abschnitte 20 von 27 Mal mit "maessig"
+# bewertet hatte.
+#
+# Stufe 3 und 4 bleiben zusammengefasst. Sie sind über den Effektivwert nicht
+# trennbar: Auf sehr schlechter Straße wird so langsam gefahren, dass die
+# Anregung wieder sinkt, und Stufe 4 lag im Median unter Stufe 3.
 FAHRBARKEIT_FARBEN = [
-    (75.0, "#1a9850", "zuegig fahrbar"),
-    (50.0, "#a6d96a", "gut fahrbar"),
-    (25.0, "#fdae61", "maessig"),
-    (0.0, "#d73027", "nicht mehr zuegig"),
+    (81.0, "#1a9850", "sehr gut"),
+    (47.0, "#a6d96a", "gut"),
+    (0.0, "#fdae61", "maessig bis schlecht"),
 ]
 
 # Beifahrerurteile. Vier Stufen, absichtlich andere Farbtöne als die

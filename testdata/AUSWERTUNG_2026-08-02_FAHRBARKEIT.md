@@ -124,11 +124,38 @@ Stichproben klein.
 `LoopMaxMs` liegt unverändert bei rund 250 ms und stammt weiterhin aus dem
 Sitzungsstart, nicht aus dem laufenden Betrieb.
 
+## Bandbreite der Fahrt
+
+Der Beifahrer hält fest, dass es an diesem Tag **keinen Belagswechsel und
+keine wirklich schlechten Straßen** gab. Das ordnet die Datenlage ein: Die
+vier Abschnitte der Stufe 4 sind kein Versäumnis beim Bewerten, sondern
+Abbild der gefahrenen Strecke. Ebenso wenig fehlt ein Belagswechselmarker -
+es gab keinen zu setzen.
+
+Daraus folgt für die Kalibrierung:
+
+- Der Bereich von "sehr gut" bis "mäßig" ist mit 115 Urteilen belegt.
+- Der schlechte Bereich ist **extrapoliert**, nicht gemessen. Die untere
+  Grenze `ROAD_DRIVEABILITY_RMS_BAD_MPS2` beruht auf der Trennschwelle
+  zwischen "geht noch" und "geht nicht mehr", nicht auf Urteilen über
+  tatsächlich schlechte Fahrbahn.
+- Um ihn zu belegen, braucht es eine Fahrt über Kopfsteinpflaster, Schotter
+  oder ausgefahrene Nebenstrecken. Mehr Marker auf denselben Straßen helfen
+  nicht.
+
+Der Befund erklärt auch eine irreführende Beschriftung: Die erste Fassung der
+Karte nannte alles unter Note 25 "nicht mehr zügig fahrbar". Von den 42
+betroffenen Abschnitten trugen 27 ein Urteil, davon 20 die Stufe "mäßig" und
+nur 2 die Stufe "schlecht". Die Messung traf also zu, ihre Benennung war
+übertrieben. Die Farbklassen tragen seitdem die Namen der Beifahrerstufen.
+
 ## Offen
 
-1. Stufe 4 ist mit vier Abschnitten unterbelegt.
-2. Der Belagswechsel-Knopf wurde nicht benutzt; die Abschnittsgrenzen sind
-   deshalb noch nicht gegen echte Übergänge geprüft.
+1. Stufe 4 ist mit vier Abschnitten unterbelegt, weil die Fahrt keine
+   wirklich schlechten Straßen enthielt. Eine gezielte Fahrt über schlechten
+   Belag steht aus.
+2. Der Belagswechsel-Knopf ist ungeprüft, weil es an diesem Tag keinen
+   Belagswechsel gab.
 3. Der GeoJSON-Export kennt weder `ABSCHNITT` noch die Beifahrermarker.
 4. Die Notengrenzen stammen aus einer einzigen Fahrt eines Fahrzeugs mit einem
    Beifahrer. Sie sind belegt, aber nicht allgemeingültig.

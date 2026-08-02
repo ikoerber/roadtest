@@ -274,6 +274,13 @@ Verbindliche Regeln der Auswertung:
 - Beifahrerurteile werden als Einzelpunkte gezeichnet und nie zu Strecken
   verbunden: Ein Urteil gilt für seinen Abschnitt, nicht bis zum nächsten
   Marker.
+- **Die Farbklassen der Fahrbarkeit tragen die Namen der Beifahrerstufen**
+  und liegen in der Mitte zwischen deren Notenmedianen. Keine frei gewählten
+  Klassennamen: Eine erste Fassung nannte alles unter Note 25 „nicht mehr
+  zügig“, obwohl der Beifahrer dieselben Abschnitte 20 von 27 Mal mit
+  „mäßig“ bewertet hatte. Die Messung war richtig, die Beschriftung
+  übertrieben. Stufe 3 und 4 bleiben zusammengefasst, weil sie über den
+  Effektivwert nicht trennbar sind.
 
 - Nur nachgewiesen gültige Positionen werden verwendet.
 - Über eine Qualitäts- oder Zeitlücke hinweg wird keine Linie gezogen.

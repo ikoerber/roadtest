@@ -45,6 +45,16 @@ und dieses Projekt hält sich an [Semantic Versioning](https://semver.org/spec/v
   84 zu 88 zu 45 zu 42. Der aufgezeichnete Wert bleibt als
   `noteAufzeichnung` erhalten. Die Grenzen liest das Skript aus
   `src/hardware_config.h`, statt sie zu duplizieren.
+- Die Farbklassen der Fahrbarkeit tragen die Namen der Beifahrerstufen und
+  liegen in der Mitte zwischen deren Notenmedianen: über 81 „sehr gut“, über
+  47 „gut“, darunter „mäßig bis schlecht“. Die erste Fassung nannte alles
+  unter 25 „nicht mehr zügig“ - dieselben Abschnitte hatte der Beifahrer
+  jedoch 20 von 27 Mal mit „mäßig“ bewertet und nur 2 Mal mit „schlecht“.
+  Die Messung war also richtig, ihre Beschriftung übertrieben.
+
+  Stufe 3 und 4 bleiben zusammengefasst, weil sie über den Effektivwert nicht
+  trennbar sind. Über die 52-Kilometer-Fahrt ergibt sich damit 26 Prozent
+  „sehr gut“, 43 Prozent „gut“ und 31 Prozent „mäßig bis schlecht“.
 - Der Export lässt sich auf einzelne Ebenen beschränken. `--ebenen` wählt aus
   `strecke`, `referenz`, `fahrbarkeit`, `kurve`, `schlagloch`,
   `beifahrerurteil`, `belagswechsel` und `sitzung`; `--nur-fahrbarkeit` ist
