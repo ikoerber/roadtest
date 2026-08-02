@@ -2,7 +2,6 @@
 #define CAN_READER_H
 
 #include <Arduino.h>
-#include <SD.h>
 
 #include "hardware_config.h"
 
@@ -119,11 +118,7 @@ private:
 
     bool initialized;
     unsigned long messageCount;
-    unsigned long lastLogTime;
-    String logFileName;
-    File logFile;
-    bool loggingEnabled;
-    
+
     // Pin-Konfiguration
     int csPin;
     int intPin;
@@ -206,12 +201,6 @@ public:
     // Normalmodus mit dem engen 0x7E8..0x7EF-Antwortfilter wiederhergestellt.
     bool configurePassiveCapture();
     bool configureOBDResponseMode();
-    
-    // Logging-Funktionen
-    bool enableLogging(const String& fileName);
-    void disableLogging();
-    bool logMessage(const CANMessage& msg);
-    void flushLog();
     
     // Filter-Funktionen
     void setFilter(long id, long mask = 0x7FF);

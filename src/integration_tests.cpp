@@ -352,8 +352,8 @@ bool IntegrationTests::testHighFrequencyLogging() {
         
         // CAN wenn verfügbar
         if (canReader.available()) {
-            CANMessage canMsg = canReader.getLastMessage();
-            canReader.logMessage(canMsg);
+            // Frame abholen; die Aufzeichnung übernimmt der SDLogger.
+            (void)canReader.getLastMessage();
         }
         
         // Keine Verzögerung - maximale Rate!
@@ -2488,8 +2488,7 @@ bool IntegrationTests::testMemoryLeakDetection() {
         }
         
         if (canReader.available()) {
-            CANMessage msg = canReader.getLastMessage();
-            canReader.logMessage(msg);
+            (void)canReader.getLastMessage();
         }
         
         // Heap-Sampling alle 5 Sekunden

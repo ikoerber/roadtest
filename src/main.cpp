@@ -40,7 +40,6 @@ unsigned long lastSDCheck = 0;
 String currentLogFileName = "";
 String canLogFileName = "";
 File logFile;
-bool canLoggingEnabled = false;
 int totalCANMessages = 0;
 
 // Nicht blockierende Hardware-Überwachung
@@ -330,15 +329,34 @@ bool testSDWithSafePins() {
         }
         
         bool success = false;
-        Serial.print("   Teste SD.begin() mit 400kHz... ");
-        
-        // Mehrere Versuche mit verschiedenen Frequenzen
-        uint32_t frequencies[] = {400000, 1000000, 4000000};
-        const char* freqNames[] = {"400kHz", "1MHz", "4MHz"};
-        
-        for (int f = 0; f < 3; f++) {
-            if (f > 0) Serial.printf("\n   Versuche %s... ", freqNames[f]);
-            
+        uint32_t workingFrequency = 0;
+
+        // Der Betriebstakt steht bewusst an erster Stelle. Zuvor begann die
+        // Abstufung bei 400 kHz und brach beim ersten Erfolg ab - der Test
+        // meldete dann "SD-Karte funktioniert!", ohne SD_SPI_SPEED je geprüft
+        // zu haben. Ein bestandener Test belegte damit nicht, dass die
+        // Aufzeichnung läuft.
+        //
+        // Die langsameren und schnelleren Stufen bleiben als Diagnose
+        // erhalten: Wenn der Betriebstakt scheitert und 400 kHz trägt, ist
+        // das ein Signalreserveproblem und keine defekte Karte.
+        const uint32_t frequencies[] = {SD_SPI_SPEED, 400000, 4000000};
+        const char* freqNames[] = {"Betriebstakt", "400kHz", "4MHz"};
+        const int frequencyCount =
+            sizeof(frequencies) / sizeof(frequencies[0]);
+
+        Serial.printf(
+            "   Teste SD.begin() mit dem Betriebstakt %d Hz... ",
+            SD_SPI_SPEED);
+
+        for (int f = 0; f < frequencyCount; f++) {
+            if (f > 0) {
+                Serial.printf(
+                    "\n   Versuche %s (nur Diagnose, nicht der Betriebstakt)"
+                    "... ",
+                    freqNames[f]);
+            }
+
             if (SD.begin(cs, spiSD, frequencies[f])) {
             uint8_t cardType = SD.cardType();
             if (cardType != CARD_NONE) {
@@ -359,6 +377,7 @@ bool testSDWithSafePins() {
                 }
                 Serial.println();
                 success = true;
+                workingFrequency = frequencies[f];
                 
                 // Kurzer Funktionstest
                 Serial.print("   Test-Datei: ");
@@ -387,7 +406,17 @@ bool testSDWithSafePins() {
         }
         
         if (success) {
-            Serial.println("✓ SD-Karte funktioniert!");
+            if (workingFrequency == SD_SPI_SPEED) {
+                Serial.println("✓ SD-Karte funktioniert mit dem Betriebstakt!");
+            } else {
+                Serial.printf(
+                    "⚠️  SD-Karte antwortet nur mit %lu Hz, nicht mit dem "
+                    "Betriebstakt %d Hz.\n"
+                    "   Die Aufzeichnung wird so nicht zuverlaessig laufen; "
+                    "Signalreserve pruefen.\n",
+                    static_cast<unsigned long>(workingFrequency),
+                    SD_SPI_SPEED);
+            }
             // SD-Karte ordnungsgemäß beenden für spätere Neuinitialisierung
             SD.end();
             spiSD.end();
@@ -1616,10 +1645,6 @@ void loop() {
                           static_cast<unsigned long>(logStats.errorCount),
                           static_cast<unsigned long>(logStats.droppedLogs),
                           webManager.isReady() ? "OK" : "Fehler");
-        }
-        
-        if (canLoggingEnabled) {
-            canReader.flushLog(); // CAN-Log aktualisieren
         }
         
         lastStatusReport = currentTime;

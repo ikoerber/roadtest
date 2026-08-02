@@ -23,8 +23,8 @@ static_assert(!CAN_OBD_POLLING_ENABLED || !CAN_LISTEN_ONLY,
               "Aktive OBD-Abfragen sind im Listen-Only-Modus nicht moeglich");
 
 CANReader::CANReader(int cs, int interrupt)
-    : initialized(false), messageCount(0), lastLogTime(0),
-      loggingEnabled(false), csPin(cs), intPin(interrupt),
+    : initialized(false), messageCount(0),
+      csPin(cs), intPin(interrupt),
       clockFrequency(CAN_CLOCK_16MHZ),
       totalMessages(0), errorCount(0),
       receiveBuffer0OverflowCount(0),
@@ -182,8 +182,7 @@ bool CANReader::restartController(long baudRate, bool passiveMode) {
 
 void CANReader::end() {
     if (!initialized) return;
-    
-    disableLogging();
+
     canController.end();
     initialized = false;
     hasPendingMessage = false;
@@ -250,10 +249,6 @@ bool CANReader::fetchPacket() {
     hasPendingMessage = true;
     messageCount++;
     totalMessages++;
-
-    if (loggingEnabled) {
-        logMessage(pendingMessage);
-    }
 
     return true;
 }
@@ -706,82 +701,6 @@ int CANReader::getAvailableMessages() {
     return fetchPacket() ? 1 : 0;
 }
 
-bool CANReader::enableLogging(const String& fileName) {
-    if (loggingEnabled) {
-        Serial.println("Logging bereits aktiviert");
-        return true;
-    }
-    
-    logFileName = fileName;
-    logFile = SD.open(logFileName, FILE_WRITE);
-    
-    if (!logFile) {
-        Serial.printf("❌ Kann Log-Datei nicht öffnen: %s\n", fileName.c_str());
-        return false;
-    }
-    
-    // CSV-Header schreiben
-    logFile.println("Timestamp,CAN_ID,Extended,RTR,DLC,Data0,Data1,Data2,Data3,Data4,Data5,Data6,Data7,DataHex");
-    logFile.flush();
-    
-    loggingEnabled = true;
-    lastLogTime = millis();
-    
-    Serial.printf("✅ CAN-Logging aktiviert: %s\n", fileName.c_str());
-    return true;
-}
-
-void CANReader::disableLogging() {
-    if (!loggingEnabled) return;
-    
-    if (logFile) {
-        logFile.close();
-    }
-    
-    loggingEnabled = false;
-    Serial.println("CAN-Logging deaktiviert");
-}
-
-bool CANReader::logMessage(const CANMessage& msg) {
-    if (!loggingEnabled || !logFile) return false;
-    
-    // CSV-Format: Timestamp,CAN_ID,Extended,RTR,DLC,Data0-7,DataHex
-    logFile.printf("%lu,0x%lX,%d,%d,%d", 
-                   msg.timestamp, msg.canId, msg.extended, msg.rtr, msg.dlc);
-    
-    // Einzelne Daten-Bytes
-    for (int i = 0; i < 8; i++) {
-        if (i < msg.dlc) {
-            logFile.printf(",%02X", msg.data[i]);
-        } else {
-            logFile.print(",");
-        }
-    }
-    
-    // Hex-String der kompletten Daten
-    logFile.print(",");
-    for (int i = 0; i < msg.dlc; i++) {
-        logFile.printf("%02X", msg.data[i]);
-    }
-    
-    logFile.println();
-    
-    // Regelmäßig flushen (alle 5 Sekunden)
-    if (millis() - lastLogTime > 5000) {
-        logFile.flush();
-        lastLogTime = millis();
-    }
-    
-    return true;
-}
-
-void CANReader::flushLog() {
-    if (loggingEnabled && logFile) {
-        logFile.flush();
-        lastLogTime = millis();
-    }
-}
-
 void CANReader::setFilter(long id, long mask) {
     if (!initialized) {
         Serial.println("CAN-Reader nicht initialisiert für Filter");
@@ -873,20 +792,14 @@ String CANReader::getStatusString() {
         "  Initialisiert: %s\n"
         "  Nachrichten empfangen: %lu\n"
         "  Gesamt-Nachrichten: %lu\n"
-        "  Fehler: %lu\n"
-        "  Logging: %s\n",
+        "  Fehler: %lu\n",
         initialized ? "Ja" : "Nein",
         (unsigned long)messageCount,
         (unsigned long)totalMessages,
-        (unsigned long)errorCount,
-        loggingEnabled ? "Aktiv" : "Inaktiv"
+        (unsigned long)errorCount
     );
-    
-    if (loggingEnabled && written > 0 && written < (int)sizeof(statusBuffer) - 1) {
-        snprintf(statusBuffer + written, sizeof(statusBuffer) - written,
-                 "  Log-Datei: %s\n", logFileName.c_str());
-    }
-    
+    (void)written;
+
     return String(statusBuffer);
 }
 
