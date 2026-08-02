@@ -124,6 +124,30 @@ Stichproben klein.
 `LoopMaxMs` liegt unverändert bei rund 250 ms und stammt weiterhin aus dem
 Sitzungsstart, nicht aus dem laufenden Betrieb.
 
+## Die Anzeige hat das Urteil nicht geankert
+
+Die Beifahrerseite zeigt den zuletzt abgeschlossenen Abschnitt mit Note und
+Effektivwert. Der Verdacht liegt nahe, dass ein Urteil dadurch die angezeigte
+Zahl nachspricht - die Kalibrierung wäre dann zirkulär.
+
+Die Daten widerlegen das. Verglichen wurde jeweils die Rangkorrelation zur
+abgegebenen Wertungsstufe:
+
+| Größe | Spearman |
+|---|---:|
+| angezeigte Note des Vorabschnitts, **sichtbar** | −0,57 |
+| Effektivwert des eigenen Abschnitts, **nicht sichtbar** | **+0,73** |
+
+Wäre das Urteil von der Anzeige gezogen, müsste der sichtbare Wert besser
+vorhersagen als der unsichtbare. Er sagt schlechter vorher. Der Abschnitt,
+in dem der Beifahrer gerade saß und den die Seite noch nicht kannte, erklärt
+das Urteil deutlich besser. Ein Teil der −0,57 geht ohnehin darauf zurück,
+dass benachbarte Streckenabschnitte einander ähneln.
+
+Der Beifahrer hält zudem fest, dass die angezeigten Werte das eigene
+Empfinden gut wiedergaben. Mensch und Messung stimmten also überein, bevor
+die Skala kalibriert wurde.
+
 ## Bandbreite der Fahrt
 
 Der Beifahrer hält fest, dass es an diesem Tag **keinen Belagswechsel und
