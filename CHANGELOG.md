@@ -5,6 +5,30 @@ Alle wichtigen Änderungen am ESP32-S3 Straßenqualitäts-Messsystem werden in d
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt hält sich an [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.40] - 2026-08-03
+
+### Behoben
+- **Der Hardware-Test machte die SD-Karte bis zum Neustart unbrauchbar.**
+  `testSDWithSafePins()` greift roh auf den SPI-Bus zu und schaltet MOSI und
+  SCK zwischenzeitlich auf `INPUT_PULLUP`. Hielt der `SDLogger` die Karte
+  parallel eingebunden, zog ihm das den Bus unter den Füßen weg: CMD0
+  meldete danach `0xFF`, die automatische Wiedererkennung kam nicht mehr
+  durch, und der Test riet zum Prüfen des MISO-Kabels - während die Karte in
+  Wahrheit einwandfrei war und nach einem Neustart sofort wieder lief.
+
+  Der Test gibt die Karte jetzt ausdrücklich frei (`sdLogger.end()`) und
+  bindet sie danach wieder ein, mit sichtbarer Rückmeldung. Eine laufende
+  Messung hat Vorrang: Dann findet der SD-Test gar nicht erst statt, statt
+  sie stillschweigend zu unterbrechen.
+
+  Damit entfällt auch der Doppel-Mount, der zuvor „Test-Datei:
+  Schreibfehler" erzeugte. Die in 1.5.39 dafür eingeführte Sonderbehandlung
+  ist wieder entfernt - ein Schreibfehler an dieser Stelle ist jetzt wieder
+  ein echter Befund.
+
+  Am Gerät bestätigt: CMD0 `0x01` statt `0xFF`, „Test-Datei: OK" statt
+  Schreibfehler, und `SD: bereit` in allen Statuszeilen nach dem Test.
+
 ## [1.5.39] - 2026-08-03
 
 ### Behoben: irreführende Meldungen

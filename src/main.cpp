@@ -153,19 +153,12 @@ void i2cScanner() {
     }
 }
 
-bool testSDWithSafePins() {
-    Serial.println("\n--- SD-Karten Test mit sicheren ESP32-S3 Pins ---");
+bool tryInitializeSDLogger();
 
-    // Vor dem Test festhalten, ob der SDLogger die Karte gerade eingebunden
-    // hat. Der Test bindet sie gleich mit eigenen Parametern neu ein; ein
-    // danach scheiternder Schreibzugriff ist dann eine Folge der doppelten
-    // Einbindung und kein Kartenfehler.
-    const bool loggerHieltKarte = sdLogger.isReady();
-    if (loggerHieltKarte) {
-        Serial.println(
-            "ℹ️ Der SD-Logger hat die Karte eingebunden; der Test bindet sie "
-            "kurzzeitig selbst ein.");
-    }
+// Rohe Prüfung der SPI-Ebene. Erwartet, dass der Aufrufer die Karte zuvor
+// freigegeben hat - siehe testSDWithSafePins() weiter unten.
+static bool testSDPinsRoh() {
+    Serial.println("\n--- SD-Karten Test mit sicheren ESP32-S3 Pins ---");
     
     // Debug: Zeige die konfigurierten Pins aus hardware_config.h
     Serial.println("\nKonfigurierte SD-Pins aus hardware_config.h:");
@@ -382,25 +375,15 @@ bool testSDWithSafePins() {
                 success = true;
                 workingFrequency = frequencies[f];
                 
-                // Kurzer Funktionstest.
-                //
-                // Der Test bindet die Karte mit eigenen Parametern und ohne
-                // Mountpunkt ein, während der SDLogger sie unter "/sd" halten
-                // kann. Dann scheitert das Öffnen an der doppelten
-                // Einbindung und nicht an der Karte. Ohne diesen Hinweis
-                // liest sich die Meldung wie ein Kartendefekt - am
-                // 03.08.2026 auf einer Karte, die zuvor 70 Minuten
-                // fehlerfrei aufgezeichnet hatte.
+                // Kurzer Funktionstest. Der Aufrufer hat die Karte vorher
+                // freigegeben, deshalb ist ein Fehler hier wieder ein echter
+                // Befund und keine Folge doppelter Einbindung.
                 Serial.print("   Test-Datei: ");
                 File testFile = SD.open("/hwtest.txt", FILE_WRITE);
                 if (testFile) {
                     testFile.println("ESP32-S3 HW Test OK");
                     testFile.close();
                     Serial.println("OK");
-                } else if (loggerHieltKarte) {
-                    Serial.println(
-                        "uebersprungen (SD-Logger haelt die Karte bereits; "
-                        "kein Kartenfehler)");
                 } else {
                     Serial.println("Schreibfehler");
                 }
@@ -450,8 +433,51 @@ bool testSDWithSafePins() {
     Serial.println("3. SD-Adapter: Oft sind billige Adapter defekt");
     Serial.println("4. Stromversorgung: Unbedingt 5V verwenden!");
     Serial.println("5. Kabel: Kurz und stabil, Wackelkontakte vermeiden");
-    
+
     return false;
+}
+
+// Der Test greift roh auf den SPI-Bus zu und schaltet MOSI und SCK
+// zwischenzeitlich auf INPUT_PULLUP. Solange der SDLogger die Karte parallel
+// eingebunden hält, zieht ihm das den Bus unter den Füßen weg: Am 03.08.2026
+// meldete CMD0 danach 0xFF, und die automatische Wiedererkennung kam bis zum
+// nächsten Neustart nicht mehr durch. Der Test wies daraufhin auf ein
+// vermeintlich defektes MISO-Kabel hin - die Karte war in Wahrheit
+// einwandfrei und lief nach einem Neustart sofort wieder.
+//
+// Deshalb wird die Karte hier ausdrücklich vorher freigegeben und hinterher
+// wieder eingebunden. Eine laufende Messung hat Vorrang: Dann findet der
+// Test gar nicht erst statt.
+bool testSDWithSafePins() {
+    if (sdLogger.isLogging()) {
+        Serial.println(
+            "\n⚠️ SD-Test übersprungen: Eine Aufzeichnung läuft. Der Test "
+            "würde sie unterbrechen; zuerst 'stop' verwenden.");
+        return false;
+    }
+
+    const bool loggerHatteKarte = sdLogger.isReady();
+    if (loggerHatteKarte) {
+        Serial.println(
+            "\nℹ️ Der SD-Logger gibt die Karte für den Test frei und bindet "
+            "sie danach wieder ein.");
+        sdLogger.end();
+    }
+
+    const bool ergebnis = testSDPinsRoh();
+
+    if (loggerHatteKarte) {
+        Serial.print("\n   Karte wird für den SD-Logger wieder eingebunden: ");
+        if (tryInitializeSDLogger()) {
+            Serial.println("OK");
+        } else {
+            Serial.println(
+                "fehlgeschlagen - die automatische Wiedererkennung versucht "
+                "es weiter, notfalls hilft ein Neustart");
+        }
+    }
+
+    return ergebnis;
 }
 
 void testBNO055() {

@@ -683,6 +683,13 @@ Buslast steht in [OPTIMIERUNGEN.md](OPTIMIERUNGEN.md).
 
 ## 📈 Version History
 
+### v1.5.40 - Hardware-Test gibt die SD-Karte wieder frei
+- ✅ Der Test entzog dem Logger den SPI-Bus; die Karte war danach bis zum
+  Neustart weg und der Test riet fälschlich zum Prüfen des MISO-Kabels
+- ✅ Karte wird jetzt sauber freigegeben und danach wieder eingebunden
+- ✅ Bei laufender Aufzeichnung wird der SD-Test übersprungen statt sie zu
+  unterbrechen
+
 ### v1.5.39 - Irreführende Meldungen behoben, OLED entfernt
 - ✅ „SD-Karte nicht gefunden" nennt jetzt alle drei möglichen Ursachen und
   verweist auf `hardware`, das sie über die CMD0-Antwort trennt
