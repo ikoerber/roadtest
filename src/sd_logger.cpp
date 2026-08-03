@@ -1209,7 +1209,7 @@ bool SDLogger::writeHeader(File& file, LogType type) {
                 "WebLastMs,WebMaxMs,WebTotalMs,WebSamples,WebStalls,"
                 "SDLastMs,SDMaxMs,SDTotalMs,SDSamples,SDStalls,"
                 "FlushLastMs,FlushMaxMs,FlushTotalMs,FlushCycles,"
-                "FlushStalls,"
+                "FlushStalls,FlushMaxStep,"
                 "SensorSamples,SensorMissedSlots,"
                 "GPSSnapshots,GPSMissedSlots";
             break;
@@ -1788,7 +1788,7 @@ bool SDLogger::logSessionMetadata(
         "%lu,%lu,%lu,%lu,%lu,"
         "%lu,%lu,%lu,%lu,%lu,"
         "%lu,%lu,%lu,%lu,%lu,"
-        "%lu,%lu,%lu,%lu,%lu,"
+        "%lu,%lu,%lu,%lu,%lu,%u,"
         "%lu,%lu,%lu,%lu\n",
         record,
         formatUTC().c_str(),
@@ -1865,6 +1865,7 @@ bool SDLogger::logSessionMetadata(
         static_cast<unsigned long>(timing.totalFlushCycleMs),
         static_cast<unsigned long>(timing.flushCycleCount),
         static_cast<unsigned long>(timing.flushCycleStallCount),
+        static_cast<unsigned>(timing.maxFlushCycleStep),
         static_cast<unsigned long>(timing.sensorSampleCount),
         static_cast<unsigned long>(timing.sensorMissedSlots),
         static_cast<unsigned long>(timing.gpsSnapshotCount),
@@ -2332,28 +2333,41 @@ void SDLogger::flushStep() {
         case 1:
             // Der Sensorpuffer zuerst: Er ist die einzige Stelle, an der
             // Messzeilen bei einem Kartenfehler verloren gehen könnten.
-            if (isReady() && flushBuffer() && currentLogFile) {
-                flushFileTimed(currentLogFile);
+            //
+            // Der Dateiflush folgt bewusst erst im nächsten Schritt. Beides
+            // zusammen war der einzige Schritt, der die Slotbreite
+            // überschritt: der Puffer-Write allein bis 79 ms, mit dem Flush
+            // zusammen 111 ms. Getrennt bleibt jeder Teil darunter. Die
+            // Sicherungslücke wächst dadurch nur um ein Schrittintervall -
+            // die Zeilen stehen bereits nach dem Write in der Datei.
+            if (isReady()) {
+                flushBuffer();
             }
             break;
-        case 2: if (roadLogFile) flushFileTimed(roadLogFile); break;
-        case 3: if (gpsLogFile) flushFileTimed(gpsLogFile); break;
-        case 4: if (canLogFile) flushFileTimed(canLogFile); break;
-        case 5: if (obdLogFile) flushFileTimed(obdLogFile); break;
-        case 6: if (obdTraceLogFile) flushFileTimed(obdTraceLogFile); break;
-        case 7: if (metaLogFile) flushFileTimed(metaLogFile); break;
-        case 8: if (eventLogFile) flushFileTimed(eventLogFile); break;
-        case 9: if (correlatedLogFile) flushFileTimed(correlatedLogFile); break;
+        case 2:
+            if (isReady() && currentLogFile) flushFileTimed(currentLogFile);
+            break;
+        case 3: if (roadLogFile) flushFileTimed(roadLogFile); break;
+        case 4: if (gpsLogFile) flushFileTimed(gpsLogFile); break;
+        case 5: if (canLogFile) flushFileTimed(canLogFile); break;
+        case 6: if (obdLogFile) flushFileTimed(obdLogFile); break;
+        case 7: if (obdTraceLogFile) flushFileTimed(obdTraceLogFile); break;
+        case 8: if (metaLogFile) flushFileTimed(metaLogFile); break;
+        case 9: if (eventLogFile) flushFileTimed(eventLogFile); break;
+        case 10: if (correlatedLogFile) flushFileTimed(correlatedLogFile); break;
         default: break;
     }
 
+    const uint8_t ausgefuehrterSchritt = flushCursor;
     if (++flushCursor >= SD_FLUSH_STEP_COUNT) {
         flushCursor = 0;
         lastFlush = millis();
     }
     // Erfasst wird jetzt der einzelne Schritt, nicht mehr der volle Umlauf.
-    // Genau diese Zahl beschreibt die Blockade der Hauptschleife.
-    runtimeDiagnostics.recordFlushCycle(millis() - stepStartedAt);
+    // Genau diese Zahl beschreibt die Blockade der Hauptschleife. Der Index
+    // wird mitgeführt, damit der Höchstwert einem Schritt zuzuordnen ist.
+    runtimeDiagnostics.recordFlushCycle(
+        millis() - stepStartedAt, ausgefuehrterSchritt);
 }
 
 bool SDLogger::rotateLogFile() {

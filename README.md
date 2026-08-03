@@ -683,6 +683,14 @@ Buslast steht in [OPTIMIERUNGEN.md](OPTIMIERUNGEN.md).
 
 ## 📈 Version History
 
+### v1.5.38 - Flush-Schritt unter der Slotbreite
+- ✅ Puffer-Write und Dateiflush der Sensordatei sind getrennte Schritte; der
+  bisher einzige Schritt über 100 ms kostete je Umlauf eine Sensorstichprobe
+- ✅ 11 Schritte à 450 ms halten den vollen Umlauf bei 4,95 s
+- ✅ Neue Metadatenspalte `FlushMaxStep` ordnet `FlushMaxMs` einem Schritt zu
+  (Schema `1.5.38-quality-v12`)
+- ⚠️ Am Gerät noch nicht bestätigt: erwartet werden ~79 statt 111 ms
+
 ### v1.5.37 - Sentinel 0xFF bei den Temperatur-PIDs
 - ✅ 0x46 und 0x5C werten `A = 0xFF` als „Wert nicht verfügbar" statt als
   215 °C; betroffen waren 28 von rund 530 Antworten der Discovery-Sitzungen

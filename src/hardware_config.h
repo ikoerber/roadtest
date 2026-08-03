@@ -7,12 +7,13 @@
 // Zentrale Pin-Konfiguration für das Straßenqualitäts-Messsystem
 // Alle Hardware-spezifischen Pin-Zuordnungen sind hier definiert
 
-#define ROADTEST_FIRMWARE_VERSION "1.5.37"
+#define ROADTEST_FIRMWARE_VERSION "1.5.38"
 #define ROADTEST_FIRMWARE_FILE_NAME \
     "roadtest_" ROADTEST_FIRMWARE_VERSION ".bin"
-// Die Spaltenbelegung bleibt unverändert; hinzu kommt in der Ereignisdatei
-// nur der Ereignistyp ABSCHNITT, der dieselben Spalten belegt.
-#define ROADTEST_CSV_SCHEMA_VERSION "1.5.35-quality-v11"
+// Die Metadatendatei trägt seit 1.5.38 zusätzlich `FlushMaxStep` hinter
+// `FlushStalls`: den Index des Flush-Schritts, der den Höchstwert erzeugt
+// hat. Alle übrigen Spalten bleiben unverändert.
+#define ROADTEST_CSV_SCHEMA_VERSION "1.5.38-quality-v12"
 #define ROADTEST_VEHICLE_PROFILE "Porsche Carrera S 2012 PDK"
 
 // -----------------------------------------------------------------------------
@@ -285,11 +286,23 @@ extern const int GPS_BAUD_RATE;    // 9600    - GPS Baudrate
 #define CAN_CHECK_INTERVAL      10  // CAN-Check Intervall (ms)
 #define STATUS_REPORT_INTERVAL  5000// Status-Report Intervall (ms)
 
-// Aufgeteilter SD-Flush. Zehn Schritte im Abstand von 500 ms ergeben einen
-// vollen Umlauf in fünf Sekunden - dieselbe Sicherungsfrequenz wie zuvor,
+// Aufgeteilter SD-Flush. Elf Schritte im Abstand von 450 ms ergeben einen
+// vollen Umlauf in 4,95 Sekunden - dieselbe Sicherungsfrequenz wie zuvor,
 // aber ohne die gemessenen 235 ms Blockade am Stück.
-#define SD_FLUSH_STEP_INTERVAL_MS            500UL
-#define SD_FLUSH_STEP_COUNT                     10
+//
+// Der elfte Schritt kam mit 1.5.38 hinzu. Bis dahin erledigte ein einziger
+// Schritt sowohl den Puffer-Write als auch den Dateiflush der Sensordatei
+// und war dadurch als einziger teuer: In `20260803_082231_D0606CF2` kostete
+// der mittlere Schritt 19,1 ms über 3.180 Schritte, dieser eine aber 111 ms
+// - ein einzelner SD-Vorgang darin allein 79 ms. Bei 319 Umläufen standen
+// 396 verfehlte Sensorslots, also gut einer je Umlauf. Seitdem sind beide
+// Operationen getrennt.
+//
+// Das Intervall sinkt entsprechend von 500 auf 450 ms, damit der volle
+// Umlauf trotz des zusätzlichen Schritts bei rund fünf Sekunden bleibt und
+// der gleichmäßige Abstand der Statuszeilen erhalten bleibt.
+#define SD_FLUSH_STEP_INTERVAL_MS            450UL
+#define SD_FLUSH_STEP_COUNT                     11
 
 // Buffer-Sicherheit
 #define MAX_LOG_LINE_LENGTH     256 // Maximale Länge einer Log-Zeile

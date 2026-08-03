@@ -44,7 +44,13 @@ void RuntimeDiagnostics::recordSDDuration(uint32_t durationMs) {
         timing.sdDurationCount, timing.sdStallCount);
 }
 
-void RuntimeDiagnostics::recordFlushCycle(uint32_t durationMs) {
+void RuntimeDiagnostics::recordFlushCycle(uint32_t durationMs, uint8_t step) {
+    // Den Schrittindex vor dem Mitschreiben festhalten: record() aktualisiert
+    // das Maximum selbst, danach wäre nicht mehr zu erkennen, ob dieser
+    // Aufruf es gesetzt hat.
+    if (durationMs > timing.maxFlushCycleMs) {
+        timing.maxFlushCycleStep = step;
+    }
     record(
         durationMs, timing.lastFlushCycleMs,
         timing.maxFlushCycleMs, timing.totalFlushCycleMs,

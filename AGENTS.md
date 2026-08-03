@@ -1,7 +1,7 @@
 # ROADTEST Firmware
 
 ESP32-S3-Firmware zur Aufzeichnung von BNO055-, GPS-, Straßenqualitäts- und
-standardisierten OBD-II-Daten. Aktueller Firmwarestand: **1.5.37**.
+standardisierten OBD-II-Daten. Aktueller Firmwarestand: **1.5.38**.
 
 Der aktuelle Stand ist ein Hardware- und Fahrzeugteststand, nicht abschließend
 produktionsreif. Bekannte Einschränkungen stehen weiter unten.
@@ -296,8 +296,8 @@ Eigenschaften des Sitzungskopfes.
 
 ## Aktueller Teststand
 
-- Firmware 1.5.37 baut erfolgreich für `lolin_s3_mini`.
-- Letzter Build: 71.076 Byte RAM (21,7 %) und 1.227.406 Byte Flash (93,6 %).
+- Firmware 1.5.38 baut erfolgreich für `lolin_s3_mini`.
+- Letzter Build: 71.084 Byte RAM (21,7 %) und 1.227.458 Byte Flash (93,6 %).
 - Am 31.07.2026 liefen fünf Beifahrer-Referenzfahrten mit 1.5.28 und je zwölf
   markierten Referenzintervallen. Sie sind der Prüfstand der Kurvenerkennung.
 - 1.5.29 ist am Fahrzeug bestätigt: vier Fahrten am 01.08.2026 über 21 Minuten
@@ -316,9 +316,12 @@ Eigenschaften des Sitzungskopfes.
   in beiden Richtungen erkannt, 1,0 Grad Winkelabweichung im Median und 3,4
   Grad im Maximum. Diese Messung braucht keine markierten Referenzintervalle
   und ist mit `tools/vergleich_hin_rueck.py` jederzeit zu wiederholen.
-- In allen drei Fahrten vom 02.08.2026 hatte GPS keinen Fix: 1.887 Zeilen mit
-  exakt null Satelliten, am Vortag dagegen 12 bei HDOP 0,68. Später am selben
-  Tag kam der Empfang ohne Eingriff von selbst zurück. Die Firmware ist als
+- In den **ersten drei** Fahrten vom 02.08.2026 hatte GPS keinen Fix: 1.887
+  Zeilen mit exakt null Satelliten, am Vortag dagegen 12 bei HDOP 0,68. Ab
+  11:38 Uhr desselben Tages kam der Empfang ohne Eingriff von selbst zurück
+  und ist seitdem stabil: sechs Sitzungen bis zum 03.08.2026 mit 12
+  Satelliten, HDOP-Median 0,74 bis 1,07 und 99,7 bis 100 Prozent Fixquote.
+  Der Fehler ist damit nicht erklärt, sondern nur nicht wieder aufgetreten. Die Firmware ist als
   Ursache ausgeschlossen — sie sendet dem BN-880 nichts, `gps_manager.cpp` ist
   seit dem 30.07. unverändert, die NMEA-Kette war mit 2.440 gültigen Sätzen
   und null Prüfsummenfehlern intakt, und die Fix-LED des Moduls blieb dunkel.
@@ -515,13 +518,35 @@ Am 02.08.2026 liefen drei Fahrten mit 1.5.34: eine Strecke hin und zurück
 sowie zwei Kreise auf dem Parkplatz. `SESSION_END` ist damit belegt, ebenso
 die Reproduzierbarkeit der Kurvenerkennung über beide Fahrtrichtungen. Von den
 Zielen aus 1.5.30 ist nur der gleichmäßige Fünf-Sekunden-Abstand der
-Statuszeilen erreicht; `LoopMaxMs` blieb bei 251 ms, `SensorMissedSlots` sank
-von 19 auf 12,2 je Minute.
+Statuszeilen erreicht; `LoopMaxMs` blieb bei 251 ms.
 
-Offen sind der GPS-Fix, der in allen drei Fahrten fehlte, und der
-Flush-Schritt: Mit `FlushMaxMs=101` überschreitet ein einzelner Schritt die
-Slotbreite von 100 ms und kostet je Fünf-Sekunden-Umlauf genau eine
-Sensorstichprobe. Das erklärt die verbliebene Fehlrate vollständig.
+Offen bleibt der Flush-Schritt. Über die Sitzungen vom 02. und 03.08.2026
+liegt `SensorMissedSlots` bei 13 bis 16 je Minute, also 2,2 bis 2,7 Prozent
+der Stichproben; die früher genannten 12,2 je Minute waren ein Einzelwert und
+keine dauerhafte Verbesserung. `FlushMaxMs` erreicht 95 bis 119 ms und
+überschreitet damit die Slotbreite von 100 ms.
+
+Die Zerlegung aus `20260803_082231_D0606CF2` benennt die Ursache genau: Der
+mittlere Flush-Schritt kostet 19,1 ms über 3.180 Schritte, aber ein einzelner
+SD-Vorgang erreicht 79 ms und ein Flush-Schritt 111 ms. Bei 319 Umläufen
+stehen 396 verfehlte Slots - also gut ein Slot je Umlauf. Genau ein Schritt
+ist teuer, und das war Schritt 1: Er bündelte als einziger den Puffer-Write
+und den Dateiflush der Sensordatei. Die restlichen rund 0,24 Slots je Umlauf
+gehen auf die Schleifenausreißer mit `LoopMaxMs` bis 276 ms; der Flush
+erklärt die Fehlrate also weitgehend, aber nicht vollständig.
+
+**1.5.38 trennt beide Operationen.** Der Puffer-Write bleibt Schritt 1, der
+Dateiflush wird Schritt 2; `SD_FLUSH_STEP_COUNT` steigt auf 11 und das
+Schrittintervall sinkt auf 450 ms, damit der volle Umlauf bei 4,95 s bleibt.
+Erwartet wird eine größte Blockade um 79 statt 111 ms. **Am Gerät ist das
+noch nicht bestätigt** - die nächste Fahrt muss zeigen, ob `FlushMaxMs` unter
+die Slotbreite fällt und `SensorMissedSlots` entsprechend sinkt.
+
+Dafür führt die Metadatendatei seit 1.5.38 die Spalte `FlushMaxStep`: den
+Index des Schritts, der den Höchstwert erzeugt hat. Ohne ihn war `FlushMaxMs`
+nicht zuzuordnen, und die Ursache musste über die Zeitverteilung
+erschlossen werden. Bleibt der Höchstwert über 100 ms, benennt das Feld
+unmittelbar den nächsten Kandidaten.
 
 ### GPS
 

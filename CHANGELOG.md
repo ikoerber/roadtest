@@ -5,6 +5,44 @@ Alle wichtigen Änderungen am ESP32-S3 Straßenqualitäts-Messsystem werden in d
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt hält sich an [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.38] - 2026-08-03
+
+### Geändert
+- **Der teuerste Flush-Schritt ist in zwei Schritte geteilt.** Schritt 1
+  erledigte bislang als einziger zwei teure Operationen: den Puffer-Write
+  der Sensordatei und deren Dateiflush. Er war damit der einzige Schritt
+  oberhalb der 100-ms-Slotbreite und kostete je Umlauf eine Sensorstichprobe.
+
+  Messgrundlage ist `20260803_082231_D0606CF2`: Über 3.180 Schritte lag der
+  Mittelwert bei 19,1 ms, das Maximum aber bei 111 ms, und ein einzelner
+  SD-Vorgang darin erreichte 79 ms. Bei 319 Umläufen standen 396 verfehlte
+  Sensorslots - gut einer je Umlauf. Über die Sitzungen vom 02. und
+  03.08.2026 entspricht das 13 bis 16 verfehlten Slots je Minute oder 2,2
+  bis 2,7 Prozent der Stichproben.
+
+  Der Puffer-Write bleibt Schritt 1, der Dateiflush wird Schritt 2.
+  `SD_FLUSH_STEP_COUNT` steigt auf 11, `SD_FLUSH_STEP_INTERVAL_MS` sinkt auf
+  450 ms; der volle Umlauf bleibt damit bei 4,95 s und der gleichmäßige
+  Abstand der Statuszeilen erhalten. Die Sicherungslücke wächst nur um ein
+  Schrittintervall, weil die Zeilen bereits nach dem Write in der Datei
+  stehen.
+
+  **Am Gerät noch nicht bestätigt.** Erwartet wird eine größte Blockade um
+  79 statt 111 ms; die nächste Fahrt muss zeigen, ob `FlushMaxMs` unter die
+  Slotbreite fällt und `SensorMissedSlots` entsprechend sinkt.
+
+### Hinzugefügt
+- **Die Metadatendatei führt `FlushMaxStep`**, den Index des Flush-Schritts,
+  der den Höchstwert erzeugt hat. Bisher war `FlushMaxMs` keinem Schritt
+  zuzuordnen; welcher Schritt die 111 ms verursachte, musste über die
+  Zeitverteilung erschlossen werden. Bleibt der Höchstwert über 100 ms,
+  benennt das Feld unmittelbar den nächsten Kandidaten.
+
+  Das Schema steigt dadurch auf `1.5.38-quality-v12`. Die Spalte steht hinter
+  `FlushStalls`, alle übrigen bleiben unverändert; `tools/export_geojson.py`
+  zeigt sie als `flushMaxSchritt` im Sitzungskopf und liefert für ältere
+  Sitzungen `null`.
+
 ## [1.5.37] - 2026-08-03
 
 ### Behoben

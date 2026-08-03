@@ -851,6 +851,10 @@ def ebene_sitzungskopf(verzeichnis, meta, summary, punkte, gps_zeilen):
         "sdFehler": wert(ende, "SDErrors"),
         "loopMaxMs": wert(ende, "LoopMaxMs"),
         "flushMaxMs": wert(ende, "FlushMaxMs"),
+        # Ab Schema 1.5.38: welcher Flush-Schritt den Höchstwert erzeugt hat.
+        # Ohne die Zuordnung ist flushMaxMs nicht zu deuten. Ältere Sitzungen
+        # tragen das Feld nicht und liefern hier null.
+        "flushMaxSchritt": wert(ende, "FlushMaxStep"),
         "gpsVerfehlteSlots": wert(ende, "GPSMissedSlots"),
         "sensorVerfehlteSlots": wert(ende, "SensorMissedSlots"),
         "hinweisQuantisierung": QUANTISIERUNG_HINWEIS,

@@ -28,6 +28,11 @@ struct RuntimeTimingDiagnostics {
     uint32_t totalFlushCycleMs = 0;
     uint32_t flushCycleCount = 0;
     uint32_t flushCycleStallCount = 0;
+    // Welcher Schritt des aufgeteilten Durchlaufs den Höchstwert erzeugt hat.
+    // Ohne diese Angabe ist `maxFlushCycleMs` nicht zuzuordnen: Über 3.180
+    // Schritte einer Sitzung lag der Mittelwert bei 19 ms und das Maximum bei
+    // 111 ms, ohne dass aus dem Log hervorging, welcher der Schritte das war.
+    uint8_t maxFlushCycleStep = 0;
     uint32_t sensorSampleCount = 0;
     uint32_t sensorMissedSlots = 0;
     uint32_t gpsSnapshotCount = 0;
@@ -48,7 +53,7 @@ public:
     void recordLoopInterval(uint32_t durationMs);
     void recordWebDuration(uint32_t durationMs);
     void recordSDDuration(uint32_t durationMs);
-    void recordFlushCycle(uint32_t durationMs);
+    void recordFlushCycle(uint32_t durationMs, uint8_t step = 0);
     void recordSensorSchedule(uint32_t elapsedMs, uint32_t intervalMs);
     void recordGPSSchedule(uint32_t elapsedMs, uint32_t intervalMs);
     RuntimeTimingDiagnostics getTiming() const { return timing; }
