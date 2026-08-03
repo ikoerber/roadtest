@@ -5,6 +5,37 @@ Alle wichtigen Änderungen am ESP32-S3 Straßenqualitäts-Messsystem werden in d
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt hält sich an [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.37] - 2026-08-03
+
+### Behoben
+- **Die Temperatur-PIDs 0x46 und 0x5C erkennen den Sentinel 0xFF.** Beide
+  rechnen `A - 40` über ein einzelnes Byte; 0xFF bedeutet dort „Wert derzeit
+  nicht verfügbar“ und ergab umgerechnet 215 °C. Die Firmware verbuchte
+  diesen Wert bis 1.5.36 als gültige Messung mit `AmbientValid = 1`.
+
+  Beleg: In den sieben Discovery-Sitzungen vom 29./30.07.2026 trugen 28 von
+  rund 530 Antworten auf 0x46 genau dieses Byte. In
+  `20260729_170946_05A4DB46` sind das 45 von 2438 als gültig markierten
+  Zeilen, also 1,8 Prozent; die echten Werte lagen dort zwischen 31 und
+  34 °C. Ein Mittelwert über die Außentemperatur wurde dadurch um mehrere
+  Grad zu hoch. Im Rohframe ist der Unterschied unmittelbar sichtbar:
+  `03 41 46 49` sind 33 °C, `03 41 46 FF` waren die 215.
+
+  Die Antwort zählt weiterhin als Antwort - `decoded` bleibt true, damit
+  ECU-Erreichbarkeit, Antwortzähler und Timeoutbuchführung unverändert
+  stimmen. Nur das Gültigkeitsflag bleibt aus, und ohne frischen Zeitstempel
+  altert ein zuvor gemessener Wert über `CAN_OBD_SLOW_VALUE_MAX_AGE_MS`
+  regulär aus.
+
+  Die Prüfung gilt ausdrücklich nur für diese beiden PIDs. Bei
+  Geschwindigkeit (0x0D) und Drosselstellung (0x11) ist 0xFF ein regulärer
+  Wert - 255 km/h beziehungsweise 100 Prozent - und lässt sich nicht von
+  einer Fehlanzeige unterscheiden.
+
+  **Bestandsdaten sind nicht korrigiert.** Wer die Außentemperatur aus
+  Sitzungen bis 1.5.36 auswertet, filtert 215,0 vorher heraus. Kein
+  Auswertewerkzeug im Repository verwendet diese Spalten bisher.
+
 ## [1.5.36] - 2026-08-02
 
 ### Geändert

@@ -1,7 +1,7 @@
 # ROADTEST Firmware
 
 ESP32-S3-Firmware zur Aufzeichnung von BNO055-, GPS-, Straßenqualitäts- und
-standardisierten OBD-II-Daten. Aktueller Firmwarestand: **1.5.36**.
+standardisierten OBD-II-Daten. Aktueller Firmwarestand: **1.5.37**.
 
 Der aktuelle Stand ist ein Hardware- und Fahrzeugteststand, nicht abschließend
 produktionsreif. Bekannte Einschränkungen stehen weiter unten.
@@ -296,8 +296,8 @@ Eigenschaften des Sitzungskopfes.
 
 ## Aktueller Teststand
 
-- Firmware 1.5.36 baut erfolgreich für `lolin_s3_mini`.
-- Letzter Build: 71.124 Byte RAM (21,7 %) und 1.227.598 Byte Flash (93,7 %).
+- Firmware 1.5.37 baut erfolgreich für `lolin_s3_mini`.
+- Letzter Build: 71.076 Byte RAM (21,7 %) und 1.227.406 Byte Flash (93,6 %).
 - Am 31.07.2026 liefen fünf Beifahrer-Referenzfahrten mit 1.5.28 und je zwölf
   markierten Referenzintervallen. Sie sind der Prüfstand der Kurvenerkennung.
 - 1.5.29 ist am Fahrzeug bestätigt: vier Fahrten am 01.08.2026 über 21 Minuten
@@ -469,6 +469,16 @@ Verbindliche Punkte:
 
 ### OBD-Discovery
 
+- **Die Temperatur-PIDs `0x46` und `0x5C` rechnen `A - 40` über ein Byte;
+  `0xFF` bedeutet dort „Wert nicht verfügbar" und nicht 215 °C.** Bis 1.5.36
+  verbuchte die Firmware diesen Sentinel als gültige Messung: 28 von rund
+  530 Antworten auf `0x46` in den Sitzungen vom 29./30.07.2026, allein
+  45 von 2438 gültigen Zeilen in `20260729_170946_05A4DB46`. Die Antwort
+  zählt weiterhin als Antwort, damit ECU-Erreichbarkeit und
+  Timeoutbuchführung stimmen; nur das Gültigkeitsflag bleibt aus. Bei
+  `0x0D` und `0x11` ist `0xFF` dagegen ein regulärer Wert und darf nicht
+  verworfen werden. Bestandsdaten sind nicht korrigiert: Beim Auswerten der
+  Außentemperatur älterer Sitzungen 215,0 herausfiltern.
 - 1.5.25 führt einen eigenen ECU-Zustand und eine begrenzte Wiedererkennung
   nach erfolglosem Scan oder drei aufeinanderfolgenden tatsächlichen
   Anfragefehlern. Eine reine lokale Programmpause löst keinen ECU-Verlust aus.

@@ -22,6 +22,23 @@ static_assert(CAN_OBD_VALUE_MAX_AGE_MS >= CAN_OBD_REQUEST_INTERVAL_MS * 3,
 static_assert(!CAN_OBD_POLLING_ENABLED || !CAN_LISTEN_ONLY,
               "Aktive OBD-Abfragen sind im Listen-Only-Modus nicht moeglich");
 
+namespace {
+// Die Temperatur-PIDs 0x46 und 0x5C rechnen A - 40 über ein einzelnes Byte.
+// 0xFF ist dabei die uebliche Kennung "Wert derzeit nicht verfuegbar" und
+// ergaebe umgerechnet 215 °C - fuer Aussenluft physikalisch unmoeglich.
+//
+// Beleg: In den sieben Discovery-Sitzungen vom 29./30.07.2026 trugen 28 von
+// rund 530 Antworten auf 0x46 genau dieses Byte. Die Firmware verbuchte sie
+// bis 1.5.36 als gueltige Messwerte, in 20260729_170946_05A4DB46 waren das
+// 45 von 2438 als gueltig markierten Zeilen. Ein Mittelwert ueber die
+// Aussentemperatur lag dadurch mehrere Grad zu hoch.
+//
+// Die Grenze gilt nur fuer diese beiden PIDs. Bei Geschwindigkeit (0x0D) und
+// Drosselstellung (0x11) ist 0xFF ein regulaerer Wert und darf nicht
+// verworfen werden.
+constexpr uint8_t OBD_TEMPERATURE_UNAVAILABLE = 0xFF;
+}  // namespace
+
 CANReader::CANReader(int cs, int interrupt)
     : initialized(false), messageCount(0),
       csPin(cs), intPin(interrupt),
@@ -490,16 +507,25 @@ bool CANReader::processOBDResponse(const CANMessage& msg) {
         obdData.throttleUpdatedMs = now;
         decoded = true;
     } else if (pid == 0x46) {
-        obdData.ambientTemperatureC =
-            static_cast<int16_t>(msg.data[3]) - 40.0f;
-        obdData.ambientTemperatureValid = true;
-        obdData.ambientTemperatureUpdatedMs = now;
+        // Die Antwort zählt auch ohne Messwert als Antwort: decoded bleibt
+        // true, damit ECU-Erreichbarkeit und Timeoutbuchführung stimmen. Nur
+        // das Gültigkeitsflag bleibt aus, und ohne frischen Zeitstempel
+        // altert ein zuvor gemessener Wert über die bestehende Altersgrenze
+        // regulär aus.
+        if (msg.data[3] != OBD_TEMPERATURE_UNAVAILABLE) {
+            obdData.ambientTemperatureC =
+                static_cast<int16_t>(msg.data[3]) - 40.0f;
+            obdData.ambientTemperatureValid = true;
+            obdData.ambientTemperatureUpdatedMs = now;
+        }
         decoded = true;
     } else if (pid == 0x5C) {
-        obdData.oilTemperatureC =
-            static_cast<int16_t>(msg.data[3]) - 40.0f;
-        obdData.oilTemperatureValid = true;
-        obdData.oilTemperatureUpdatedMs = now;
+        if (msg.data[3] != OBD_TEMPERATURE_UNAVAILABLE) {
+            obdData.oilTemperatureC =
+                static_cast<int16_t>(msg.data[3]) - 40.0f;
+            obdData.oilTemperatureValid = true;
+            obdData.oilTemperatureUpdatedMs = now;
+        }
         decoded = true;
     } else if (pid == 0x5E && payloadLength >= 4 && msg.dlc >= 5) {
         obdData.fuelRateLitersPerHour =

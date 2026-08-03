@@ -683,6 +683,14 @@ Buslast steht in [OPTIMIERUNGEN.md](OPTIMIERUNGEN.md).
 
 ## 📈 Version History
 
+### v1.5.37 - Sentinel 0xFF bei den Temperatur-PIDs
+- ✅ 0x46 und 0x5C werten `A = 0xFF` als „Wert nicht verfügbar" statt als
+  215 °C; betroffen waren 28 von rund 530 Antworten der Discovery-Sitzungen
+- ✅ Die Antwort zählt weiterhin als Antwort, nur das Gültigkeitsflag bleibt
+  aus - ECU-Erreichbarkeit und Timeoutbuchführung ändern sich nicht
+- ⚠️ Bestandsdaten bis 1.5.36 enthalten den Wert weiterhin; beim Auswerten
+  der Außentemperatur 215,0 herausfiltern
+
 ### v1.5.36 - Fahrbarkeitsnote kalibriert
 - ✅ Notengrenzen gegen 135 Beifahrerurteile auf 119 Abschnitten bestimmt
   (52-km-Fahrt): 0,55 und 1,60 statt geschätzter 0,5 und 3,0
