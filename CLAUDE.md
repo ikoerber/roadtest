@@ -337,9 +337,9 @@ Eigenschaften des Sitzungskopfes.
 - Am Porsche Carrera S, Baujahr 2012, PDK wurden standardisierte Antworten von
   CAN-ID `0x7E8` für Drehzahl, Geschwindigkeit und Drosselstellung empfangen.
 - Der ausführliche Fahrzeugtest steht in
-  `testdata/20260728_2300/TESTBERICHT_2026-07-28.md`.
+  `testdata/archiv/20260728_2300/TESTBERICHT_2026-07-28.md`.
 - Die aktuelle GPS-/OBD-Abnahme steht in
-  `testdata/20260729_170946_05A4DB46/ABNAHME_AUSWERTUNG.md`.
+  `testdata/archiv/20260729_170946_05A4DB46/ABNAHME_AUSWERTUNG.md`.
 - Der Recovery-Kontrolllauf `20260730_101000_5901D247` bestätigte mit 1.5.25
   beide Zündungs- und Motorstartschritte sowie ECU-Ausfall und Wiederanlauf.
   Gleichzeitig zeigte er, dass ein verbliebenes halbes Loggergatter weiterhin

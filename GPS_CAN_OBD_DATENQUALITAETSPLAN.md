@@ -18,7 +18,7 @@ Stabilitätskontrolle.
 ## Ausgangslage
 
 Der Fahrzeugtest vom 28.07.2026 ist in
-`testdata/20260728_2300/TESTBERICHT_2026-07-28.md` dokumentiert.
+`testdata/archiv/20260728_2300/TESTBERICHT_2026-07-28.md` dokumentiert.
 
 Wesentliche Erkenntnisse:
 

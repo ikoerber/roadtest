@@ -336,10 +336,10 @@ Recovery-Ereignis dokumentiert deshalb zusätzlich die Ausfalldauer.
 
 ### Testberichte
 
-- [Erster ausführlicher Fahrzeugtest](testdata/20260728_2300/TESTBERICHT_2026-07-28.md)
-- [Geführte Abnahmeläufe](testdata/20260729_1800/TESTBERICHT_2026-07-29_ABNAHME.md)
-- [Zündungs-, Motorlauf- und Recovery-Abnahme](testdata/20260729_162734_92A51444/ABNAHME_AUSWERTUNG.md)
-- [GPS-/OBD-Vergleichsfahrt](testdata/20260729_170946_05A4DB46/ABNAHME_AUSWERTUNG.md)
+- [Erster ausführlicher Fahrzeugtest](testdata/archiv/20260728_2300/TESTBERICHT_2026-07-28.md)
+- [Geführte Abnahmeläufe](testdata/archiv/20260729_1800/TESTBERICHT_2026-07-29_ABNAHME.md)
+- [Zündungs-, Motorlauf- und Recovery-Abnahme](testdata/archiv/20260729_162734_92A51444/ABNAHME_AUSWERTUNG.md)
+- [GPS-/OBD-Vergleichsfahrt](testdata/archiv/20260729_170946_05A4DB46/ABNAHME_AUSWERTUNG.md)
 
 Die Berichte sind versioniert; die zugehörigen Roh-CSV-Dateien bleiben wegen
 Größe und Messdatencharakter bewusst außerhalb des Repositorys.
