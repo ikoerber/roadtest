@@ -100,13 +100,36 @@ und dieses Projekt hält sich an [Semantic Versioning](https://semver.org/spec/v
 
 - Datenlage: 14 Abschnitte. Die Grenze ist belegt, aber dünn.
 
-### Bekannte Grenze
-- **Stufe 4 hat keinen höheren Effektivwert als Stufe 3** (1,316 gegen
-  1,373). Das mittlere Tempo fällt monoton mit der Wertung, von 78 auf
-  39 km/h: Auf sehr schlechter Straße wird so langsam gefahren, dass die
-  Anregung wieder sinkt. Die Note ist im schlechten Bereich dadurch
-  unschärfer. Vier Abschnitte sind zu wenig für eine belastbare Aussage;
-  Stufe 4 gehört auf weiteren Fahrten gezielt häufiger vergeben.
+### Am 03.08.2026 auf Kopfsteinpflaster bestätigt
+
+Zwei Fahrten über 29,4 Kilometer mit 34 Urteilen und erstmals zehn
+Belagswechselmarkern. Beide Sitzungen vollständig, `SDErrors=0`,
+`SDDropped=0`, keine Integritätsdatei.
+
+- **Die Grenzen bleiben unverändert.** Mit 149 statt 119 Urteilen liegt die
+  Trennung zwischen „geht noch“ und „geht nicht mehr“ weiterhin bei
+  1,08 m/s² und trifft 85 statt 84 Prozent. `ROAD_DRIVEABILITY_RMS_GOOD_MPS2`
+  = 0,55 und `_BAD_MPS2` = 1,60 sind damit gegen zwei unabhängige Fahrtage
+  belegt.
+- **Die Skala ist jetzt durchgängig monoton:** Stufe 1 bei 0,701, Stufe 2 bei
+  0,843, Stufe 3 bei 1,420 und Stufe 4 bei 1,583 m/s², jeweils im Median.
+- **Der Belagswechselmarker funktioniert.** An den Übergängen aufs Pflaster
+  springt der Effektivwert um 63 bis 79 Prozent (0,83 auf 1,35, 0,84 auf
+  1,47, 0,85 auf 1,53). Die 200-Meter-Abschnitte trennen die Beläge sauber
+  und vermischen sie nicht.
+
+### Damit erledigt: die vermeintliche Grenze bei Stufe 4
+
+Bis zum 02.08.2026 stand hier, Stufe 4 habe keinen höheren Effektivwert als
+Stufe 3 (1,316 gegen 1,373), weil auf sehr schlechter Straße so langsam
+gefahren werde, dass die Anregung wieder sinke.
+
+**Das war kein Methodenproblem, sondern fehlende Daten.** Der Fahrt vom
+02.08.2026 fehlte schlechter Belag; sie enthielt vier Abschnitte der Stufe 4.
+Auf echtem Kopfsteinpflaster steigt der Effektivwert trotz niedrigen Tempos
+bis 2,29 m/s², und Stufe 4 liegt mit 1,583 im Median klar über Stufe 3.
+
+Die Datenlage bleibt mit sechs Abschnitten dünn, aber die Richtung stimmt.
 
 ### Am Gerät bestätigt
 - 1.5.35 lief über 1 Stunde 50 Minuten und 81,3 Kilometer in drei Sitzungen.

@@ -406,16 +406,17 @@ Verbindliche Punkte:
   bleibt auch bei Unterabtastung ein gültiges Energiemaß, weil Aliasing die
   Frequenz verfälscht und nicht die Gesamtenergie.
 - Die Notengrenzen `ROAD_DRIVEABILITY_RMS_GOOD_MPS2` und
-  `ROAD_DRIVEABILITY_RMS_BAD_MPS2` sind seit 1.5.36 gegen 135 Beifahrerurteile
-  bestimmt, nicht mehr geschätzt. Sie stammen aus einer Fahrt eines Fahrzeugs
-  mit einem Beifahrer: belegt, aber nicht allgemeingültig. Änderungen nur
+  `ROAD_DRIVEABILITY_RMS_BAD_MPS2` sind gegen 149 Beifahrerurteile aus zwei
+  Fahrtagen bestimmt, darunter eine Kopfsteinpflasterfahrt. Belegt, aber
+  aus einem Fahrzeug mit einem Beifahrer und nicht allgemeingültig. Änderungen nur
   gegen neue Urteilsdaten, nie nach Augenschein.
 - Eine Geschwindigkeitsnormierung ist geprüft und verworfen: Der rohe
   Effektivwert erreicht 0,73 Rangkorrelation zur Wertungsstufe, die beste
   normierte Form 0,74.
-- Im schlechten Bereich ist die Note unschärfer als im mittleren. Auf sehr
-  schlechter Straße wird so langsam gefahren, dass die Anregung wieder sinkt;
-  Stufe 4 lag im Median unter Stufe 3.
+- Die Skala ist über alle vier Stufen monoton: 0,701 / 0,843 / 1,420 / 1,583
+  m/s² im Median über 149 Urteile zweier Fahrtage. Die Trennschwelle liegt
+  bei 1,08 m/s² und trifft 85 Prozent. Stufe 4 ist mit sechs Abschnitten
+  weiterhin dünn belegt.
 - **Ab `ROAD_DRIVEABILITY_FAST_KMH` gilt die Fahrbahn als tragfähig** und die
   Note fällt nicht unter `ROAD_DRIVEABILITY_FAST_MIN_NOTE`. Wer schnell
   fährt, traut der Straße; die Anregung steigt mit der Geschwindigkeit, und
