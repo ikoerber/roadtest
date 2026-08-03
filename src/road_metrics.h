@@ -125,7 +125,7 @@ public:
     // Abschlusses. Ohne nachgewiesene Bewegung wird ein begonnener Ausschlag
     // verworfen.
     bool detectPothole(
-        uint32_t timestampMs, float accelZ, float speedKmh,
+        uint32_t timestampMs, float verticalAccel, float speedKmh,
         float threshold = VIBRATION_THRESHOLD);
 
     void setVibrationThreshold(float threshold) {

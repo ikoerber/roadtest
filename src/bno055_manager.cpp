@@ -500,10 +500,6 @@ float BNO055Manager::getTemperature() {
     return sensor->getTemp();
 }
 
-void BNO055Manager::updateVibrationBuffer(float accelZ) {
-    roadMetrics.addSample(accelZ);
-}
-
 void BNO055Manager::processSample(const SensorData& data) {
     if (!initialized || data.timestamp == 0) {
         return;

@@ -236,7 +236,8 @@ float RoadMetricsAnalyzer::getSmoothness() {
 }
 
 bool RoadMetricsAnalyzer::detectPothole(
-    uint32_t timestampMs, float accelZ, float speedKmh, float threshold) {
+    uint32_t timestampMs, float verticalAccel, float speedKmh,
+    float threshold) {
     if (timestampMs == 0) return false;
 
     // Ein Schlagloch setzt überfahrene Fahrbahn voraus. Ohne nachgewiesene
@@ -249,13 +250,13 @@ bool RoadMetricsAnalyzer::detectPothole(
 
     const uint32_t now = timestampMs;
     if (!potholeArmed && now - lastPotholeEvent >= ROAD_POTHOLE_REARM_MS &&
-        accelZ <= -threshold) {
+        verticalAccel <= -threshold) {
         potholeArmed = true;
         potholeStartTime = now;
     }
 
     if (potholeArmed) {
-        if (accelZ >= threshold &&
+        if (verticalAccel >= threshold &&
             now - potholeStartTime <= ROAD_POTHOLE_WINDOW_MS) {
             potholeArmed = false;
             lastPotholeEvent = now;

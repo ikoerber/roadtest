@@ -36,7 +36,10 @@ public:
 
     // Kompressor anlegen und den gzip-Kopf schreiben.
     //
-    // Die Datei muss geöffnet sein und bleibt im Besitz des Aufrufers. Ohne
+    // Die Datei muss geöffnet sein und bleibt im Besitz des Aufrufers. Der
+    // Strom merkt sich ihre Adresse: Die übergebene File-Instanz muss bis
+    // end() am selben Ort weiterleben. Ein dauerhaftes Member wie im
+    // SDLogger erfüllt das; eine lokale Variable oder Kopie nicht. Ohne
     // verfügbares PSRAM scheitert der Aufruf; der Aufrufer schreibt dann
     // unkomprimiert weiter, statt die Messung zu verlieren.
     bool begin(fs::File& file);
@@ -68,6 +71,9 @@ public:
     void end();
 
     bool active() const { return compressor != nullptr; }
+    // Ein Fehlerzustand bleibt bewusst über end() hinaus lesbar, damit der
+    // Aufrufer nach dem Abschluss noch entscheiden kann, ob die Datei
+    // vollständig ist. Erst das nächste begin() setzt ihn zurück.
     bool healthy() const { return !failed; }
 
     // Byte, die in die Datei geschrieben wurden. Grundlage für die

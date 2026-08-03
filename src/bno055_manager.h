@@ -206,7 +206,6 @@ public:
     // Erweiterte Analyse
     VibrationMetrics analyzeVibration();
     void processSample(const SensorData& data);
-    void updateVibrationBuffer(float accelZ);
     void setVibrationThreshold(float threshold) {
         roadMetrics.setVibrationThreshold(threshold);
     }

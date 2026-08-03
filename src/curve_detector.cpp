@@ -47,6 +47,12 @@ bool CurveDetector::finish(CurveEvent& completedEvent) {
 
 void CurveDetector::reset() {
     lastCompletedCurveAngle = 0;
+    // Auch der Ereignis-Cooldown gehört zum verworfenen Zustand: reset()
+    // verspricht einen vollständig frischen Detektor, und ein überlebender
+    // Zeitstempel sperrte sonst nach dem Messstart bis zu eine Sekunde lang
+    // den SHARP-Einstieg. Die Wiedergabetests bestätigen, dass die
+    // Referenzfahrten dadurch unverändert bleiben.
+    lastCurveEvent = 0;
     curveQuietSince = 0;
     quietNetAngleDeg = 0.0f;
     headingInitialized = false;

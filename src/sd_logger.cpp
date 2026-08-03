@@ -2462,17 +2462,29 @@ bool SDLogger::copyFile(const String& source, const String& dest) {
     
     size_t size = srcFile.size();
     uint8_t buffer[512];
-    
+
     while (size > 0) {
-        size_t toRead = min(size, sizeof(buffer));
-        srcFile.read(buffer, toRead);
-        destFile.write(buffer, toRead);
-        size -= toRead;
+        const size_t toRead = min(size, sizeof(buffer));
+        const size_t readBytes = srcFile.read(buffer, toRead);
+        if (readBytes == 0 ||
+            destFile.write(buffer, readBytes) != readBytes) {
+            // Eine stillschweigend unvollständige Kopie wäre gefährlicher als
+            // ein sichtbarer Abbruch: Das Ziel wird entfernt, damit keine
+            // scheinbar gültige, tatsächlich beschädigte Datei zurückbleibt.
+            srcFile.close();
+            destFile.close();
+            SD.remove(dest);
+            stats.errorCount++;
+            Serial.printf("❌ Kopieren abgebrochen: %s -> %s\n",
+                          source.c_str(), dest.c_str());
+            return false;
+        }
+        size -= readBytes;
     }
-    
+
     srcFile.close();
     destFile.close();
-    
+
     Serial.printf("Datei kopiert: %s -> %s\n", source.c_str(), dest.c_str());
     return true;
 }
