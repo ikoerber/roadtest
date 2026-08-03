@@ -683,6 +683,18 @@ Buslast steht in [OPTIMIERUNGEN.md](OPTIMIERUNGEN.md).
 
 ## 📈 Version History
 
+### v1.5.39 - Irreführende Meldungen behoben, OLED entfernt
+- ✅ „SD-Karte nicht gefunden" nennt jetzt alle drei möglichen Ursachen und
+  verweist auf `hardware`, das sie über die CMD0-Antwort trennt
+- ✅ Buffer-Test meldet keinen Fehler mehr, wenn der Überlaufschutz greift
+  (`safePrintf` liefert -1, wurde als bool ausgewertet)
+- ✅ `SAFE_SPRINTF` akzeptiert nur noch Arrays; ein Zeiger führt zum
+  Übersetzungsfehler statt zu einer falschen Puffergrenze
+- ✅ OLED-Überwachung entfernt — das Display ist ausgebaut, die Firmware
+  hätte den Sollzustand dauerhaft als Fehler gemeldet
+- ⚠️ Damit fehlt der zweite I²C-Teilnehmer: Bus- und Sensorfehler sind nicht
+  mehr zu trennen
+
 ### v1.5.38 - Flush-Schritt unter der Slotbreite
 - ✅ Puffer-Write und Dateiflush der Sensordatei sind getrennte Schritte; der
   bisher einzige Schritt über 100 ms kostete je Umlauf eine Sensorstichprobe

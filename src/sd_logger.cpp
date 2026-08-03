@@ -174,7 +174,18 @@ bool SDLogger::begin(SPIClass& spi) {
     // Abschlusszusammenfassung benötigen zusätzlich eigene Datei-Handles.
     if (!SD.begin(
             csPin, spi, SD_SPI_SPEED, "/sd", SD_MAX_OPEN_FILES, false)) {
-        Serial.println("❌ SD-Karte nicht gefunden!");
+        // Bewusst nicht mehr "SD-Karte nicht gefunden": SD.begin() erledigt
+        // Karteninitialisierung und Mount in einem Aufruf und unterscheidet
+        // die Fälle nicht. Am 03.08.2026 kostete das Zeit - eine Karte
+        // antwortete auf CMD0 nachweislich mit 0x01, war also elektrisch da,
+        // scheiterte aber an der Initialisierungssequenz. Die Meldung
+        // behauptete trotzdem, es stecke keine Karte.
+        Serial.println(
+            "❌ SD-Karte konnte nicht eingebunden werden: keine Karte, "
+            "gescheiterte Initialisierung oder unlesbares Dateisystem");
+        Serial.println(
+            "   'hardware' trennt die Fälle: Antwortet CMD0 mit 0x01, ist die "
+            "Karte elektrisch erreichbar und das Problem liegt darüber.");
         return false;
     }
 

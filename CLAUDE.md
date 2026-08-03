@@ -1,7 +1,7 @@
 # ROADTEST Firmware
 
 ESP32-S3-Firmware zur Aufzeichnung von BNO055-, GPS-, Straßenqualitäts- und
-standardisierten OBD-II-Daten. Aktueller Firmwarestand: **1.5.38**.
+standardisierten OBD-II-Daten. Aktueller Firmwarestand: **1.5.39**.
 
 Der aktuelle Stand ist ein Hardware- und Fahrzeugteststand, nicht abschließend
 produktionsreif. Bekannte Einschränkungen stehen weiter unten.
@@ -56,8 +56,9 @@ Systemablauf:
 
 1. WLAN und Webseite starten vor den externen Hardwareprüfungen.
 2. BNO055, GPS, SD und optionales CAN werden nicht blockierend geprüft.
-3. Das OLED ist verbaut, wird aber seit 1.5.32 nicht mehr angesteuert; es
-   dient nur noch als zweiter I²C-Teilnehmer für die Buszustandsdiagnose.
+3. Das OLED ist seit dem 03.08.2026 ausgebaut. Der BNO055 ist damit der
+   einzige I²C-Teilnehmer; Bus- und Sensorfehler sind über den Bus allein
+   nicht mehr zu trennen.
 4. Die Hauptschleife bedient zuerst Web/OTA und anschließend Sensoren,
    Logging, CAN/OBD und Diagnose.
 5. `VehicleDataDiscovery` übernimmt während einer Discovery-Sitzung die
@@ -70,8 +71,8 @@ Die vollständigen Anschluss- und Sicherheitshinweise stehen in
 
 | Funktion | Pin |
 |---|---:|
-| I²C SDA für BNO055 und OLED | GPIO 8 |
-| I²C SCL für BNO055 und OLED | GPIO 9 |
+| I²C SDA für BNO055 | GPIO 8 |
+| I²C SCL für BNO055 | GPIO 9 |
 | GPS RX am ESP32 | GPIO 16 |
 | GPS TX am ESP32 | GPIO 15 |
 | SD CS | GPIO 4 |
@@ -296,8 +297,8 @@ Eigenschaften des Sitzungskopfes.
 
 ## Aktueller Teststand
 
-- Firmware 1.5.38 baut erfolgreich für `lolin_s3_mini`.
-- Letzter Build: 71.084 Byte RAM (21,7 %) und 1.227.458 Byte Flash (93,6 %).
+- Firmware 1.5.39 baut erfolgreich für `lolin_s3_mini`.
+- Letzter Build: 71.076 Byte RAM (21,7 %) und 1.226.958 Byte Flash (93,6 %).
 - Am 31.07.2026 liefen fünf Beifahrer-Referenzfahrten mit 1.5.28 und je zwölf
   markierten Referenzintervallen. Sie sind der Prüfstand der Kurvenerkennung.
 - 1.5.29 ist am Fahrzeug bestätigt: vier Fahrten am 01.08.2026 über 21 Minuten
@@ -335,8 +336,8 @@ Eigenschaften des Sitzungskopfes.
   11 Sekunden. Die Fortsetzung schloss zeitlich lückenlos und ohne Dublette
   an. Die abgebrochene Sitzung bleibt jedoch ohne END-Record und ohne
   Zusammenfassung; deren Kennzahlen sind nachträglich zu rekonstruieren.
-- BNO055-Selbsttest, SD-Logging, WLAN, optionales OLED und MCP2515-
-  Grundkommunikation wurden am System geprüft.
+- BNO055-Selbsttest, SD-Logging, WLAN und MCP2515-Grundkommunikation
+  wurden am System geprüft.
 - Am Porsche Carrera S, Baujahr 2012, PDK wurden standardisierte Antworten von
   CAN-ID `0x7E8` für Drehzahl, Geschwindigkeit und Drosselstellung empfangen.
 - Der ausführliche Fahrzeugtest steht in
@@ -370,7 +371,7 @@ Der verbindliche Umsetzungs-, Test- und Abnahmeplan steht in
 Sitzungszähler, Gültigkeitsfelder, Zeitbasis und PASS/WARN/FAIL-Kriterien
 berücksichtigen.
 
-BNO055, SD, OLED und WLAN laufen bei diesen Tests als Stabilitätskontrolle mit.
+BNO055, SD und WLAN laufen bei diesen Tests als Stabilitätskontrolle mit.
 Beide Bewertungsmodelle werden nicht gleichzeitig neu parametriert.
 
 ## Fahrbarkeit der Strecke
@@ -646,9 +647,13 @@ Positionssprungbewertung und ereignisorientiertes Logging bleiben offen.
 - Hardwarezugriffe nicht blockierend halten; WLAN, Webseite und OTA müssen
   erreichbar bleiben.
 - CAN darf die allgemeine Bereitschaft nicht blockieren.
-- Den OLED-Treiber nicht wieder einführen. Das Display bleibt verbaut und
-  wird angepingt, aber nicht bespielt; die Statusseite und die serielle
-  Ausgabe zeigen dieselben Informationen.
+- Den OLED-Treiber nicht wieder einführen. Das Display ist seit dem
+  03.08.2026 ausgebaut; Statusseite und serielle Ausgabe zeigen dieselben
+  Informationen und genügen dafür. Mit ihm ist der zweite unabhängige
+  I²C-Teilnehmer entfallen: Fällt der BNO055 aus, lässt sich am Bus nicht
+  mehr feststellen, ob Sensor oder Bus die Ursache ist. Wer das für eine
+  Fehlersuche braucht, hängt vorübergehend ein beliebiges I²C-Gerät an -
+  der Scanner findet es ohne Codeänderung.
 - SD-Aufzeichnung über die vorhandene nicht blockierende Startlogik öffnen.
 - Die entfernte Web-Downloadfunktion für SD-Dateien nicht wieder einführen;
   sie war auf dem Gerät zu langsam.

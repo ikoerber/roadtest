@@ -7,7 +7,7 @@
 // Zentrale Pin-Konfiguration für das Straßenqualitäts-Messsystem
 // Alle Hardware-spezifischen Pin-Zuordnungen sind hier definiert
 
-#define ROADTEST_FIRMWARE_VERSION "1.5.38"
+#define ROADTEST_FIRMWARE_VERSION "1.5.39"
 #define ROADTEST_FIRMWARE_FILE_NAME \
     "roadtest_" ROADTEST_FIRMWARE_VERSION ".bin"
 // Die Metadatendatei trägt seit 1.5.38 zusätzlich `FlushMaxStep` hinter
@@ -23,11 +23,12 @@ extern const int I2C_SDA;          // GPIO 8  - I2C Data Line
 extern const int I2C_SCL;          // GPIO 9  - I2C Clock Line
 
 // I2C-Geräte-Adressen (BNO055_ADDRESS_* bereits in Adafruit_BNO055.h definiert)
-// Das Display ist verbaut, wird von der Firmware aber nicht mehr angesteuert.
-// Die Adressen bleiben, weil der I²C-Scanner und die Buszustandsdiagnose das
-// Display als zweiten unabhängigen Teilnehmer weiterhin anpingen.
-#define OLED_ADDRESS_A      0x3C    // OLED Standard-Adresse
-#define OLED_ADDRESS_B      0x3D    // OLED Alternative-Adresse
+//
+// Das OLED ist am 03.08.2026 ausgebaut worden; seine Adressen 0x3C und 0x3D
+// sind entfallen. Der I²C-Scanner läuft weiter über den vollen Adressraum
+// und findet ein wieder angeschlossenes Display auch ohne eigenes Makro.
+// Der BNO055 ist damit der einzige Teilnehmer am Bus - Bus- und
+// Sensorfehler sind darüber nicht mehr zu trennen.
 
 // -----------------------------------------------------------------------------
 // SPI-Bus Konfiguration
@@ -272,9 +273,6 @@ extern const int GPS_BAUD_RATE;    // 9600    - GPS Baudrate
 // über die gemeinsame 3,3-V-Schiene direkt in SD-Karte und BNO055 koppeln.
 // Für ein Endgerät in wenigen Metern Entfernung ist 11 dBm reichlich.
 #define WIFI_TX_POWER       WIFI_POWER_11dBm
-
-// Display-Spezifikationen
-#define OLED_RESET          -1      // OLED Reset Pin (nicht verwendet)
 
 // Sensor-Konfiguration  
 #define VIBRATION_THRESHOLD 2.0     // Vibrations-Schwellwert (m/s²)

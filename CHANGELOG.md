@@ -5,6 +5,50 @@ Alle wichtigen Änderungen am ESP32-S3 Straßenqualitäts-Messsystem werden in d
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt hält sich an [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.39] - 2026-08-03
+
+### Behoben: irreführende Meldungen
+- **„SD-Karte nicht gefunden" behauptete zu viel.** `SD.begin()` erledigt
+  Karteninitialisierung und Mount in einem Aufruf und unterscheidet die Fälle
+  nicht. Am 03.08.2026 kostete das Zeit: Eine Karte antwortete auf CMD0
+  nachweislich mit `0x01`, war also elektrisch erreichbar, scheiterte aber an
+  der Initialisierungssequenz - und die Firmware meldete, es stecke keine
+  Karte. Die Meldung nennt jetzt alle drei möglichen Ursachen und verweist
+  auf `hardware`, das die Fälle über die CMD0-Rohantwort trennt.
+- **Der Buffer-Test meldete einen Fehler, den es nie gab.**
+  `safePrintf()` liefert die Zahl geschriebener Zeichen und `-1` bei
+  drohender Truncation. Test 2 prüfte `!safePrintf(...)`; weil `-1` wahr ist,
+  meldete er genau dann FEHLER, wenn der Überlaufschutz korrekt gegriffen
+  hatte. Beide Tests werten den Rückgabewert jetzt als `int` aus, Test 2
+  prüft zusätzlich die Nullterminierung.
+- **`SAFE_SPRINTF` maß die Größe eines Zeigers.** Das Makro verwendete
+  `sizeof(buf)`; mit einem `char*` sind das vier Byte statt der tatsächlichen
+  Puffergröße. Im Stack-Buffer-Test erschien deshalb „needed 16, got 4",
+  obwohl 100 Byte bereitstanden. Die Makros nehmen jetzt über
+  `safeBufferSize()` ausschließlich Arrays an - ein Zeiger führt zum
+  Übersetzungsfehler statt zu einer stillschweigend falschen Grenze.
+- **„Test-Datei: Schreibfehler" im Hardware-Test** entstand durch doppelte
+  Einbindung: Der Test bindet die Karte mit eigenen Parametern ein, während
+  der `SDLogger` sie unter `/sd` hält. Der Test erkennt das jetzt und meldet
+  es als übersprungen statt als Kartenfehler. Betroffen war eine Karte, die
+  zuvor 70 Minuten fehlerfrei aufgezeichnet hatte.
+
+### Entfernt: OLED
+- **Das Display ist ausgebaut, die Firmware überwacht es nicht mehr.** Der
+  Ping auf 0x3C/0x3D, die Aussetzerzählung, die Statusausgaben und die
+  Adressmakros sind entfallen, ebenso die ungenutzte Hilfsfunktion
+  `i2cDeviceResponds()`. Ohne diese Änderung hätte die Firmware den
+  Sollzustand dauerhaft als Fehler gemeldet.
+- **Der Integrationstest „I2C-Bus Recovery" wäre ab sofort immer
+  fehlgeschlagen.** Er verlangte nach einer provozierten Busstörung, dass
+  BNO055 *und* OLED wieder antworten. Der Nachweis stützt sich jetzt allein
+  auf den BNO055.
+- Damit entfällt der zweite unabhängige I²C-Teilnehmer. Fällt der BNO055
+  aus, ist am Bus nicht mehr zu unterscheiden, ob Sensor oder Bus die
+  Ursache ist - genau diese Unterscheidung hatte die Fehlersuche im Juli 2026
+  vorangebracht. Für eine Fehlersuche genügt es, vorübergehend ein
+  beliebiges I²C-Gerät anzuhängen; der Scanner findet es ohne Codeänderung.
+
 ## [1.5.38] - 2026-08-03
 
 ### Geändert

@@ -328,9 +328,28 @@ extern SafeMemoryPool<2048, 64> globalMemoryPool;
 // Sicherer Formatierungs-Buffer für temporäre String-Operationen
 extern SafeStackBuffer<1024> formatBuffer;
 
+// Größe eines Zeichenarrays zur Übersetzungszeit.
+//
+// Die Makros unten hießen früher schlicht sizeof(buf). Mit einem echten Array
+// ist das richtig, mit einem char* liefert es aber die Zeigergröße - auf dem
+// ESP32 vier Byte. Genau das passierte in testBufferSafety(): Der Test
+// formatierte in einen 100-Byte-Puffer und bekam "needed 16, got 4" gemeldet,
+// weil das Makro die Größe des Zeigers maß statt die des Speichers.
+//
+// Diese Fassung nimmt ausschließlich Arrays an. Ein Zeiger führt jetzt zu
+// einem Übersetzungsfehler statt zu einer stillschweigend falschen Grenze;
+// wer einen Zeiger hat, ruft safePrintf() mit der tatsächlichen Größe auf.
+template <size_t N>
+constexpr size_t safeBufferSize(char (&)[N]) {
+    return N;
+}
+
 // Makros für sichere Buffer-Operationen
-#define SAFE_SPRINTF(buf, fmt, ...) SafeStringFormatter::safePrintf(buf, sizeof(buf), fmt, ##__VA_ARGS__)
-#define SAFE_STRCAT(dest, src) SafeStringFormatter::safeStrcat(dest, sizeof(dest), src)
-#define SAFE_STRCPY(dest, src) SafeStringFormatter::safeStrcpy(dest, sizeof(dest), src)
+#define SAFE_SPRINTF(buf, fmt, ...) \
+    SafeStringFormatter::safePrintf(buf, safeBufferSize(buf), fmt, ##__VA_ARGS__)
+#define SAFE_STRCAT(dest, src) \
+    SafeStringFormatter::safeStrcat(dest, safeBufferSize(dest), src)
+#define SAFE_STRCPY(dest, src) \
+    SafeStringFormatter::safeStrcpy(dest, safeBufferSize(dest), src)
 
 #endif // BUFFER_UTILS_H

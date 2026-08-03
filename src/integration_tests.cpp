@@ -620,15 +620,12 @@ bool IntegrationTests::testI2CBusRecovery() {
         details += "BNO055 nicht wiederhergestellt! ";
     }
     
-    // Das Display wird nicht mehr angesteuert, hängt aber am selben Bus und
-    // ist damit der zweite unabhängige Nachweis, dass der Bus wieder trägt.
-    Wire.beginTransmission(OLED_ADDRESS_A);
-    uint8_t error = Wire.endTransmission();
-    if (error != 0) {
-        recoverySuccess = false;
-        details += "OLED antwortet nicht! ";
-    }
-    
+    // Bis zum 03.08.2026 diente das Display hier als zweiter, unabhängiger
+    // Nachweis, dass der Bus wieder trägt. Es ist ausgebaut; die Prüfung
+    // hätte den Test von da an unweigerlich scheitern lassen. Der Nachweis
+    // stützt sich jetzt allein auf den BNO055 und ist dadurch schwächer:
+    // Antwortet er nicht, bleibt offen, ob Sensor oder Bus die Ursache ist.
+
     // 6. Manager neu initialisieren wenn nötig
     if (bnoWasReady && !bnoManager.isReady()) {
         bnoManager.begin();

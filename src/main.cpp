@@ -53,14 +53,8 @@ unsigned long lastHardwareCheck = 0;
 unsigned long lastGPSRestart = 0;
 unsigned long lastCANRecoveryAttempt = 0;
 uint8_t bnoMissingChecks = 0;
-uint8_t oledMissingChecks = 0;
-// Verhindert, dass ein dauerhaft fehlendes Display den Zähler und die
-// serielle Ausgabe im Prüfintervall weiterlaufen lässt.
-bool oledReportedMissing = false;
 uint32_t bnoProbeFailureCount = 0;
-uint32_t oledProbeFailureCount = 0;
 uint8_t canModeFailureCount = 0;
-bool oledDetectedAtLeastOnce = false;
 
 struct VehicleTestSession {
     bool active = false;
@@ -73,7 +67,6 @@ struct VehicleTestSession {
     uint32_t initialSDErrors = 0;
     uint32_t initialSDDropped = 0;
     uint32_t initialBNOProbeFailures = 0;
-    uint32_t initialOLEDProbeFailures = 0;
     uint8_t peakTransmitErrorCount = 0;
     uint8_t peakReceiveErrorCount = 0;
     uint8_t latchedCANErrorFlags = 0;
@@ -124,7 +117,6 @@ void i2cScanner() {
             if (error == 0) {
                 Serial.print(" - GEFUNDEN!");
                 if (address == 0x28 || address == 0x29) Serial.print(" (BNO055)");
-                if (address == 0x3C || address == 0x3D) Serial.print(" (OLED)");
             } else if (error == 2) {
                 Serial.print(" - NACK (Gerät antwortet nicht)");
             } else if (error == 3) {
@@ -163,6 +155,17 @@ void i2cScanner() {
 
 bool testSDWithSafePins() {
     Serial.println("\n--- SD-Karten Test mit sicheren ESP32-S3 Pins ---");
+
+    // Vor dem Test festhalten, ob der SDLogger die Karte gerade eingebunden
+    // hat. Der Test bindet sie gleich mit eigenen Parametern neu ein; ein
+    // danach scheiternder Schreibzugriff ist dann eine Folge der doppelten
+    // Einbindung und kein Kartenfehler.
+    const bool loggerHieltKarte = sdLogger.isReady();
+    if (loggerHieltKarte) {
+        Serial.println(
+            "ℹ️ Der SD-Logger hat die Karte eingebunden; der Test bindet sie "
+            "kurzzeitig selbst ein.");
+    }
     
     // Debug: Zeige die konfigurierten Pins aus hardware_config.h
     Serial.println("\nKonfigurierte SD-Pins aus hardware_config.h:");
@@ -379,13 +382,25 @@ bool testSDWithSafePins() {
                 success = true;
                 workingFrequency = frequencies[f];
                 
-                // Kurzer Funktionstest
+                // Kurzer Funktionstest.
+                //
+                // Der Test bindet die Karte mit eigenen Parametern und ohne
+                // Mountpunkt ein, während der SDLogger sie unter "/sd" halten
+                // kann. Dann scheitert das Öffnen an der doppelten
+                // Einbindung und nicht an der Karte. Ohne diesen Hinweis
+                // liest sich die Meldung wie ein Kartendefekt - am
+                // 03.08.2026 auf einer Karte, die zuvor 70 Minuten
+                // fehlerfrei aufgezeichnet hatte.
                 Serial.print("   Test-Datei: ");
                 File testFile = SD.open("/hwtest.txt", FILE_WRITE);
                 if (testFile) {
                     testFile.println("ESP32-S3 HW Test OK");
                     testFile.close();
                     Serial.println("OK");
+                } else if (loggerHieltKarte) {
+                    Serial.println(
+                        "uebersprungen (SD-Logger haelt die Karte bereits; "
+                        "kein Kartenfehler)");
                 } else {
                     Serial.println("Schreibfehler");
                 }
@@ -464,18 +479,29 @@ void testBNO055() {
 void testBufferSafety() {
     Serial.println("\n--- Buffer-Sicherheits-Test ---");
     
+    // safePrintf() liefert die Zahl geschriebener Zeichen und -1, wenn es
+    // abgeschnitten hätte. Beide Tests werteten diesen int bisher als bool
+    // aus: Test 2 prüfte `!safePrintf(...)`, und weil -1 wahr ist, meldete er
+    // genau dann FEHLER, wenn der Überlaufschutz korrekt gegriffen hatte.
+    // Deshalb stand dort seit jeher ein Fehler, den es nie gab.
+
     // Test 1: Sichere String-Formatierung
     Serial.print("1. SafeStringFormatter Test: ");
     char testBuffer[64];
-    bool success = SafeStringFormatter::safePrintf(testBuffer, sizeof(testBuffer), 
-                                                  "Test %.2f %d %s", 3.14159f, 42, "OK");
-    Serial.println(success ? "OK" : "FEHLER");
-    
+    const int geschrieben = SafeStringFormatter::safePrintf(
+        testBuffer, sizeof(testBuffer), "Test %.2f %d %s", 3.14159f, 42, "OK");
+    Serial.println(geschrieben >= 0 ? "OK" : "FEHLER");
+
     // Test 2: Buffer-Overflow-Schutz
     Serial.print("2. Buffer-Overflow-Schutz: ");
     char smallBuffer[10];
-    bool prevented = !SafeStringFormatter::safePrintf(smallBuffer, sizeof(smallBuffer), 
-                                                     "Dies ist ein sehr langer String der nicht passt");
+    const int abgeschnitten = SafeStringFormatter::safePrintf(
+        smallBuffer, sizeof(smallBuffer),
+        "Dies ist ein sehr langer String der nicht passt");
+    // Erwartet wird ausdrücklich der Fehlerwert; zusätzlich muss der Puffer
+    // nullterminiert bleiben.
+    const bool prevented =
+        abgeschnitten < 0 && smallBuffer[sizeof(smallBuffer) - 1] == '\0';
     Serial.println(prevented ? "OK (Overflow verhindert)" : "FEHLER");
     
     // Test 3: Ring-Buffer Test
@@ -508,12 +534,18 @@ void testBufferSafety() {
     
     // Test 5: Stack Buffer
     Serial.print("5. Stack Buffer Test: ");
-    char* stackMem = formatBuffer.allocate(100);
+    const size_t stackBytes = 100;
+    char* stackMem = formatBuffer.allocate(stackBytes);
     bool stackOK = (stackMem != nullptr);
-    
+
     if (stackOK) {
-        SAFE_SPRINTF(stackMem, "Stack Test: %.1f", 42.7f);
-        formatBuffer.deallocate(100);
+        // Bewusst safePrintf() mit der tatsächlichen Größe statt SAFE_SPRINTF:
+        // Das Makro misst die Größe seines Arguments, und stackMem ist ein
+        // Zeiger. Es maß deshalb vier Byte statt hundert und meldete
+        // "needed 16, got 4", obwohl der Puffer reichlich groß war.
+        stackOK = SafeStringFormatter::safePrintf(
+                      stackMem, stackBytes, "Stack Test: %.1f", 42.7f) >= 0;
+        formatBuffer.deallocate(stackBytes);
     }
     Serial.println(stackOK ? "OK" : "FEHLER");
     
@@ -560,11 +592,6 @@ bool initializeGPSAndClock() {
     lastGPSRestart = millis();
     Serial.println("✅ GPS läuft; Fix und UTC-Zeit werden im Hintergrund gesucht");
     return true;
-}
-
-bool i2cDeviceResponds(uint8_t address) {
-    Wire.beginTransmission(address);
-    return Wire.endTransmission() == 0;
 }
 
 // Alle SPI-Slaves abwählen, bevor irgendein Bus initialisiert wird.
@@ -750,9 +777,6 @@ void printVehicleTestStatus(bool finalReport) {
     const uint32_t bnoFailureDelta =
         bnoProbeFailureCount -
         vehicleTestSession.initialBNOProbeFailures;
-    const uint32_t oledFailureDelta =
-        oledProbeFailureCount -
-        vehicleTestSession.initialOLEDProbeFailures;
     const unsigned long responseAge =
         obd.lastResponseMs > 0 ? now - obd.lastResponseMs : 0;
     const bool ecuResponding =
@@ -779,8 +803,7 @@ void printVehicleTestStatus(bool finalReport) {
         finalReport && (!vehicleTestSession.recordingObserved ||
                         sdWriteDelta == 0);
     const bool warned =
-        !failed && (canWarning || oledFailureDelta > 0 ||
-                    obdErrorDelta > 0 ||
+        !failed && (canWarning || obdErrorDelta > 0 ||
                     (canReader.isOBDPollingEnabled() && !ecuResponding) ||
                     incompleteSDTest);
 
@@ -819,9 +842,8 @@ void printVehicleTestStatus(bool finalReport) {
         Serial.println("MCP2515: Diagnose nicht verfügbar");
     }
 
-    Serial.printf("I2C-Aussetzer im Test: BNO055=%lu, OLED=%lu (optional)\n",
-                  static_cast<unsigned long>(bnoFailureDelta),
-                  static_cast<unsigned long>(oledFailureDelta));
+    Serial.printf("I2C-Aussetzer im Test: BNO055=%lu\n",
+                  static_cast<unsigned long>(bnoFailureDelta));
     Serial.printf("SD im Test: +%lu Schreibvorgänge, +%lu Fehler, "
                   "+%lu verworfen, Aufzeichnung beobachtet=%s\n",
                   static_cast<unsigned long>(sdWriteDelta),
@@ -866,7 +888,6 @@ void beginVehicleTest() {
     vehicleTestSession.initialSDErrors = sdStats.errorCount;
     vehicleTestSession.initialSDDropped = sdStats.droppedLogs;
     vehicleTestSession.initialBNOProbeFailures = bnoProbeFailureCount;
-    vehicleTestSession.initialOLEDProbeFailures = oledProbeFailureCount;
     if (canHardware.valid) {
         vehicleTestSession.peakTransmitErrorCount =
             canHardware.transmitErrorCount;
@@ -899,7 +920,7 @@ void handleHardwareRecovery(unsigned long now) {
     }
     lastHardwareCheck = now;
 
-    // Der BNO055 wird über seine Chip-ID, das OLED per I²C-Ping überwacht.
+    // Der BNO055 wird über seine Chip-ID überwacht.
     // Erst drei aufeinanderfolgende Ausfälle gelten als echte Trennung.
     bool bnoResponding = bnoManager.responds();
     if (bnoManager.isReady()) {
@@ -942,45 +963,12 @@ void handleHardwareRecovery(unsigned long now) {
         }
     }
 
-    // Das Display wird softwareseitig nicht mehr angesteuert, hängt aber
-    // weiter am I²C-Bus. Als zweiter, unabhängiger Teilnehmer bleibt es das
-    // wertvollste Diagnosemittel für Busprobleme: Fällt es zusammen mit dem
-    // BNO055 aus, liegt die Ursache am Bus oder an der Versorgung und nicht
-    // am Sensor. Genau diese Unterscheidung brachte die Fehlersuche im Juli
-    // 2026 weiter. Der Ping kostet nichts und wird deshalb beibehalten.
-    const bool oledResponding =
-        i2cDeviceResponds(OLED_ADDRESS_A) ||
-        i2cDeviceResponds(OLED_ADDRESS_B);
-    if (oledDetectedAtLeastOnce) {
-        if (oledResponding) {
-            if (oledMissingChecks > 0 || oledReportedMissing) {
-                Serial.printf(
-                    "✅ OLED-I2C wieder stabil nach %u Fehlprüfung(en)\n",
-                    oledMissingChecks);
-            }
-            oledMissingChecks = 0;
-            oledReportedMissing = false;
-        } else if (!oledReportedMissing) {
-            // Nach dem festgestellten Verlust wird weder weiter gezählt noch
-            // gemeldet. Sonst liefe der Aussetzerzähler bei dauerhaft
-            // gezogenem Display im Sekundentakt hoch und die Meldung alle
-            // fünf Sekunden über die serielle Ausgabe.
-            oledProbeFailureCount++;
-            oledMissingChecks++;
-            Serial.printf("⚠️ OLED-I2C-Prüfung fehlgeschlagen (%u/3, gesamt %lu)\n",
-                          oledMissingChecks,
-                          static_cast<unsigned long>(oledProbeFailureCount));
-            if (oledMissingChecks >= 3) {
-                Serial.println(
-                    "⚠️ OLED antwortet nicht mehr auf dem I²C-Bus; "
-                    "weitere Meldungen bis zur Rückkehr unterdrückt");
-                oledReportedMissing = true;
-            }
-        }
-    } else if (oledResponding) {
-        oledDetectedAtLeastOnce = true;
-        Serial.println("ℹ️ OLED antwortet auf dem I²C-Bus");
-    }
+    // Das Display ist seit dem 03.08.2026 ausgebaut und wird nicht mehr
+    // überwacht. Es war zuvor der zweite unabhängige I²C-Teilnehmer und
+    // erlaubte damit, Bus- und Versorgungsprobleme von Sensorproblemen zu
+    // trennen. Diese Unterscheidung steht jetzt nicht mehr zur Verfügung:
+    // Bleibt der BNO055 aus, lässt sich am Bus allein nicht mehr sagen, ob
+    // der Sensor oder der Bus die Ursache ist.
 
     if (sdLogger.isReady() && !sdLogger.isLoggingStartPending()) {
         sdCardAvailable = sdLogger.checkHealth();
@@ -1114,18 +1102,6 @@ void setup() {
     Wire.setTimeOut(I2C_TIMEOUT_MS);
     Serial.printf("I2C: %s (SDA=%d, SCL=%d, %d Hz)\n",
                   i2cSuccess ? "OK" : "FEHLER", I2C_SDA, I2C_SCL, I2C_CLOCK_SPEED);
-
-    // Das Display wird softwareseitig nicht mehr angesteuert. Sein Vorhandensein
-    // wird nur noch festgestellt, weil es als zweiter I²C-Teilnehmer die
-    // Buszustandsdiagnose trägt.
-    const bool oledPresent =
-        i2cDeviceResponds(OLED_ADDRESS_A) ||
-        i2cDeviceResponds(OLED_ADDRESS_B);
-    oledDetectedAtLeastOnce = oledPresent;
-    Serial.println(
-        oledPresent
-            ? "ℹ️ OLED am I²C-Bus erkannt; wird nicht angesteuert"
-            : "ℹ️ Kein OLED am I²C-Bus");
 
     if (bnoManager.begin()) {
         bool selfTestOK = bnoManager.runSelfTest();
@@ -1636,11 +1612,9 @@ void loop() {
 
         {
             const LogStats logStats = sdLogger.getStatistics();
-            Serial.printf("   TEST: OLED=%s, I2C-Aussetzer BNO/OLED=%lu/%lu, "
+            Serial.printf("   TEST: I2C-Aussetzer BNO=%lu, "
                           "SD-Schreibvorgänge=%lu Fehler=%lu Verworfen=%lu, WLAN=%s\n",
-                          oledDetectedAtLeastOnce ? "am Bus" : "nicht am Bus",
                           static_cast<unsigned long>(bnoProbeFailureCount),
-                          static_cast<unsigned long>(oledProbeFailureCount),
                           static_cast<unsigned long>(logStats.totalWrites),
                           static_cast<unsigned long>(logStats.errorCount),
                           static_cast<unsigned long>(logStats.droppedLogs),
@@ -1937,12 +1911,6 @@ void loop() {
                           static_cast<unsigned long>(diagnosticSD.totalWrites),
                           static_cast<unsigned long>(diagnosticSD.errorCount),
                           static_cast<unsigned long>(diagnosticSD.droppedLogs));
-            Serial.printf(
-                "OLED: %s (nicht angesteuert, jemals erkannt: %s, "
-                "I2C-Aussetzer: %lu)\n",
-                oledDetectedAtLeastOnce ? "am Bus" : "nicht am Bus",
-                oledDetectedAtLeastOnce ? "ja" : "nein",
-                          static_cast<unsigned long>(oledProbeFailureCount));
             Serial.printf("BNO055-I2C-Aussetzer: %lu\n",
                           static_cast<unsigned long>(bnoProbeFailureCount));
             
