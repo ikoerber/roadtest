@@ -73,7 +73,7 @@ TX und RX werden beim GPS gekreuzt: **GPS-TX geht an ESP32-RX (GPIO 16)** und
 
 | Baugruppe | Anschluss im aktuellen Aufbau |
 |---|---|
-| ESP32-S3-Controller | USB-C oder vorhandener LiPo-Akkuanschluss des Boards |
+| ESP32-S3-Controller | Zündungsgeschaltete 12 V über Abwärtswandler; am Arbeitsplatz USB-C |
 | BNO055 | geregelte 3,3 V an `VIN`, GND an GND |
 | OLED, optional | geregelte 3,3 V an `VCC`, GND an GND |
 | BN-880 | geregelte 3,3 V an `VCC`, GND an GND |
@@ -88,6 +88,58 @@ werden.
 
 Peripherie wird aus der geregelten 3,3-V-Schiene versorgt, nicht direkt aus der
 variablen LiPo-Zellenspannung.
+
+### Einbau im Fahrzeug: zündungsgeschaltet aus dem Sicherungskasten
+
+Für den festen Einbau kommt die Versorgung aus einer **zündungsgeschalteten
+Sicherung**, CAN weiterhin aus der OBD-Buchse. Damit ist die Versorgung selbst
+das Startsignal: Strom da bedeutet fahren, Strom weg bedeutet Fahrtende. Die
+Firmware startet die Aufzeichnung seit 1.5.42 von allein und braucht dafür
+weder Bewegungserkennung noch Zündungslogik.
+
+Die Alternative - alles aus der OBD-Buchse mit Dauerplus und Tiefschlaf -
+wäre ein Stecker weniger und vollständig rückbaubar. Sie ist verworfen, weil
+ein falsch umgesetzter Tiefschlaf über Wochen Standzeit die Fahrzeugbatterie
+entlädt und der Fehler erst auffällt, wenn das Auto nicht anspringt.
+
+Verbindlich beim Einbau:
+
+- **Eigene Absicherung im Abzweig.** Der Abgriff bekommt seine eigene
+  Sicherung, unabhängig vom angezapften Stromkreis.
+- **Abwärtswandler mit automotive-tauglichem Eingang.** 12 V im Fahrzeug sind
+  keine sauberen 12 V; ein Wandler ohne Transientenschutz ist die häufigste
+  Ausfallursache bei solchen Einbauten. Der Bedarf liegt bei geschätzt 250 bis
+  400 mA auf der 5-V-Seite, ein 1-A-Wandler ist reichlich.
+- **Eine einzige Masse.** Das Gerät bekommt Masse an der Karosserie beim
+  Sicherungskasten, und der CAN-Transceiver bezieht sich auf genau diese
+  Masse. Von der OBD-Buchse kommen dann **nur CAN-H und CAN-L**, nicht
+  zusätzlich Masse - sonst entsteht eine zweite Masseschleife über den dünnen
+  OBD-Massepfad.
+- **Kein LiPo im Fahrzeug.** Ein Innenraum erreicht im Sommer 60 bis 70 Grad;
+  der Akkuanschluss des Boards bleibt beim Einbau leer.
+- **Steif befestigen.** Die Einbaulage ist dank der Projektion auf die
+  Schwerkraftrichtung frei, die Steifigkeit nicht: Die Rauheitsmessung ist das
+  Herz der Fahrbahnbewertung, und ein lose in einer Ablage liegendes Gerät
+  misst seine eigene Resonanz mit. Fest verschraubt oder verklebt an Struktur.
+
+Ein hartes Abschalten ist ausdrücklich zulässig. Es kostet höchstens einen
+Flush-Umlauf von knapp fünf Sekunden, und zwar genau den Abschnitt, in dem das
+Fahrzeug bereits steht. Abschlussdatensatz und Zusammenfassung fehlen dann;
+die Auswertung rechnet ohnehin alles aus den Rohzeilen neu.
+
+### GPS-Antenne vor dem endgültigen Einbau
+
+Der BN-880 trägt seine Keramikantenne fest aufgelötet. Am 02.08.2026 fiel der
+Empfang über drei Fahrten vollständig aus - 1.887 Zeilen mit exakt null
+Satelliten bei intakter NMEA-Kette - und kam ohne Eingriff von selbst zurück.
+Die Firmware ist als Ursache ausgeschlossen; der Verdacht liegt auf einem
+Wackelkontakt an der Antenne oder ihrer Versorgung. Erklärt ist der Fehler
+nicht, nur nicht wieder aufgetreten.
+
+**Das ist der einzige nie erklärte Fehler des Systems, und hinter der
+Verkleidung wird er teuer.** Vor dem festen Einbau gehört deshalb eine
+externe aktive GNSS-Antenne mit ordentlichem Stecker und freier Sicht an das
+Modul. Das behebt den Verdachtsfall und verbessert nebenbei den Empfang.
 
 ## BNO055 und OLED am gemeinsamen I²C-Bus
 
@@ -297,7 +349,9 @@ Für einen späteren Fahrzeuganschluss:
 
 ## Inbetriebnahme-Checkliste
 
-- [ ] ESP32-S3-Controller wird über USB-C oder den vorhandenen Akkuanschluss versorgt.
+- [ ] Am Arbeitsplatz: ESP32-S3-Controller wird über USB-C versorgt.
+- [ ] Im Fahrzeug: zündungsgeschalteter Abgriff mit eigener Sicherung, Wandler
+      mit Transientenschutz, Masse nur an einer Stelle, LiPo-Anschluss leer.
 - [ ] An der 3,3-V-Schiene liegen ungefähr 3,3 V gegen GND an.
 - [ ] Alle Module teilen dieselbe Masse.
 - [ ] I²C: GPIO 8 = SDA und GPIO 9 = SCL.

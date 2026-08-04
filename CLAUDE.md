@@ -128,6 +128,15 @@ Wichtige Invarianten:
 - ESP32-S3-GPIOs sind nicht 5-V-tolerant.
 - Am Fahrzeug sind gemeinsame Masse, kurze CAN-Stichleitung und die
   Versorgungshinweise aus `HARDWARE.md` zwingend.
+- **Der feste Einbau wird zündungsgeschaltet aus dem Sicherungskasten
+  versorgt**, CAN weiterhin aus der OBD-Buchse. Die Versorgung ist damit das
+  Startsignal der Aufzeichnung. Masse nur an einer Stelle abgreifen - von der
+  OBD-Buchse kommen dann nur CAN-H und CAN-L. Einzelheiten samt Absicherung,
+  Wandler und Befestigung in `HARDWARE.md`.
+- **Vor dem endgültigen Einbau gehört eine externe aktive GNSS-Antenne an den
+  BN-880.** Der Empfangsausfall vom 02.08.2026 ist nie erklärt worden, und der
+  Verdacht liegt auf der aufgelöteten Keramikantenne; hinter der Verkleidung
+  wird dieser Fehler teuer.
 - Der Terminierungsjumper P1 am CAN-Modul bleibt beim Fahrzeuganschluss
   entfernt.
 - Hardware-Pins nicht aufgrund automatischer Erkennung oder Vermutungen

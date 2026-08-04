@@ -228,68 +228,23 @@ Ohne Fahrzeug können die aktiven OBD-Anfragen mit `obd off` pausiert werden;
 bleibt dabei initialisiert, und Webseite sowie serieller Status zeigen die
 Pause ausdrücklich an.
 
-### Fahrzeugdaten für die spätere Auswertung erkennen
+### Fahrzeugdaten-Erkennung (entfernt in 1.5.41)
 
-Seit Version 1.5.14 besitzt die Firmware eine eigene Diagnoseaufzeichnung.
-Seit Version 1.5.16 ist die GPS-/OBD-Datenqualität messbar. Version 1.5.20
-ergänzt die automatische ECU- und Controller-Wiederherstellung sowie einen
-geführten Abnahmetest mit getrennten Schritten für Zündung und Motorstart.
-Version 1.5.21 aktiviert feldweise GPS-Alters- und Qualitätsgrenzen und
-verhindert, dass GPS-Drift bei bestätigtem Fahrzeugstillstand als Strecke
-gezählt wird.
-Die Discovery startet und beendet ihre SD-Sitzung selbst:
+Die Firmware besaß unter `discover begin` eine dreiphasige Suche nach den
+unterstützten OBD-Kennungen: 60 Sekunden echtes MCP2515-Listen-Only, zwei
+Scanrunden der Unterstützungsblöcke `00/20/40/60`, danach die Abfrage
+ausschließlich bestätigter Standard-PIDs. Sie hat ihren Zweck erfüllt - die
+PIDs des Fahrzeugs sind bekannt und am Porsche Carrera S bestätigt: Drehzahl
+`0x0C`, Geschwindigkeit `0x0D` und Drosselstellung `0x11` antworten von CAN-ID
+`0x7E8`.
 
-```text
-discover begin
-discover status
-discover mark motor_gestartet
-discover mark fahrt_begonnen
-discover mark gleichmaessig_50_kmh
-discover end
-```
+Mit dem Umbau auf ein fest eingebautes Gerät wurde die Suche zu Ballast und
+ist entfallen; sie belegte 16,6 kByte Flash. Die Firmware fragt im Betrieb
+zyklisch dieselben drei PIDs ab. Wird einmal ein anderes Fahrzeug
+angeschlossen, ist die Erkennung aus der Historie zu holen, statt sie neu zu
+schreiben.
 
-`discover begin` führt automatisch drei Phasen aus:
-
-1. **60 Sekunden passiv:** Der MCP2515 arbeitet im echten Listen-Only-Modus
-   und sendet weder Diagnoseanfragen noch CAN-Bestätigungen. Alle am
-   OBD-Anschluss sichtbaren 11-Bit-Telegramme werden aufgezeichnet.
-2. **Standard-PID-Scan:** Die Blöcke `0100`, `0120`, `0140` und `0160` werden
-   zweimal und mit insgesamt höchstens zwei Anfragen pro Sekunde gelesen.
-3. **Messphase:** Nur bestätigte Standard-PIDs werden bis `discover end`
-   abgefragt. Geschwindigkeit erhält für den späteren GPS-Vergleich die
-   höchste Gewichtung; langsame Temperaturwerte werden seltener gelesen.
-
-Die Dateien mit demselben Sitzungsnamen gehören zusammen:
-
-- `road_sensor_...csv`: Orientierung, lineare Beschleunigung, Gyro und
-  BNO055-Temperatur
-- `road_gps_...csv`: Position, GPS-Geschwindigkeit, Kurs, Satelliten und HDOP
-- `road_can_...csv`: unveränderte CAN-Rohframes mit ECU-ID
-- `road_obd_...csv`: dekodierte Standardwerte und PID-Unterstützungsbitmaps
-- `road_obd_trace_...csv`: einzelne Anfragen, Antworten, Timeouts,
-  Zuordnung, Latenz und MCP2515-Diagnose
-- `road_meta_...csv`: Firmware-/Schemaversion, Konfiguration sowie Start-,
-  Fünf-Sekunden- und Abschlusszähler der Sitzung einschließlich maximaler
-  Hauptschleifen-, Web- und SD-Pausen
-- `road_event_...csv`: Phasenwechsel und manuelle `discover mark`-Zeitpunkte
-
-GPS-Zeichen-, Satz-, Prüfsummen-, Ringpuffer- und Fixsequenzzähler beginnen
-für jede Aufzeichnung bei null. Dadurch lassen sich Sitzungen direkt auswerten,
-ohne vor dem Start aufgelaufene Boot-Gesamtwerte abzuziehen.
-Die GPS-Rohwerte bleiben für die Diagnose sichtbar. Nur Felder mit gesetztem
-Gültigkeitsflag dürfen als Messwert verwendet werden. `RejectionReason`
-enthält eine Bitmaske, sodass mehrere gleichzeitig verletzte Alters- oder
-Qualitätsgrenzen nachvollziehbar bleiben.
-
-Wenn das Porsche-Gateway keine zyklischen Fahrzeugtelegramme an den
-OBD-Anschluss weiterleitet, bleibt die passive CAN-Datei in der ersten Phase
-leer. Das ist ein verwertbares Testergebnis und kein Loggerfehler. Der
-PID-Scan erkennt ausschließlich standardisierte Service-01-Werte; unbekannte
-Porsche-UDS-Kennungen werden nicht durchprobiert.
-
-Während dieses Ablaufs sind `start`, `stop` und `obd on/off` absichtlich
-gesperrt. `discover end` stellt den
-vorherigen OBD-Zustand wieder her und schließt alle SD-Dateien.
+Die damit aufgezeichneten Sitzungen bleiben gültig und liegen in `testdata/`.
 
 ### Beifahrer-Kurventest (entfernt in 1.5.33)
 
