@@ -1165,6 +1165,49 @@ void setup() {
     Serial.println("Webseite bleibt erreichbar; CAN ist für Messfahrten nicht erforderlich.");
 }
 
+// Aufzeichnung ohne Handgriff starten, sobald die SD-Karte bereit ist.
+//
+// Das Gerät hängt nach STRECKENDATENBANK.md an zündungsgeschalteter Spannung:
+// Strom da bedeutet fahren, Strom weg bedeutet Fahrtende. Damit ist die
+// Versorgung selbst das Startsignal, und es braucht weder Bewegungserkennung
+// noch Zündungslogik noch einen Zustandsautomaten.
+//
+// Bewusst nicht an CAN gekoppelt. Die OBD-Geschwindigkeit ist zwar die
+// verbindliche erste Quelle aller Auswertungen, aber CAN ist für die
+// Systembereitschaft ausdrücklich optional. Hinge der Start an einer
+// OBD-Antwort, käme bei einem Busfehler gar keine Aufzeichnung zustande statt
+// einer ohne OBD-Werte - der schlechteste Fall für ein eingebautes Gerät.
+// GPS und OBD melden sich an, sobald sie können; ihre Felder tragen bis dahin
+// ihre eigenen Gültigkeitsflags.
+//
+// Der Start läuft über requestLoggingStart() und damit über dieselbe nicht
+// blockierende Startlogik wie der Webbefehl: Pro Schleifenrunde wird höchstens
+// eine Datei geöffnet, die Webseite bleibt erreichbar.
+void starteAufzeichnungSelbsttaetig() {
+    // Genau einmal je Gerätestart. Sonst würde ein manuelles `stop` oder
+    // /ride/stop sofort wieder überschrieben, und die Aufzeichnung ließe sich
+    // nicht mehr beenden.
+    static bool bereitsVersucht = false;
+    if (bereitsVersucht) {
+        return;
+    }
+    if (!sdLogger.isReady() || sdLogger.isLogging() ||
+        sdLogger.isLoggingStartPending()) {
+        return;
+    }
+
+    if (sdLogger.requestLoggingStart()) {
+        bereitsVersucht = true;
+        Serial.println("✅ Aufzeichnung selbsttätig gestartet");
+    } else {
+        // Kein erneuter Versuch in derselben Runde; isReady() hält den
+        // nächsten zurück, bis die Karte wieder bereit ist.
+        bereitsVersucht = true;
+        Serial.println(
+            "❌ Selbsttätiger Start fehlgeschlagen - 'start' bleibt möglich");
+    }
+}
+
 void loop() {
     static unsigned long previousLoopStartedAt = 0;
     static unsigned long lastCANCheck = 0;
@@ -1199,7 +1242,9 @@ void loop() {
     // anschließend höchstens eine SD-Startoperation ausgeführt, damit der
     // Webserver zwischen den Dateizugriffen weiter Anfragen bedienen kann.
     sdLogger.processLoggingStart();
-    
+
+    starteAufzeichnungSelbsttaetig();
+
     unsigned long currentTime = millis();
     handleHardwareRecovery(currentTime);
     gpsAvailable = gpsManager.isReady();

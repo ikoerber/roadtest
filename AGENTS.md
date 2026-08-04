@@ -1,7 +1,7 @@
 # ROADTEST Firmware
 
 ESP32-S3-Firmware zur Aufzeichnung von BNO055-, GPS-, Straßenqualitäts- und
-standardisierten OBD-II-Daten. Aktueller Firmwarestand: **1.5.41**.
+standardisierten OBD-II-Daten. Aktueller Firmwarestand: **1.5.42**.
 
 Der aktuelle Stand ist ein Hardware- und Fahrzeugteststand, nicht abschließend
 produktionsreif. Bekannte Einschränkungen stehen weiter unten.
@@ -18,8 +18,9 @@ Ergebnis, Einheit, Bewertungsablauf und Abnahmekriterien fest. Bei Zweifeln
 über den Nutzen einer Änderung entscheidet dieses Dokument.
 
 Der aktuelle Fokus ist **Stufe 1: die bewertete Karte**, und dort die
-Zuordnung der Fahrten zum Straßennetz. Am Gerät ist genau eine Anforderung
-offen: automatisches Starten und Beenden der Aufzeichnung.
+Zuordnung der Fahrten zum Straßennetz. Am Gerät ist das selbsttätige Starten
+seit 1.5.42 erledigt; offen bleiben der Datenzugriff übers Handy und der
+OTA-Rücksprung.
 
 Diese Codebasis lädt zum Abschweifen ein - Flush-Zeiten, Kartenlatenz,
 GPS-Aussetzer, OBD-Discovery, Kompression. Jedes dieser Themen ist für sich
@@ -83,10 +84,14 @@ Systemablauf:
 
 1. WLAN und Webseite starten vor den externen Hardwareprüfungen.
 2. BNO055, GPS, SD und optionales CAN werden nicht blockierend geprüft.
-3. Das OLED ist seit dem 03.08.2026 ausgebaut. Der BNO055 ist damit der
+3. Die Aufzeichnung startet seit 1.5.42 selbsttätig, sobald die SD-Karte
+   bereit ist - einmal je Gerätestart, über die nicht blockierende
+   Startlogik. Zündungsgeschaltete Spannung ist das Startsignal; `stop` und
+   `/ride/stop` behalten das letzte Wort.
+4. Das OLED ist seit dem 03.08.2026 ausgebaut. Der BNO055 ist damit der
    einzige I²C-Teilnehmer; Bus- und Sensorfehler sind über den Bus allein
    nicht mehr zu trennen.
-4. Die Hauptschleife bedient zuerst Web/OTA und anschließend Sensoren,
+5. Die Hauptschleife bedient zuerst Web/OTA und anschließend Sensoren,
    Logging, CAN/OBD und Diagnose.
 
 ## Verbindliche Hardware
@@ -312,9 +317,9 @@ Eigenschaften des Sitzungskopfes.
 
 ## Aktueller Teststand
 
-- Firmware 1.5.41 baut erfolgreich für `lolin_s3_mini`.
-- Letzter Build: 68.260 Byte RAM (20,8 %) und 1.156.526 Byte Flash (88,2 %).
-  1.5.41 gab 70.708 Byte frei; verfügbar sind damit 154.194 Byte.
+- Firmware 1.5.42 baut erfolgreich für `lolin_s3_mini`.
+- Letzter Build: 68.260 Byte RAM (20,8 %) und 1.156.738 Byte Flash (88,3 %).
+  1.5.41 gab 70.708 Byte frei; verfügbar sind damit 153.982 Byte.
 - Am 31.07.2026 liefen fünf Beifahrer-Referenzfahrten mit 1.5.28 und je zwölf
   markierten Referenzintervallen. Sie sind der Prüfstand der Kurvenerkennung.
 - 1.5.29 ist am Fahrzeug bestätigt: vier Fahrten am 01.08.2026 über 21 Minuten

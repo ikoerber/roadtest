@@ -683,6 +683,12 @@ Buslast steht in [OPTIMIERUNGEN.md](OPTIMIERUNGEN.md).
 
 ## 📈 Version History
 
+### v1.5.42 - Aufzeichnung startet ohne Handgriff
+- ✅ Sobald die SD-Karte bereit ist, beginnt die Aufzeichnung von allein;
+  zündungsgeschaltete Spannung ist das Startsignal
+- ✅ Nicht an CAN gekoppelt: Ein Busfehler kostet OBD-Werte, nicht die Fahrt
+- ✅ `stop` und `/ride/stop` behalten das letzte Wort
+
 ### v1.5.41 - Ballast für den Einbau ins Fahrzeug entfernt
 - ✅ Interaktive Testsuite entfernt (59,3 kByte, größtes Modul der Firmware);
   `hardware` und `buffer` bleiben, sie lagen nie in diesem Modul

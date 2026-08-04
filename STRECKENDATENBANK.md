@@ -29,9 +29,9 @@ Das Gerät erfasst und zeigt live an. Die Auswertung läuft auf dem Rechner.
 Karten- und Straßeninformationen kommen aus offenen Daten und einer
 Routenplanung auf dem Rechner, niemals aus dem Gerät.
 
-Der Flash des LOLIN S3 Mini steht bei über 93 Prozent. Für Kartendaten oder
-Bewertungsmodelle ist dort ohnehin kein Platz, und das ist eher ein Glücksfall
-als eine Einschränkung: Die Trennung bleibt auch dann bestehen, wenn eine
+Der Flash des LOLIN S3 Mini stand vor dem Aufräumen von 1.5.41 bei 93,6 und
+liegt jetzt bei 88,3 Prozent. Für Kartendaten oder Bewertungsmodelle ist dort
+auch so kein Platz, und das ist eher ein Glücksfall als eine Einschränkung: Die Trennung bleibt auch dann bestehen, wenn eine
 Funktion auf dem Gerät kurzfristig bequemer wäre.
 
 ## Die härteste Anforderung: ohne Mühe
@@ -46,10 +46,14 @@ Weboberfläche starten, teils ein Beifahrer für die Urteile, am Ende stoppen,
 danach die Karte ziehen. Das trägt fünf Fahrten. Die Datenbank entsteht erst
 bei zweihundert.
 
-Daraus folgt für die Firmware genau eine offene Anforderung: **automatisches
-Starten und Beenden der Aufzeichnung.** Der Messstart ist heute verbindlich
-manuell. Die Bausteine sind vorhanden - die getrennte Zündungs- und
-Motorlauferkennung ist am Fahrzeug bestätigt.
+**Mit 1.5.42 startet die Aufzeichnung selbsttätig**, sobald die SD-Karte
+bereit ist. Ein eigenes Beenden braucht es nicht: Mit zündungsgeschalteter
+Spannung endet die Fahrt durch Wegfall der Versorgung. Dabei geht höchstens ein
+Flush-Umlauf von knapp fünf Sekunden verloren, und zwar genau der Abschnitt,
+in dem das Fahrzeug bereits steht.
+
+Der Start ist bewusst **nicht** an CAN gekoppelt. Ein Busfehler kostet dann die
+OBD-Werte, nicht die ganze Fahrt.
 
 Der zweite Engpass ist das Auslesen. Die Karte zu ziehen ist bei einer Fahrt
 pro Woche gleichgültig und bei täglichen Fahrten der Grund, warum die Datenbank
@@ -149,8 +153,9 @@ Die Fahrspaß-Formel gehört ausdrücklich nicht zu diesen Kriterien.
 3. Karte über den gesamten Bestand.
 4. Erst danach: Modell und Routengenerator.
 
-Das automatische Starten und Beenden am Gerät läuft daneben und ist von dieser
-Reihenfolge unabhängig.
+Am Gerät ist das selbsttätige Starten mit 1.5.42 erledigt. Offen bleiben der
+Datenzugriff übers Handy und der OTA-Rücksprung; beide laufen neben dieser
+Reihenfolge und sind von ihr unabhängig.
 
 **Die bereits vorhandenen Messdaten sind für die Schritte 1 bis 3 das richtige
 Material.** Die 318 km aus 39 Sitzungen bis zum 04.08.2026 sind Testfahrten

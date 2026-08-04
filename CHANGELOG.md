@@ -5,6 +5,46 @@ Alle wichtigen Änderungen am ESP32-S3 Straßenqualitäts-Messsystem werden in d
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt hält sich an [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.42] - 2026-08-04
+
+### Hinzugefügt: Aufzeichnung startet ohne Handgriff
+
+Das Gerät hängt nach `STRECKENDATENBANK.md` an zündungsgeschalteter Spannung.
+Damit ist die Versorgung selbst das Startsignal: Strom da bedeutet fahren,
+Strom weg bedeutet Fahrtende. Sobald die SD-Karte bereit ist, beginnt die
+Aufzeichnung von allein - keine Bewegungserkennung, keine Zündungslogik, kein
+Zustandsautomat.
+
+Der Start läuft über `requestLoggingStart()` und damit über dieselbe nicht
+blockierende Startlogik wie der Webbefehl; pro Schleifenrunde wird höchstens
+eine Datei geöffnet, die Webseite bleibt erreichbar. Er erfolgt genau einmal je
+Gerätestart, sonst ließe sich eine laufende Aufzeichnung nicht mehr beenden:
+`stop` und `/ride/stop` behalten das letzte Wort.
+
+**Bewusst nicht an CAN gekoppelt.** Die OBD-Geschwindigkeit ist zwar die
+verbindliche erste Quelle aller Auswertungen - über den Prüfstand belegt mit
+174 gegenüber 128 Ereignissen allein mit GPS -, aber CAN ist für die
+Systembereitschaft ausdrücklich optional. Hinge der Start an einer OBD-Antwort,
+entstünde bei einem Busfehler gar keine Aufzeichnung statt einer ohne
+OBD-Werte. Für ein eingebautes Gerät ist das der schlechteste Fall: ein
+stiller Totalausfall statt einer unvollständigen Fahrt. GPS und OBD melden sich
+an, sobald sie können; bis dahin tragen ihre Felder ihre eigenen
+Gültigkeitsflags.
+
+### Nicht umgesetzt: Sitzungen ohne Bewegung verwerfen
+
+Geplant war, eine Sitzung beim Beenden zu verwerfen, wenn sie nie 5 km/h
+gesehen hat - gegen Kleinstsitzungen vom Rangieren. Beim Umsetzen zeigte sich,
+dass die Regel im Zielaufbau fast nie greifen würde: Mit
+zündungsgeschalteter Spannung endet eine Fahrt durch Wegfall der Versorgung,
+und dann läuft `stopLogging()` überhaupt nicht. Genau die Sitzungen, die
+verworfen werden sollten, enden ebenso.
+
+Der Filter gehört damit auf den Rechner, wo die Auswertung ohnehin liegt.
+Kleinstsitzungen kosten dort nichts: Ohne 5 km/h entstehen weder Kurven noch
+Schlaglöcher noch Abschnittsbewertungen, eine solche Sitzung enthält also
+Rohzeilen und keine Ergebnisse.
+
 ## [1.5.41] - 2026-08-04
 
 ### Entfernt: Ballast für den Einbau ins Fahrzeug
