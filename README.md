@@ -683,6 +683,14 @@ Buslast steht in [OPTIMIERUNGEN.md](OPTIMIERUNGEN.md).
 
 ## 📈 Version History
 
+### v1.5.44 - Rücksprung auf die vorherige Firmware
+- ✅ Ein frisch eingespieltes Abbild bestätigt sich erst nach 15 Sekunden mit
+  erreichbarer Weboberfläche; vorher springt ein Neustart zurück
+- ✅ Geprüft wird nur die Erreichbarkeit, nicht die Messkette - eine fehlende
+  SD-Karte verwirft keine gute Firmware
+- ⚠️ Nach einem OTA-Update 15 Sekunden warten, bevor die Zündung ausgeht
+- ✅ `diag` zeigt Partition und Firmwarezustand
+
 ### v1.5.43 - Daten übers Handy holen
 - ✅ `/files` gibt jede Sitzung als ein `.tar.gz` aus, komprimiert über den
   ROM-Kompressor des ESP32-S3 (kostet keinen Flash)

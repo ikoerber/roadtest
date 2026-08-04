@@ -5,6 +5,39 @@ Alle wichtigen Änderungen am ESP32-S3 Straßenqualitäts-Messsystem werden in d
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt hält sich an [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.44] - 2026-08-04
+
+### Hinzugefügt: Rücksprung auf die vorherige Firmware
+
+Ein fehlerhaftes Abbild macht ein eingebautes Gerät zum Ausbauteil. Der
+Bootloader des ESP32-S3 kann das auffangen -
+`CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE` ist im Arduino-Unterbau gesetzt -,
+aber der Mechanismus lief bisher ins Leere: `initArduino()` markiert jedes
+Abbild als gültig, **bevor `setup()` überhaupt läuft**. Damit galt alles als
+gut, was bis zur Arduino-Initialisierung kam, auch eine Firmware, die danach
+abstürzt oder deren WLAN nicht mehr hochkommt.
+
+Die Firmware übernimmt die Bestätigung jetzt selbst. Über den vom Kern
+vorgesehenen Haken `verifyRollbackLater()` bleibt das Abbild im Zustand
+`PENDING_VERIFY`, bis es sich als lauffähig erwiesen hat. Startet es vorher
+neu, verwirft der Bootloader es und bootet die vorherige Partition.
+
+**Geprüft wird ausdrücklich nur die Erreichbarkeit**, nicht die Messkette.
+Eine fehlende SD-Karte oder ein stummer BNO055 sind Hardwarezustände; ein
+Rücksprung würde daran nichts ändern und nur eine gute Version verwerfen.
+Entscheidend ist allein, ob sich das Gerät noch erreichen lässt, um erneut zu
+flashen - also `webManager.isReady()` und `FIRMWARE_CONFIRM_UPTIME_MS`
+Laufzeit.
+
+Das Fenster ist mit 15 Sekunden bewusst kurz. Mit zündungsgeschalteter
+Spannung startet das Gerät bei jeder Fahrt neu, und ein Neustart vor der
+Bestätigung löst den Rücksprung aus. Ein langes Fenster verwürfe irgendwann
+eine einwandfreie Firmware, nur weil jemand kurz umgeparkt hat.
+
+**Nach einem OTA-Update deshalb 15 Sekunden warten**, bevor die Zündung
+ausgeht. `diag` zeigt den Zustand: „bestätigt" oder „noch unbestätigt -
+Neustart springt zurück".
+
 ## [1.5.43] - 2026-08-04
 
 ### Hinzugefügt: Daten übers Handy holen

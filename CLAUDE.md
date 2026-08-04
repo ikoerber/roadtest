@@ -1,7 +1,7 @@
 # ROADTEST Firmware
 
 ESP32-S3-Firmware zur Aufzeichnung von BNO055-, GPS-, Straßenqualitäts- und
-standardisierten OBD-II-Daten. Aktueller Firmwarestand: **1.5.43**.
+standardisierten OBD-II-Daten. Aktueller Firmwarestand: **1.5.44**.
 
 Der aktuelle Stand ist ein Hardware- und Fahrzeugteststand, nicht abschließend
 produktionsreif. Bekannte Einschränkungen stehen weiter unten.
@@ -19,8 +19,9 @@ Ergebnis, Einheit, Bewertungsablauf und Abnahmekriterien fest. Bei Zweifeln
 
 Der aktuelle Fokus ist **Stufe 1: die bewertete Karte**, und dort die
 Zuordnung der Fahrten zum Straßennetz. Am Gerät ist das selbsttätige Starten
-seit 1.5.42 erledigt, der Datenzugriff übers Handy seit 1.5.43; offen bleibt
-der OTA-Rücksprung.
+seit 1.5.42 erledigt, der Datenzugriff übers Handy seit 1.5.43 und der
+OTA-Rücksprung seit 1.5.44. Offen ist am Gerät nur noch die GPS-Antenne, und
+die ist Hardware.
 
 Diese Codebasis lädt zum Abschweifen ein - Flush-Zeiten, Kartenlatenz,
 GPS-Aussetzer, OBD-Discovery, Kompression. Jedes dieser Themen ist für sich
@@ -144,6 +145,13 @@ Wichtige Invarianten:
 - Die Gesamtrate aktiver OBD-Anfragen bleibt auf höchstens zwei Frames pro
   Sekunde begrenzt.
 - Während Browser-OTA CAN-H und CAN-L vom Fahrzeug trennen.
+- **Nach einem OTA-Update 15 Sekunden warten, bevor die Zündung ausgeht.**
+  Seit 1.5.44 bestätigt sich ein frisch eingespieltes Abbild erst nach
+  `FIRMWARE_CONFIRM_UPTIME_MS` mit erreichbarer Weboberfläche selbst; ein
+  Neustart davor verwirft es und bootet die vorherige Partition. `diag` nennt
+  den Zustand. Geprüft wird bewusst nur die Erreichbarkeit und nicht die
+  Messkette: Eine fehlende SD-Karte ist ein Hardwarezustand und darf keine
+  gute Firmware verwerfen.
 
 ## Fahrzeugdaten-Erkennung
 
@@ -321,8 +329,8 @@ Eigenschaften des Sitzungskopfes.
 
 ## Aktueller Teststand
 
-- Firmware 1.5.43 baut erfolgreich für `lolin_s3_mini`.
-- Letzter Build: 69.796 Byte RAM (21,3 %) und 1.166.174 Byte Flash (89,0 %).
+- Firmware 1.5.44 baut erfolgreich für `lolin_s3_mini`.
+- Letzter Build: 69.796 Byte RAM (21,3 %) und 1.166.830 Byte Flash (89,0 %).
   1.5.41 gab 70.708 Byte frei; verfügbar sind damit 153.982 Byte.
 - Am 31.07.2026 liefen fünf Beifahrer-Referenzfahrten mit 1.5.28 und je zwölf
   markierten Referenzintervallen. Sie sind der Prüfstand der Kurvenerkennung.

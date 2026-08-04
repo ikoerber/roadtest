@@ -7,6 +7,7 @@
 #include <SPI.h>
 #include "esp_log.h"
 #include "esp_task_wdt.h"
+#include "esp_ota_ops.h"
 #include "hardware_config.h"
 #include "buffer_utils.h"
 #include "can_reader.h"
@@ -1165,6 +1166,69 @@ void setup() {
     Serial.println("Webseite bleibt erreichbar; CAN ist für Messfahrten nicht erforderlich.");
 }
 
+// Die Bestätigung eines frisch eingespielten Abbilds übernimmt diese Firmware
+// selbst, nicht der Arduino-Kern.
+//
+// Ohne diesen Haken markiert `initArduino()` jedes Abbild als gültig, bevor
+// `setup()` überhaupt läuft. Damit gilt alles als gut, was bis zur
+// Arduino-Initialisierung kommt - auch eine Firmware, die danach abstürzt oder
+// deren WLAN nicht mehr hochkommt. Für ein Gerät hinter der Verkleidung ist
+// gerade das der teure Fall: Ohne erreichbare Weboberfläche gibt es keinen Weg
+// mehr, ein neues Abbild einzuspielen.
+//
+// Der Bootloader des ESP32-S3 kann das auffangen (CONFIG_BOOTLOADER_APP_
+// ROLLBACK_ENABLE ist gesetzt): Ein Abbild im Zustand PENDING_VERIFY, das
+// neu startet, ohne sich bestätigt zu haben, wird verworfen und die vorherige
+// Partition wieder gebootet.
+extern "C" bool verifyRollbackLater() { return true; }
+
+// Frisch eingespieltes Abbild bestätigen, sobald es sich als lauffähig
+// erwiesen hat.
+//
+// Geprüft wird ausdrücklich **nur die Erreichbarkeit**, nicht die Messkette.
+// Eine fehlende SD-Karte oder ein stummer BNO055 sind Hardwarezustände; ein
+// Rücksprung auf die vorherige Firmware würde daran nichts ändern und nur eine
+// gute Version verwerfen. Entscheidend ist allein, ob sich das Gerät noch
+// erreichen lässt, um erneut zu flashen.
+//
+// Das Fenster ist bewusst kurz. Mit zündungsgeschalteter Spannung startet das
+// Gerät bei jeder Fahrt neu, und ein Neustart im Zustand PENDING_VERIFY löst
+// den Rücksprung aus. Ein langes Fenster verwürfe deshalb irgendwann eine
+// einwandfreie Firmware, nur weil jemand kurz umgeparkt hat.
+void bestaetigeFirmwareWennLauffaehig() {
+    static bool erledigt = false;
+    if (erledigt) {
+        return;
+    }
+
+    const esp_partition_t* laufend = esp_ota_get_running_partition();
+    esp_ota_img_states_t zustand;
+    if (laufend == nullptr ||
+        esp_ota_get_state_partition(laufend, &zustand) != ESP_OK) {
+        // Werkspartition nach USB-Flash: Es gibt nichts zu bestätigen.
+        erledigt = true;
+        return;
+    }
+    if (zustand != ESP_OTA_IMG_PENDING_VERIFY) {
+        erledigt = true;
+        return;
+    }
+
+    if (millis() < FIRMWARE_CONFIRM_UPTIME_MS || !webManager.isReady()) {
+        return;
+    }
+
+    erledigt = true;
+    if (esp_ota_mark_app_valid_cancel_rollback() == ESP_OK) {
+        Serial.println(
+            "✅ Firmware bestätigt; kein Rücksprung mehr beim Neustart");
+    } else {
+        Serial.println(
+            "⚠️ Firmware konnte nicht bestätigt werden - der nächste Neustart "
+            "springt auf die vorherige Version zurück");
+    }
+}
+
 // Aufzeichnung ohne Handgriff starten, sobald die SD-Karte bereit ist.
 //
 // Das Gerät hängt nach STRECKENDATENBANK.md an zündungsgeschalteter Spannung:
@@ -1243,6 +1307,7 @@ void loop() {
     // Webserver zwischen den Dateizugriffen weiter Anfragen bedienen kann.
     sdLogger.processLoggingStart();
 
+    bestaetigeFirmwareWennLauffaehig();
     starteAufzeichnungSelbsttaetig();
 
     unsigned long currentTime = millis();
@@ -1762,6 +1827,30 @@ void loop() {
             Serial.printf(
                 "Pflichthardware bereit: %s\n",
                 requiredHardwareReady() ? "ja" : "nein");
+
+            // Ohne diese Zeile bliebe unsichtbar, ob das laufende Abbild
+            // bestätigt ist oder beim nächsten Neustart zurückspringt.
+            const esp_partition_t* laufend = esp_ota_get_running_partition();
+            esp_ota_img_states_t otaZustand;
+            if (laufend != nullptr &&
+                esp_ota_get_state_partition(laufend, &otaZustand) == ESP_OK) {
+                const char* text = "unbekannt";
+                switch (otaZustand) {
+                    case ESP_OTA_IMG_VALID: text = "bestätigt"; break;
+                    case ESP_OTA_IMG_PENDING_VERIFY:
+                        text = "noch unbestätigt - Neustart springt zurück";
+                        break;
+                    case ESP_OTA_IMG_NEW: text = "neu, noch nicht gebootet"; break;
+                    case ESP_OTA_IMG_ABORTED: text = "verworfen"; break;
+                    case ESP_OTA_IMG_INVALID: text = "ungültig"; break;
+                    case ESP_OTA_IMG_UNDEFINED: text = "ohne Zustand"; break;
+                }
+                Serial.printf("Partition: %s, Firmwarezustand: %s\n",
+                              laufend->label, text);
+            } else {
+                Serial.println(
+                    "Partition: Werksabbild ohne OTA-Zustand");
+            }
             Serial.printf("Free Heap: %lu Bytes\n",
                           (unsigned long)ESP.getFreeHeap());
             Serial.printf("Heap Size: %lu Bytes\n",

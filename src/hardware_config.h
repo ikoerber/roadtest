@@ -7,7 +7,7 @@
 // Zentrale Pin-Konfiguration für das Straßenqualitäts-Messsystem
 // Alle Hardware-spezifischen Pin-Zuordnungen sind hier definiert
 
-#define ROADTEST_FIRMWARE_VERSION "1.5.43"
+#define ROADTEST_FIRMWARE_VERSION "1.5.44"
 #define ROADTEST_FIRMWARE_FILE_NAME \
     "roadtest_" ROADTEST_FIRMWARE_VERSION ".bin"
 // Die Metadatendatei trägt seit 1.5.38 zusätzlich `FlushMaxStep` hinter
@@ -119,6 +119,16 @@ extern const int GPS_BAUD_RATE;    // 9600    - GPS Baudrate
 // wurde entfernt, die Mindestzeit bleibt für bestehende serielle Tests
 // verbindlich.
 #define ACCEPTANCE_INITIAL_STAND_MS         60000UL
+
+// OTA-Rücksprung: So lange muss ein frisch eingespieltes Abbild mit
+// erreichbarer Weboberfläche gelaufen sein, bevor es sich selbst bestätigt.
+//
+// Kurz gewählt, weil zündungsgeschaltete Spannung bei jeder Fahrt einen
+// Neustart erzeugt und ein Neustart vor der Bestätigung den Rücksprung
+// auslöst. Ein langes Fenster verwürfe irgendwann eine einwandfreie Firmware,
+// nur weil jemand kurz umgeparkt hat. Fünfzehn Sekunden liegen deutlich über
+// dem Hochlauf von WLAN und Webserver und unter jedem realen Zündungszyklus.
+#define FIRMWARE_CONFIRM_UPTIME_MS         15000UL
 
 // Laufzeitdiagnose: 250 ms verfehlen bereits zwei 10-Hz-Sensorzeitpunkte und
 // mindestens einen 5-Hz-GPS-Snapshot. Verlorene Slots werden zusätzlich

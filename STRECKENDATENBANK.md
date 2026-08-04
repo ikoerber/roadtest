@@ -157,9 +157,10 @@ Die Fahrspaß-Formel gehört ausdrücklich nicht zu diesen Kriterien.
 3. Karte über den gesamten Bestand.
 4. Erst danach: Modell und Routengenerator.
 
-Am Gerät ist das selbsttätige Starten mit 1.5.42 erledigt. Offen bleiben der
-Datenzugriff übers Handy und der OTA-Rücksprung; beide laufen neben dieser
-Reihenfolge und sind von ihr unabhängig.
+Am Gerät sind das selbsttätige Starten (1.5.42), der Datenzugriff übers Handy
+(1.5.43) und der Rücksprung auf die vorherige Firmware (1.5.44) erledigt.
+Offen ist dort nur noch die GPS-Antenne - der einzige nie erklärte Fehler des
+Systems und damit das, was vor dem endgültigen Einbau zu klären bleibt.
 
 **Die bereits vorhandenen Messdaten sind für die Schritte 1 bis 3 das richtige
 Material.** Die 318 km aus 39 Sitzungen bis zum 04.08.2026 sind Testfahrten
