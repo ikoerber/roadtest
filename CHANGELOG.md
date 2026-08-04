@@ -5,6 +5,45 @@ Alle wichtigen Änderungen am ESP32-S3 Straßenqualitäts-Messsystem werden in d
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt hält sich an [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.48] - 2026-08-04
+
+### Behoben: Der Download meldet jetzt, was er tut
+
+Die Aufschlüsselung aus 1.5.45 schrieb ausschließlich am Ende des Downloads.
+Jeder vorzeitige Ausstieg - 400, 409, 404, 503 - und jedes Hängenbleiben
+mitten in der Übertragung erzeugte damit **gar keine Ausgabe**. „Keine Zeile"
+war so nicht von „langsam" zu unterscheiden, und die Suche nach der Ursache
+lief ins Leere.
+
+Jeder Ausgang meldet sich jetzt einzeln, dazu die Übertragung im
+Sekundentakt mit gelesener und gesendeter Menge sowie den Zeiten für Lesen und
+Senden. Bleibt der Download stehen, zeigt die letzte Zeile die Stelle.
+
+### Behoben: Löschen scheiterte still
+
+`File::name()` liefert je nach Version der SD-Bibliothek den vollen Pfad oder
+nur den Dateinamen. `SD.remove()` braucht den vollen. Mit dem blossen Namen
+schlug das Löschen still fehl - der Zähler blieb bei null und das Verzeichnis
+stand mitsamt Dateien weiter auf der Karte. Der Pfad wird jetzt aus
+Sitzungsverzeichnis und Dateiname gebaut.
+
+### Stand der Messungen
+
+Drei Stufen, zwei davon entlastet:
+
+| Stufe | gemessen | erklärt 40 Byte/s |
+|---|---:|---|
+| WLAN | 190 kB/s | nein |
+| Kompression | 2.670 kB/s | nein |
+| SD-Lesen | offen | ? |
+
+`bench` ergab 64 kB in 24 ms. Der Wert ist optimistisch, weil die Testdaten
+mit Faktor 190 zu gleichförmig sind - echte Messdaten packen sich 8- bis
+zwölffach und kosten mehr Rechenzeit. Selbst mit zehnfachem Aufschlag bliebe
+die Kompression tausendfach schneller als nötig. PSRAM ist gesund (2 MB, davon
+2,01 frei), intern sind 221 kB frei; der Kompressor mit seinen 133 kB würde
+also hineinpassen, wird dort aber nicht gebraucht.
+
 ## [1.5.47] - 2026-08-04
 
 ### Hinzugefügt: `bench` misst den Kompressionsdurchsatz allein

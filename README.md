@@ -638,6 +638,11 @@ Buslast steht in [OPTIMIERUNGEN.md](OPTIMIERUNGEN.md).
 
 ## 📈 Version History
 
+### v1.5.48 - Der Download meldet, was er tut
+- ✅ Jeder Ausgang meldet sich; vorher schrieb nur das Ende, ein Abbruch gar nichts
+- ✅ Fortschritt im Sekundentakt mit Lese- und Sendezeiten
+- ✅ Löschen scheiterte still, weil `SD.remove()` den vollen Pfad braucht
+
 ### v1.5.47 - `bench` misst den Kompressionsdurchsatz
 - ✅ Kompression ohne Karte und ohne Netz messbar, dazu freier Speicher
 - ⚠️ 40 Byte/s wurden mit 1.5.46 gemessen - die Blockgröße war es also nicht

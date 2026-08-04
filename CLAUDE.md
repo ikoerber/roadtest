@@ -1,7 +1,7 @@
 # ROADTEST Firmware
 
 ESP32-S3-Firmware zur Aufzeichnung von BNO055-, GPS-, Straßenqualitäts- und
-standardisierten OBD-II-Daten. Aktueller Firmwarestand: **1.5.47**.
+standardisierten OBD-II-Daten. Aktueller Firmwarestand: **1.5.48**.
 
 Der aktuelle Stand ist ein Hardware- und Fahrzeugteststand, nicht abschließend
 produktionsreif. Bekannte Einschränkungen stehen weiter unten.
@@ -339,8 +339,8 @@ Eigenschaften des Sitzungskopfes.
 
 ## Aktueller Teststand
 
-- Firmware 1.5.47 baut erfolgreich für `lolin_s3_mini`.
-- Letzter Build: 82.076 Byte RAM (25,0 %) und 1.170.102 Byte Flash (89,3 %).
+- Firmware 1.5.48 baut erfolgreich für `lolin_s3_mini`.
+- Letzter Build: 82.076 Byte RAM (25,0 %) und 1.170.862 Byte Flash (89,3 %).
 - Am Gerät gemessen: `sendContent()` kostet 4,57 ms Fixaufwand je Aufruf plus
   2 µs je Byte; die Grenzrate des WLAN liegt bei rund 500 kB/s. Deshalb
   puffert die Downloadsenke seit 1.5.46 auf 4 kB.

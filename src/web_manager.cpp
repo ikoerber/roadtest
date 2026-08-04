@@ -1082,12 +1082,19 @@ void WebManager::handleSpeedtest() {
 // ROM-Kompressor bleibt davon etwa ein Achtel bis Zwölftel, ohne ein Byte
 // Flash zu kosten.
 void WebManager::handleSessionDownload() {
+    // Jeder Ausgang meldet sich. Die frühere Fassung schrieb ausschließlich am
+    // Ende; ein vorzeitiger Ausstieg oder ein Hänger erzeugte damit gar keine
+    // Ausgabe, und "keine Zeile" war nicht von "langsam" zu unterscheiden.
     const String id = server.arg("s");
+    Serial.printf("Download angefragt: '%s'\n", id.c_str());
+
     if (!istGueltigeSitzungsId(id)) {
+        Serial.println("  -> abgelehnt: ungültige Sitzungs-ID");
         server.send(400, "text/plain; charset=utf-8", "Ungültige Sitzung");
         return;
     }
     if (sdLogger.isLogging() || sdLogger.isLoggingStartPending()) {
+        Serial.println("  -> abgelehnt: Aufzeichnung läuft");
         server.send(409, "text/plain; charset=utf-8",
                     "Aufzeichnung läuft - zuerst beenden");
         return;
@@ -1099,6 +1106,8 @@ void WebManager::handleSessionDownload() {
         if (verzeichnis) {
             verzeichnis.close();
         }
+        Serial.printf("  -> abgelehnt: %s ist kein Verzeichnis\n",
+                      pfad.c_str());
         server.send(404, "text/plain; charset=utf-8", "Sitzung nicht gefunden");
         return;
     }
@@ -1109,10 +1118,12 @@ void WebManager::handleSessionDownload() {
         verzeichnis.close();
         // Ohne PSRAM gibt es keinen Kompressor. Unkomprimiert auszuliefern ist
         // ausdrücklich ausgeschlossen; die Karte bleibt dann der Weg.
+        Serial.println("  -> abgelehnt: Kompressor nicht verfügbar");
         server.send(503, "text/plain; charset=utf-8",
                     "Kompression nicht verfügbar - Karte auslesen");
         return;
     }
+    Serial.println("  -> Übertragung beginnt");
 
     server.setContentLength(CONTENT_LENGTH_UNKNOWN);
     server.sendHeader("Content-Disposition",
@@ -1126,6 +1137,7 @@ void WebManager::handleSessionDownload() {
     // die Karte, der Kompressor oder das WLAN bremst.
     const unsigned long downloadBegonnen = millis();
     unsigned long leseMs = 0;
+    unsigned long letzteMeldung = downloadBegonnen;
     uint32_t rohBytes = 0;
 
     File datei = verzeichnis.openNextFile();
@@ -1138,18 +1150,39 @@ void WebManager::handleSessionDownload() {
             tarWriteHeader(block, (id + "/" + kurz).c_str(), groesse);
             strom.write(block, sizeof(block));
 
+            Serial.printf("  Datei %s (%lu Byte)\n", kurz.c_str(),
+                          static_cast<unsigned long>(groesse));
+
             uint32_t uebertragen = 0;
             while (uebertragen < groesse && !senke.wurdeAbgebrochen()) {
                 const unsigned long leseBegonnen = millis();
                 const size_t gelesen = datei.read(puffer, sizeof(puffer));
                 leseMs += millis() - leseBegonnen;
                 if (gelesen == 0) {
+                    Serial.printf("  ! read() lieferte 0 nach %lu von %lu Byte\n",
+                                  static_cast<unsigned long>(uebertragen),
+                                  static_cast<unsigned long>(groesse));
                     break;
                 }
                 strom.write(puffer, gelesen);
                 uebertragen += gelesen;
                 rohBytes += gelesen;
                 esp_task_wdt_reset();
+
+                // Fortschritt im Sekundentakt. Bleibt der Download stehen,
+                // zeigt die letzte Zeile, an welcher Stelle - ohne sie war
+                // ein Hänger von langsamer Übertragung nicht zu trennen.
+                const unsigned long jetzt = millis();
+                if (jetzt - letzteMeldung >= 1000) {
+                    letzteMeldung = jetzt;
+                    const unsigned long lauf = jetzt - downloadBegonnen;
+                    Serial.printf(
+                        "    %lu kB gelesen, %lu kB gesendet, %lu ms "
+                        "(lesen %lu, senden %lu)\n",
+                        static_cast<unsigned long>(rohBytes / 1024),
+                        static_cast<unsigned long>(senke.gesendeteBytes() / 1024),
+                        lauf, leseMs, senke.sendedauerMs());
+                }
             }
 
             // tar füllt jede Datei auf ein Vielfaches von 512 auf.
@@ -1235,10 +1268,15 @@ void WebManager::handleSessionDelete() {
     uint16_t geloescht = 0;
     File datei = verzeichnis.openNextFile();
     while (datei) {
-        const String name = String(datei.name());
+        // name() liefert je nach Version der SD-Bibliothek den vollen Pfad
+        // oder nur den Dateinamen. SD.remove() braucht den vollen; mit dem
+        // blossen Namen schlaegt es still fehl, und das Verzeichnis bliebe
+        // mitsamt Dateien stehen. Deshalb wird der Pfad hier gebaut.
+        const String roh = String(datei.name());
+        const String kurz = roh.substring(roh.lastIndexOf('/') + 1);
         const bool istVerzeichnis = datei.isDirectory();
         datei.close();
-        if (!istVerzeichnis && SD.remove(name)) {
+        if (!istVerzeichnis && SD.remove(pfad + "/" + kurz)) {
             geloescht++;
         }
         datei = verzeichnis.openNextFile();
