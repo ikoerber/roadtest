@@ -638,6 +638,11 @@ Buslast steht in [OPTIMIERUNGEN.md](OPTIMIERUNGEN.md).
 
 ## 📈 Version History
 
+### v1.5.45 - Download messen statt vermuten
+- ✅ `/speedtest?kb=1024&bs=1460` misst das WLAN ohne Karte und Kompression
+- ✅ Der echte Download schlüsselt SD-Lesen, Komprimieren und Senden getrennt auf
+- ✅ Abbruch der Gegenseite wird bemerkt statt in einen toten Socket zu schreiben
+
 ### v1.5.44 - Rücksprung auf die vorherige Firmware
 - ✅ Ein frisch eingespieltes Abbild bestätigt sich erst nach 15 Sekunden mit
   erreichbarer Weboberfläche; vorher springt ein Neustart zurück

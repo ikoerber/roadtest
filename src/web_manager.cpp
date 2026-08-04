@@ -86,15 +86,35 @@ class HttpChunkSink : public GzipSink {
 public:
     explicit HttpChunkSink(WebServer& server) : server(server) {}
     size_t write(const uint8_t* data, size_t length) override {
+        // Bricht die Gegenseite ab, meldet sendContent() das nicht. Ohne diese
+        // Prüfung schreibt die Schleife bis zum Dateiende in einen toten
+        // Socket weiter - von außen sieht das aus wie ein Hänger.
+        if (!server.client().connected()) {
+            abgebrochen = true;
+            return 0;
+        }
+        const unsigned long begonnen = millis();
         server.sendContent(reinterpret_cast<const char*>(data), length);
+        sendeMs += millis() - begonnen;
+        bloecke++;
+        gesendet += length;
         // Ein langer Download hält die Hauptschleife an. Ohne diesen Reset
         // greift der Task-Watchdog mitten in der Übertragung.
         esp_task_wdt_reset();
         return length;
     }
 
+    bool wurdeAbgebrochen() const { return abgebrochen; }
+    unsigned long sendedauerMs() const { return sendeMs; }
+    uint32_t blockzahl() const { return bloecke; }
+    uint32_t gesendeteBytes() const { return gesendet; }
+
 private:
     WebServer& server;
+    unsigned long sendeMs = 0;
+    uint32_t bloecke = 0;
+    uint32_t gesendet = 0;
+    bool abgebrochen = false;
 };
 
 void appendCalibrationStep(
@@ -307,6 +327,10 @@ bool WebManager::begin() {
 
     server.on("/files/delete", HTTP_POST, [this]() {
         handleSessionDelete();
+    });
+
+    server.on("/speedtest", HTTP_GET, [this]() {
+        handleSpeedtest();
     });
 
     // Die Beifahrerseite /fahrbahn ist mit STRECKENDATENBANK.md entfallen.
@@ -934,8 +958,73 @@ String WebManager::buildFilesPage(const String& message) {
     page += F(
         "<p class='m'>Das Archiv enthält die Sitzung als Verzeichnis. Am "
         "Rechner mit <code>tar xzf</code> auspacken.</p>"
+        "<p class='m'>Dauert ein Download auffällig lange: "
+        "<a href='/speedtest?kb=1024&amp;bs=1460'>WLAN messen</a> - "
+        "1 MB ohne Karte und ohne Kompression, das Ergebnis steht am Ende "
+        "der Antwort.</p>"
         "<p><a class='btn' href='/'>Zur Statusseite</a></p></body></html>");
     return page;
+}
+
+// Reine WLAN-Messung ohne SD und ohne Kompression.
+//
+// Der Download durchläuft drei Stufen - von der Karte lesen, komprimieren,
+// über WLAN senden -, und die Gesamtdauer sagt nicht, welche davon bremst.
+// Dieser Endpunkt misst die dritte allein: Nutzdaten aus dem Arbeitsspeicher,
+// sonst derselbe Weg. Ergebnis ist die Obergrenze, die der echte Download
+// niemals überschreiten kann.
+//
+// `kb` wählt die Datenmenge, `bs` die Blockgröße je sendContent(). Der zweite
+// Parameter ist der eigentliche Verdacht: Der Kompressor gibt seine Blöcke in
+// der Größe aus, die ihm passt, und jeder Aufruf erzeugt einen eigenen
+// HTTP-Chunk mit eigenem Kopf. Viele kleine Blöcke kosten Durchsatz.
+//
+//   http://192.168.4.1/speedtest?kb=1024&bs=4096
+void WebManager::handleSpeedtest() {
+    long kb = server.arg("kb").toInt();
+    if (kb <= 0 || kb > 8192) {
+        kb = 1024;
+    }
+    long bs = server.arg("bs").toInt();
+    if (bs <= 0 || bs > 8192) {
+        bs = 1460;  // eine TCP-Nutzlast bei 1500 Byte MTU
+    }
+
+    static uint8_t muster[8192];
+    for (size_t i = 0; i < sizeof(muster); ++i) {
+        muster[i] = static_cast<uint8_t>('A' + (i % 26));
+    }
+
+    server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+    server.send(200, "text/plain; charset=utf-8", "");
+
+    const uint32_t gesamt = static_cast<uint32_t>(kb) * 1024;
+    uint32_t gesendet = 0;
+    const unsigned long begonnen = millis();
+    while (gesendet < gesamt && server.client().connected()) {
+        const size_t block = static_cast<size_t>(
+            (gesamt - gesendet) < static_cast<uint32_t>(bs)
+                ? (gesamt - gesendet)
+                : static_cast<uint32_t>(bs));
+        server.sendContent(reinterpret_cast<const char*>(muster), block);
+        gesendet += block;
+        esp_task_wdt_reset();
+    }
+    const unsigned long dauer = millis() - begonnen;
+
+    // Die Messung selbst hängt hinten an der Antwort. Damit braucht es weder
+    // serielle Konsole noch Stoppuhr am Handy.
+    const float rate = dauer > 0 ? (gesendet / 1024.0f) / (dauer / 1000.0f) : 0;
+    String bericht = String("\n--- WLAN-Messung ---\n") +
+                     String(gesendet / 1024) + " kB in " + String(dauer) +
+                     " ms = " + String(rate, 1) + " kB/s\n" +
+                     "Blockgroesse " + String(bs) + " Byte, " +
+                     String(gesendet / (bs > 0 ? bs : 1)) + " Bloecke\n";
+    server.sendContent(bericht);
+    server.sendContent("");
+
+    Serial.printf("WLAN-Messung: %lu kB in %lu ms = %.1f kB/s (Block %ld B)\n",
+                  static_cast<unsigned long>(gesendet / 1024), dauer, rate, bs);
 }
 
 // Eine Sitzung als tar.gz ausliefern.
@@ -986,8 +1075,14 @@ void WebManager::handleSessionDownload() {
     static uint8_t block[512];
     static uint8_t puffer[1024];
 
+    // Zeit je Stufe getrennt mitführen. Die Gesamtdauer allein sagt nicht, ob
+    // die Karte, der Kompressor oder das WLAN bremst.
+    const unsigned long downloadBegonnen = millis();
+    unsigned long leseMs = 0;
+    uint32_t rohBytes = 0;
+
     File datei = verzeichnis.openNextFile();
-    while (datei) {
+    while (datei && !senke.wurdeAbgebrochen()) {
         if (!datei.isDirectory()) {
             const String name = String(datei.name());
             const String kurz = name.substring(name.lastIndexOf('/') + 1);
@@ -997,13 +1092,16 @@ void WebManager::handleSessionDownload() {
             strom.write(block, sizeof(block));
 
             uint32_t uebertragen = 0;
-            while (uebertragen < groesse) {
+            while (uebertragen < groesse && !senke.wurdeAbgebrochen()) {
+                const unsigned long leseBegonnen = millis();
                 const size_t gelesen = datei.read(puffer, sizeof(puffer));
+                leseMs += millis() - leseBegonnen;
                 if (gelesen == 0) {
                     break;
                 }
                 strom.write(puffer, gelesen);
                 uebertragen += gelesen;
+                rohBytes += gelesen;
                 esp_task_wdt_reset();
             }
 
@@ -1027,6 +1125,29 @@ void WebManager::handleSessionDownload() {
     strom.finish();
     strom.end();
     server.sendContent("");
+
+    // Aufschlüsselung auf die serielle Konsole. Ohne sie bliebe nur die
+    // Gesamtdauer, und die benennt keine Ursache.
+    const unsigned long gesamtMs = millis() - downloadBegonnen;
+    const unsigned long sendeMs = senke.sendedauerMs();
+    const unsigned long rechenMs =
+        gesamtMs > (leseMs + sendeMs) ? gesamtMs - leseMs - sendeMs : 0;
+    const float rate =
+        gesamtMs > 0 ? (rohBytes / 1024.0f) / (gesamtMs / 1000.0f) : 0;
+    Serial.printf(
+        "Download %s: %lu kB roh -> %lu kB gepackt in %lu ms = %.1f kB/s\n",
+        id.c_str(), static_cast<unsigned long>(rohBytes / 1024),
+        static_cast<unsigned long>(senke.gesendeteBytes() / 1024), gesamtMs,
+        rate);
+    Serial.printf(
+        "  SD-Lesen %lu ms, Komprimieren %lu ms, Senden %lu ms in %lu Bloecken"
+        " (%lu Byte je Block)%s\n",
+        leseMs, rechenMs, sendeMs,
+        static_cast<unsigned long>(senke.blockzahl()),
+        static_cast<unsigned long>(
+            senke.blockzahl() > 0 ? senke.gesendeteBytes() / senke.blockzahl()
+                                  : 0),
+        senke.wurdeAbgebrochen() ? " - ABGEBROCHEN" : "");
 }
 
 // Eine Sitzung von der Karte entfernen.

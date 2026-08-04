@@ -23,6 +23,7 @@ private:
     void handleUpdateUpload();
     void handleSessionDownload();
     void handleSessionDelete();
+    void handleSpeedtest();
     void resetOTAState();
 
 public:

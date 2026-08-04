@@ -5,6 +5,47 @@ Alle wichtigen Änderungen am ESP32-S3 Straßenqualitäts-Messsystem werden in d
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt hält sich an [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.45] - 2026-08-04
+
+### Hinzugefügt: Messung statt Vermutung beim Download
+
+Der Download aus 1.5.43 dauert am Gerät sehr lange und bleibt zeitweise
+stehen. Die Gesamtdauer benennt aber keine Ursache: Der Weg besteht aus drei
+Stufen - von der Karte lesen, komprimieren, über WLAN senden -, und jede
+könnte es sein.
+
+- **`/speedtest?kb=1024&bs=1460` misst das WLAN allein.** Nutzdaten aus dem
+  Arbeitsspeicher, weder Karte noch Kompression, sonst derselbe Weg. Das
+  Ergebnis ist die Obergrenze, die der echte Download nie überschreiten kann,
+  und es steht am Ende der Antwort - ohne serielle Konsole und ohne Stoppuhr.
+
+  `bs` wählt die Blockgröße je `sendContent()`. Das ist der zweite Verdacht:
+  Der Kompressor gibt seine Blöcke in der Größe aus, die ihm passt, und jeder
+  Aufruf erzeugt einen eigenen HTTP-Chunk mit eigenem Kopf. Ein Vergleich von
+  `bs=512` gegen `bs=4096` beantwortet das unmittelbar.
+
+- **Der echte Download schlüsselt sich auf der seriellen Konsole auf**: rohe
+  und gepackte Menge, Zeit für SD-Lesen, Komprimieren und Senden getrennt,
+  dazu Blockzahl und mittlere Blockgröße.
+
+### Behoben: Abbruch der Gegenseite wurde nicht bemerkt
+
+`sendContent()` meldet eine geschlossene Verbindung nicht. Bricht das Handy
+ab, schrieb die Schleife bis zum Dateiende in einen toten Socket weiter - von
+außen sieht das aus wie ein Hänger, und genau das ist beobachtet worden. Der
+Zustand der Verbindung wird jetzt vor jedem Block geprüft und der Download
+sauber abgebrochen.
+
+### Bekannter Verdacht: SD-Takt
+
+`SD_SPI_SPEED` steht auf 1 MHz. Das begrenzt das Lesen theoretisch auf
+122 kB/s und real auf etwa 60 bis 90; eine Fahrstunde mit 12 MB braucht damit
+allein zum Lesen über 100 Sekunden. Der Wert stammt aus dem Logging, wo
+Bandbreite keine Rolle spielt, und ist bewusst niedrig: Auf Lochraster ohne
+Serienterminierung begannen bei 4 MHz sporadische Aussetzer. Für den Download
+ist er die vermutete Hauptbremse. **Nicht ohne Messung ändern** - ein
+Kartenfehler kostet Messdaten, ein langsamer Download nur Geduld.
+
 ## [1.5.44] - 2026-08-04
 
 ### Hinzugefügt: Rücksprung auf die vorherige Firmware
