@@ -6,6 +6,35 @@ standardisierten OBD-II-Daten. Aktueller Firmwarestand: **1.5.40**.
 Der aktuelle Stand ist ein Hardware- und Fahrzeugteststand, nicht abschließend
 produktionsreif. Bekannte Einschränkungen stehen weiter unten.
 
+## Projektziel
+
+Die Firmware ist Mittel, nicht Zweck. Ziel ist eine **Streckendatenbank**: Aus
+mühelos aufgezeichneten Fahrten entsteht auf dem Rechner eine Bewertung der
+befahrenen Straßen, aus der sich später neue Strecken zusammensetzen lassen,
+die mit Freude zu fahren sind.
+
+**Die verbindliche Spezifikation steht in `STRECKENDATENBANK.md`.** Sie legt
+Ergebnis, Einheit, Bewertungsablauf und Abnahmekriterien fest. Bei Zweifeln
+über den Nutzen einer Änderung entscheidet dieses Dokument.
+
+Der aktuelle Fokus ist **Stufe 1: die bewertete Karte**, und dort die
+Zuordnung der Fahrten zum Straßennetz. Am Gerät ist genau eine Anforderung
+offen: automatisches Starten und Beenden der Aufzeichnung.
+
+Diese Codebasis lädt zum Abschweifen ein - Flush-Zeiten, Kartenlatenz,
+GPS-Aussetzer, OBD-Discovery, Kompression. Jedes dieser Themen ist für sich
+interessant und keines bringt die Streckendatenbank näher. Verbindlich gilt
+deshalb:
+
+- **Messqualität ist kein Selbstzweck.** Eine Verbesserung ist zu begründen mit
+  dem, was sie an der Streckendatenbank ändert. 2,1 Prozent verfehlte
+  Sensorslots sind für eine Kurve über 200 Meter ohne Bedeutung.
+- **Ein Fehler ohne zweiten Fall wird nicht weiterverfolgt.** Erst ein
+  wiederholtes Auftreten eröffnet die Suche - so ist der stille SD-Verlust am
+  04.08.2026 abgeschlossen worden.
+- **Neue Funktionen am Gerät brauchen einen Eintrag in `STRECKENDATENBANK.md`.**
+  Was dort nicht gefordert ist, gehört auf den Rechner oder gar nicht gebaut.
+
 ## Befehle
 
 | Befehl | Zweck |
@@ -360,18 +389,22 @@ Eigenschaften des Sitzungskopfes.
 
 ## Verbindlicher Datenqualitätsfokus
 
-Kurvenerkennung ist der primäre Fokus der nächsten Fahrzeugfahrt. Firmware
-1.5.28 zeichnet dafür einbaulagenunabhängige Drehrate, vollständige
-Kurvenintervalle, Radius, Querbeschleunigung und manuelle
-Beifahrer-Referenzintervalle auf. GPS und CAN/OBD laufen gleichzeitig als
-Zeit-, Geschwindigkeits- und Positionsreferenz mit.
+**Die Erfassungsseite gilt seit dem 04.08.2026 als ausreichend.** Kurvenwinkel
+sind über beide Fahrtrichtungen reproduzierbar, die Fahrbahnbewertung ist gegen
+149 Beifahrerurteile kalibriert, GPS, CAN/OBD und SD liefen über 39 Sitzungen
+und 318 km. Der Fokus liegt damit nicht mehr auf der Messung, sondern auf der
+Auswertung nach `STRECKENDATENBANK.md`.
 
-Der verbindliche Umsetzungs-, Test- und Abnahmeplan steht in
+Weitere Arbeit an der Messgenauigkeit ist zu begründen mit dem, was sie an der
+Streckendatenbank ändert - nicht mit der Zahl selbst. Wo eine Kennzahl nur
+schöner wird, ohne eine Segmentbewertung zu verändern, bleibt sie wie sie ist.
+
+Der Umsetzungs-, Test- und Abnahmeplan der Messkette steht weiterhin in
 `GPS_CAN_OBD_DATENQUALITAETSPLAN.md`. Neue Messfunktionen müssen dessen
 Sitzungszähler, Gültigkeitsfelder, Zeitbasis und PASS/WARN/FAIL-Kriterien
 berücksichtigen.
 
-BNO055, SD und WLAN laufen bei diesen Tests als Stabilitätskontrolle mit.
+BNO055, SD und WLAN laufen bei Fahrten als Stabilitätskontrolle mit.
 Beide Bewertungsmodelle werden nicht gleichzeitig neu parametriert.
 
 ## Fahrbarkeit der Strecke
