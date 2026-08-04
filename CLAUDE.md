@@ -1,7 +1,7 @@
 # ROADTEST Firmware
 
 ESP32-S3-Firmware zur Aufzeichnung von BNO055-, GPS-, Straßenqualitäts- und
-standardisierten OBD-II-Daten. Aktueller Firmwarestand: **1.5.42**.
+standardisierten OBD-II-Daten. Aktueller Firmwarestand: **1.5.43**.
 
 Der aktuelle Stand ist ein Hardware- und Fahrzeugteststand, nicht abschließend
 produktionsreif. Bekannte Einschränkungen stehen weiter unten.
@@ -19,8 +19,8 @@ Ergebnis, Einheit, Bewertungsablauf und Abnahmekriterien fest. Bei Zweifeln
 
 Der aktuelle Fokus ist **Stufe 1: die bewertete Karte**, und dort die
 Zuordnung der Fahrten zum Straßennetz. Am Gerät ist das selbsttätige Starten
-seit 1.5.42 erledigt; offen bleiben der Datenzugriff übers Handy und der
-OTA-Rücksprung.
+seit 1.5.42 erledigt, der Datenzugriff übers Handy seit 1.5.43; offen bleibt
+der OTA-Rücksprung.
 
 Diese Codebasis lädt zum Abschweifen ein - Flush-Zeiten, Kartenlatenz,
 GPS-Aussetzer, OBD-Discovery, Kompression. Jedes dieser Themen ist für sich
@@ -76,7 +76,10 @@ src/curve_detector.{h,cpp}      Kurvenerkennung, hardwarefrei und hosttestbar
 src/road_metrics.{h,cpp}        Vibration, Straßenqualität, Schlaglöcher;
                                 ebenfalls hardwarefrei und hosttestbar
 src/road_quality.h              Datenstruktur RoadMetrics für Auswertungen
-src/web_manager.{h,cpp}         ROADTEST-WLAN, Statusseite und Browser-OTA
+src/web_manager.{h,cpp}         ROADTEST-WLAN, Statusseite, Browser-OTA und
+                                Datenzugriff /files
+src/gzip_stream.{h,cpp}         gzip über den ROM-Kompressor, austauschbare Senke
+src/tar_writer.{h,cpp}          tar-Rahmung, hardwarefrei und hosttestbar
 src/runtime_diagnostics.{h,cpp} Laufzeit-, Web- und SD-Pausendiagnose
 ```
 
@@ -197,7 +200,8 @@ pio test -e native
 Diese Tests belegen keinen Byte Firmware-Flash und laufen in unter zwei
 Sekunden. `test/test_curve_detector/` prüft Kurvenerkennung,
 `test/test_road_metrics/` Vibrationsanalyse, Straßenqualität und
-Schlaglocherkennung. Beide enthalten Regressionsschutztests gegen Ereignisse
+Schlaglocherkennung, `test/test_tar_writer/` die tar-Rahmung des
+Datenzugriffs gegen das echte `tar`. Beide enthalten Regressionsschutztests gegen Ereignisse
 im Stillstand sowie Wiedergaben realer Fahrten aus `testdata/`.
 
 Die Wiedergaben sind auf feste Kennzahlen festgeschrieben. Ändern sie sich,
@@ -317,8 +321,8 @@ Eigenschaften des Sitzungskopfes.
 
 ## Aktueller Teststand
 
-- Firmware 1.5.42 baut erfolgreich für `lolin_s3_mini`.
-- Letzter Build: 68.260 Byte RAM (20,8 %) und 1.156.738 Byte Flash (88,3 %).
+- Firmware 1.5.43 baut erfolgreich für `lolin_s3_mini`.
+- Letzter Build: 69.796 Byte RAM (21,3 %) und 1.166.174 Byte Flash (89,0 %).
   1.5.41 gab 70.708 Byte frei; verfügbar sind damit 153.982 Byte.
 - Am 31.07.2026 liefen fünf Beifahrer-Referenzfahrten mit 1.5.28 und je zwölf
   markierten Referenzintervallen. Sie sind der Prüfstand der Kurvenerkennung.
@@ -688,11 +692,14 @@ Positionssprungbewertung und ereignisorientiertes Logging bleiben offen.
   der Scanner findet es ohne Codeänderung.
 - SD-Aufzeichnung über die vorhandene nicht blockierende Startlogik öffnen.
 - **Logdateien nicht unkomprimiert über das Netz ausgeben.** Genau daran
-  scheiterte die früher entfernte Web-Downloadfunktion. Der Zugriff übers
-  Handy kommt nach `STRECKENDATENBANK.md` zurück, aber ausschließlich
-  komprimiert über `src/gzip_stream.{h,cpp}`; die ROM-Implementierung des
-  ESP32-S3 kostet dafür kaum Flash. Ein eingebautes Gerät lässt sich sonst
-  nicht mehr auslesen, ohne die Verkleidung zu öffnen.
+  scheiterte die früher entfernte Web-Downloadfunktion. Seit 1.5.43 gibt
+  `/files` jede Sitzung als ein `.tar.gz` aus, komprimiert über
+  `src/gzip_stream.{h,cpp}` und den ROM-Kompressor des ESP32-S3. Ein
+  eingebautes Gerät ließe sich sonst nicht mehr auslesen, ohne die
+  Verkleidung zu öffnen.
+- Download und Löschen bleiben gesperrt, solange eine Messung läuft - wie das
+  Firmware-Update und aus demselben Grund: Beides hält die Hauptschleife für
+  seine ganze Dauer an.
 - GPS- oder OBD-Werte nur als gültig ausgeben, wenn ihre Aktualität
   nachweisbar ist; unbekannte Werte nicht als Nullwert ausgeben.
 - Firmwareversion zentral in `src/hardware_config.h` sowie `CHANGELOG.md` und

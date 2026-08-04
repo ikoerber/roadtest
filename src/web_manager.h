@@ -18,8 +18,11 @@ private:
     String buildCalibrationPage(const String& message = "");
     String buildUpdatePage();
     String buildUpdateResultPage(bool success);
+    String buildFilesPage(const String& message = "");
     bool authenticateOTA();
     void handleUpdateUpload();
+    void handleSessionDownload();
+    void handleSessionDelete();
     void resetOTAState();
 
 public:

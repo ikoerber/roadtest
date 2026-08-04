@@ -2,6 +2,11 @@
 
 #include <WiFi.h>
 #include <Update.h>
+#include <SD.h>
+#include <esp_task_wdt.h>
+
+#include "gzip_stream.h"
+#include "tar_writer.h"
 
 #include "bno055_manager.h"
 #include "can_reader.h"
@@ -48,6 +53,49 @@ String escapeJSON(String value) {
     return value;
 }
 
+
+// Sitzungsverzeichnisse liegen unter /sessions/<Id> auf der Karte.
+constexpr const char* SESSION_ROOT = "/sessions";
+
+// Nur Zeichen, die die Firmware selbst in eine Sitzungs-ID schreibt. Ohne
+// diese Prüfung wäre "../" ein gültiger Parameter, und der Download gäbe
+// beliebige Dateien der Karte heraus.
+bool istGueltigeSitzungsId(const String& id) {
+    if (id.length() == 0 || id.length() > 40) {
+        return false;
+    }
+    for (size_t i = 0; i < id.length(); ++i) {
+        const char c = id[i];
+        const bool erlaubt = (c >= '0' && c <= '9') ||
+                             (c >= 'A' && c <= 'Z') ||
+                             (c >= 'a' && c <= 'z') || c == '_';
+        if (!erlaubt) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// Senke, die den komprimierten Strom als HTTP-Chunks ausgibt.
+//
+// Die Länge steht erst nach der Kompression fest; die Antwort läuft deshalb
+// mit CONTENT_LENGTH_UNKNOWN und damit chunked. Ein Abbruch der Verbindung
+// bleibt hier unbemerkt - sendContent() meldet ihn nicht -, kostet aber nur
+// eine unvollständige Datei, die sich erneut holen lässt.
+class HttpChunkSink : public GzipSink {
+public:
+    explicit HttpChunkSink(WebServer& server) : server(server) {}
+    size_t write(const uint8_t* data, size_t length) override {
+        server.sendContent(reinterpret_cast<const char*>(data), length);
+        // Ein langer Download hält die Hauptschleife an. Ohne diesen Reset
+        // greift der Task-Watchdog mitten in der Übertragung.
+        esp_task_wdt_reset();
+        return length;
+    }
+
+private:
+    WebServer& server;
+};
 
 void appendCalibrationStep(
     String& page, uint8_t number, const char* title, const char* scoreLabel,
@@ -245,6 +293,21 @@ bool WebManager::begin() {
             }
         },
         [this]() { handleUpdateUpload(); });
+
+    // Datenzugriff übers Handy. Die Sitzung wird als ein einziges .tar.gz
+    // ausgegeben, damit eine Fahrt ein Tippvorgang bleibt und nicht zehn.
+    server.on("/files", HTTP_GET, [this]() {
+        server.sendHeader("Cache-Control", "no-store");
+        server.send(200, "text/html; charset=utf-8", buildFilesPage());
+    });
+
+    server.on("/files/download", HTTP_GET, [this]() {
+        handleSessionDownload();
+    });
+
+    server.on("/files/delete", HTTP_POST, [this]() {
+        handleSessionDelete();
+    });
 
     // Die Beifahrerseite /fahrbahn ist mit STRECKENDATENBANK.md entfallen.
     // Urteile entstehen jetzt nach der Fahrt am Rechner, nicht mehr während
@@ -557,7 +620,8 @@ String WebManager::buildStatusPage() {
     }
 
     page += F("<p class='hint'>Start und Ende sind mit den Admin-Zugangsdaten geschützt.</p>"
-              "<a href='/calibration'>Kalibrierung</a>"
+              "<a href='/files'>Daten holen</a>"
+              " &nbsp; <a href='/calibration'>Kalibrierung</a>"
               " &nbsp; <a href='/update'>Firmware aktualisieren</a>"
               "</body></html>");
     return page;
@@ -775,6 +839,245 @@ String WebManager::buildCalibrationPage(const String& message) {
         "Ein Sensorneustart ist für die Kalibrierung nicht notwendig.</p>"
         "<p><a href='/'>← Zur Statusseite</a></p></main></body></html>");
     return page;
+}
+
+// Übersicht der Sitzungen auf der Karte.
+//
+// Bewusst ohne Vorschau und ohne Einzeldateien: Die Seite wird am Handy im
+// Auto bedient. Je Sitzung eine Zeile, eine Schaltfläche zum Holen, eine zum
+// Löschen.
+String WebManager::buildFilesPage(const String& message) {
+    String page;
+    page.reserve(2400);
+    page += F(
+        "<!doctype html><html lang='de'><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+        "<title>ROADTEST Daten</title>"
+        "<style>body{margin:0;padding:14px;background:#15221c;color:#f4f1e8;"
+        "font-family:system-ui,sans-serif}h1{font-size:1.15rem;margin:0 0 12px}"
+        ".s{background:#22332b;border-radius:12px;padding:12px;margin-bottom:10px}"
+        ".id{font-family:ui-monospace,monospace;font-size:0.95rem}"
+        ".m{color:#9db3a6;font-size:0.85rem;margin:4px 0 10px}"
+        "a.btn,button{display:inline-block;border:0;border-radius:10px;"
+        "padding:12px 16px;font-size:1rem;font-weight:600;text-decoration:none;"
+        "margin-right:8px}a.btn{background:#8fd14f;color:#15221c}"
+        "button{background:#e3734d;color:#15221c}"
+        ".hinweis{background:#3d3320;border-radius:10px;padding:10px;"
+        "margin-bottom:12px}</style></head><body><h1>Aufgezeichnete Fahrten</h1>");
+
+    if (message.length() > 0) {
+        page += F("<div class='hinweis'>");
+        page += escapeHTML(message);
+        page += F("</div>");
+    }
+
+    if (sdLogger.isLogging() || sdLogger.isLoggingStartPending()) {
+        page += F(
+            "<div class='hinweis'><strong>Aufzeichnung läuft</strong>"
+            "<p>Herunterladen und Löschen sind gesperrt, solange gemessen "
+            "wird - genau wie beim Firmware-Update. Ein Download hält die "
+            "Hauptschleife für seine ganze Dauer an; die laufende Messung "
+            "verlöre dabei Zeilen.</p>"
+            "<p>Erst auf der Statusseite beenden.</p></div>");
+    }
+
+    File wurzel = SD.open(SESSION_ROOT);
+    if (!wurzel || !wurzel.isDirectory()) {
+        page += F("<p>Keine Sitzungen auf der Karte.</p>");
+    } else {
+        uint16_t anzahl = 0;
+        File eintrag = wurzel.openNextFile();
+        while (eintrag) {
+            if (eintrag.isDirectory()) {
+                const String id = String(eintrag.name()).substring(
+                    String(eintrag.name()).lastIndexOf('/') + 1);
+                uint32_t summe = 0;
+                uint16_t dateien = 0;
+                File datei = eintrag.openNextFile();
+                while (datei) {
+                    if (!datei.isDirectory()) {
+                        summe += datei.size();
+                        dateien++;
+                    }
+                    datei.close();
+                    datei = eintrag.openNextFile();
+                }
+
+                anzahl++;
+                page += F("<div class='s'><div class='id'>");
+                page += escapeHTML(id);
+                page += F("</div><div class='m'>");
+                page += String(dateien);
+                page += F(" Dateien &middot; ");
+                page += String(summe / 1024);
+                page += F(" kB</div><a class='btn' href='/files/download?s=");
+                page += escapeHTML(id);
+                page += F("'>Holen</a>"
+                          "<form method='POST' action='/files/delete' "
+                          "style='display:inline'>"
+                          "<input type='hidden' name='s' value='");
+                page += escapeHTML(id);
+                page += F("'><button type='submit'>Löschen</button>"
+                          "</form></div>");
+            }
+            eintrag.close();
+            eintrag = wurzel.openNextFile();
+        }
+        if (anzahl == 0) {
+            page += F("<p>Keine Sitzungen auf der Karte.</p>");
+        }
+    }
+    if (wurzel) {
+        wurzel.close();
+    }
+
+    page += F(
+        "<p class='m'>Das Archiv enthält die Sitzung als Verzeichnis. Am "
+        "Rechner mit <code>tar xzf</code> auspacken.</p>"
+        "<p><a class='btn' href='/'>Zur Statusseite</a></p></body></html>");
+    return page;
+}
+
+// Eine Sitzung als tar.gz ausliefern.
+//
+// Komprimiert wird im Fluss: Die Länge steht erst am Ende fest, die Antwort
+// läuft deshalb chunked. Roh übertragen wären es rund 12 MB je Fahrtstunde -
+// daran scheiterte die früher entfernte Downloadfunktion. Mit dem
+// ROM-Kompressor bleibt davon etwa ein Achtel bis Zwölftel, ohne ein Byte
+// Flash zu kosten.
+void WebManager::handleSessionDownload() {
+    const String id = server.arg("s");
+    if (!istGueltigeSitzungsId(id)) {
+        server.send(400, "text/plain; charset=utf-8", "Ungültige Sitzung");
+        return;
+    }
+    if (sdLogger.isLogging() || sdLogger.isLoggingStartPending()) {
+        server.send(409, "text/plain; charset=utf-8",
+                    "Aufzeichnung läuft - zuerst beenden");
+        return;
+    }
+
+    const String pfad = String(SESSION_ROOT) + "/" + id;
+    File verzeichnis = SD.open(pfad);
+    if (!verzeichnis || !verzeichnis.isDirectory()) {
+        if (verzeichnis) {
+            verzeichnis.close();
+        }
+        server.send(404, "text/plain; charset=utf-8", "Sitzung nicht gefunden");
+        return;
+    }
+
+    HttpChunkSink senke(server);
+    GzipStream strom;
+    if (!strom.begin(senke)) {
+        verzeichnis.close();
+        // Ohne PSRAM gibt es keinen Kompressor. Unkomprimiert auszuliefern ist
+        // ausdrücklich ausgeschlossen; die Karte bleibt dann der Weg.
+        server.send(503, "text/plain; charset=utf-8",
+                    "Kompression nicht verfügbar - Karte auslesen");
+        return;
+    }
+
+    server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+    server.sendHeader("Content-Disposition",
+                      "attachment; filename=\"" + id + ".tar.gz\"");
+    server.send(200, "application/gzip", "");
+
+    static uint8_t block[512];
+    static uint8_t puffer[1024];
+
+    File datei = verzeichnis.openNextFile();
+    while (datei) {
+        if (!datei.isDirectory()) {
+            const String name = String(datei.name());
+            const String kurz = name.substring(name.lastIndexOf('/') + 1);
+            const uint32_t groesse = datei.size();
+
+            tarWriteHeader(block, (id + "/" + kurz).c_str(), groesse);
+            strom.write(block, sizeof(block));
+
+            uint32_t uebertragen = 0;
+            while (uebertragen < groesse) {
+                const size_t gelesen = datei.read(puffer, sizeof(puffer));
+                if (gelesen == 0) {
+                    break;
+                }
+                strom.write(puffer, gelesen);
+                uebertragen += gelesen;
+                esp_task_wdt_reset();
+            }
+
+            // tar füllt jede Datei auf ein Vielfaches von 512 auf.
+            const size_t fuellbytes = tarPaddingBytes(uebertragen);
+            if (fuellbytes > 0) {
+                memset(block, 0, fuellbytes);
+                strom.write(block, fuellbytes);
+            }
+        }
+        datei.close();
+        datei = verzeichnis.openNextFile();
+    }
+    verzeichnis.close();
+
+    // Zwei Nullblöcke schließen ein tar-Archiv ab.
+    memset(block, 0, sizeof(block));
+    strom.write(block, sizeof(block));
+    strom.write(block, sizeof(block));
+
+    strom.finish();
+    strom.end();
+    server.sendContent("");
+}
+
+// Eine Sitzung von der Karte entfernen.
+//
+// Nur nach Anmeldung und nur innerhalb von /sessions mit geprüfter ID. Die
+// laufende Aufzeichnung ist ausgenommen.
+void WebManager::handleSessionDelete() {
+    if (!authenticateOTA()) {
+        return;
+    }
+    const String id = server.arg("s");
+    if (!istGueltigeSitzungsId(id)) {
+        server.send(400, "text/html; charset=utf-8",
+                    buildFilesPage("Ungültige Sitzung."));
+        return;
+    }
+    if (sdLogger.isLogging() || sdLogger.isLoggingStartPending()) {
+        server.send(409, "text/html; charset=utf-8",
+                    buildFilesPage("Aufzeichnung läuft - zuerst beenden."));
+        return;
+    }
+
+    const String pfad = String(SESSION_ROOT) + "/" + id;
+    File verzeichnis = SD.open(pfad);
+    if (!verzeichnis || !verzeichnis.isDirectory()) {
+        if (verzeichnis) {
+            verzeichnis.close();
+        }
+        server.send(404, "text/html; charset=utf-8",
+                    buildFilesPage("Sitzung nicht gefunden."));
+        return;
+    }
+
+    uint16_t geloescht = 0;
+    File datei = verzeichnis.openNextFile();
+    while (datei) {
+        const String name = String(datei.name());
+        const bool istVerzeichnis = datei.isDirectory();
+        datei.close();
+        if (!istVerzeichnis && SD.remove(name)) {
+            geloescht++;
+        }
+        datei = verzeichnis.openNextFile();
+    }
+    verzeichnis.close();
+    SD.rmdir(pfad);
+
+    server.sendHeader("Cache-Control", "no-store");
+    server.send(200, "text/html; charset=utf-8",
+                buildFilesPage(String("Sitzung ") + id + " gelöscht (" +
+                               geloescht + " Dateien)."));
 }
 
 String WebManager::buildUpdatePage() {

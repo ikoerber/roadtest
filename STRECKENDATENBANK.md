@@ -59,14 +59,18 @@ Der zweite Engpass ist das Auslesen. Die Karte zu ziehen ist bei einer Fahrt
 pro Woche gleichgültig und bei täglichen Fahrten der Grund, warum die Datenbank
 nicht wächst - erst recht, wenn das Gerät hinter der Verkleidung sitzt.
 
-**Der Zugriff erfolgt deshalb über das ROADTEST-WLAN vom Handy aus**, mit
-Dateiliste, Download und anschließendem Löschen. Damit kommt eine Funktion
-zurück, die einmal als zu langsam entfernt wurde. Der Unterschied ist die
-Kompression: Eine Fahrstunde erzeugt rund 12 MB, CSV komprimiert sich acht- bis
-zwölffach, und `src/gzip_stream.{h,cpp}` liegt fertig im Repo, kostet über die
-ROM-Implementierung des ESP32-S3 kaum Flash und ist bislang nirgends
-verdrahtet. Roh übertragen war die alte Funktion zu Recht unbrauchbar;
-komprimiert ist ein Fahrtag eine Sache von Sekunden.
+**Der Zugriff erfolgt deshalb über das ROADTEST-WLAN vom Handy aus.** Seit
+1.5.43 zeigt `/files` die Sitzungen und gibt jede als ein `.tar.gz` aus, mit
+anschließendem Löschen. Damit kommt eine Funktion zurück, die einmal als zu
+langsam entfernt wurde. Der Unterschied ist die Kompression: Eine Fahrstunde
+erzeugt rund 12 MB, CSV komprimiert sich acht- bis zwölffach, und der
+Kompressor stammt aus dem ROM des ESP32-S3 und kostet kein Byte Flash. Roh
+übertragen war die alte Funktion zu Recht unbrauchbar; komprimiert ist ein
+Fahrtag eine Sache von Sekunden.
+
+Eine Sitzung bleibt dabei ein Tippvorgang. Sie besteht aus zehn Dateien -
+einzeln geholt wären das bei zweihundert Fahrten zweitausend Bedienschritte,
+und genau daran stirbt eine Datenbank.
 
 Verbindlich bleibt der Grund, aus dem sie damals entfiel: **Unkomprimierte
 Übertragung ganzer Logdateien wird nicht wieder eingeführt.**

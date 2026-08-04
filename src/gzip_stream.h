@@ -26,6 +26,35 @@
 #include <Arduino.h>
 #include <FS.h>
 
+// Senke des komprimierten Stroms.
+//
+// Ursprünglich schrieb die Einheit ausschließlich in eine geöffnete Datei.
+// Seit der Datenzugriff übers Handy dieselbe Kompression braucht, ist das Ziel
+// austauschbar: dieselbe Rahmung, dieselbe Prüfsumme, einmal in eine Datei auf
+// der Karte und einmal in eine HTTP-Antwort. Die Alternative wäre ein zweiter
+// Kompressionspfad gewesen - und damit zwei Stellen, an denen ein
+// gzip-Nachspann fehlen kann.
+class GzipSink {
+public:
+    virtual ~GzipSink() = default;
+    // Rückgabe ist die Zahl tatsächlich abgenommener Bytes. Alles andere als
+    // `length` gilt als Fehler und macht den Strom unbrauchbar.
+    virtual size_t write(const uint8_t* data, size_t length) = 0;
+};
+
+// Senke, die in eine geöffnete Datei schreibt.
+class GzipFileSink : public GzipSink {
+public:
+    GzipFileSink() = default;
+    void setFile(fs::File& target) { file = &target; }
+    size_t write(const uint8_t* data, size_t length) override {
+        return file != nullptr ? file->write(data, length) : 0;
+    }
+
+private:
+    fs::File* file = nullptr;
+};
+
 class GzipStream {
 public:
     GzipStream() = default;
@@ -43,6 +72,10 @@ public:
     // verfügbares PSRAM scheitert der Aufruf; der Aufrufer schreibt dann
     // unkomprimiert weiter, statt die Messung zu verlieren.
     bool begin(fs::File& file);
+
+    // Wie begin(fs::File&), aber mit beliebiger Senke. Die Senke muss bis
+    // end() weiterleben.
+    bool begin(GzipSink& sink);
 
     // Nutzdaten übernehmen. Rückgabe ist die Zahl der Bytes, die dabei
     // tatsächlich in die Datei geflossen sind - das können null sein, wenn
@@ -86,7 +119,10 @@ private:
     static int putBuffer(const void* buffer, int length, void* user);
 
     void* compressor = nullptr;   // tdefl_compressor im PSRAM
-    fs::File* target = nullptr;
+    GzipSink* target = nullptr;
+    // Trägt die Senke für begin(fs::File&). Sie muss als Member leben, weil
+    // target auf sie zeigt.
+    GzipFileSink fileSink;
     uint32_t crc = 0;             // CRC32 über die Nutzdaten, gzip-Nachspann
     uint32_t sourceBytes = 0;
     uint32_t writtenBytes = 0;

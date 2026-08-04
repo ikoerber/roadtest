@@ -52,11 +52,17 @@ int GzipStream::putBuffer(const void* buffer, int length, void* user) {
 }
 
 bool GzipStream::begin(fs::File& file) {
-    end();
-
     if (!file) {
         return false;
     }
+    // end() steckt in der Sink-Variante; fileSink wird erst danach gesetzt,
+    // damit ein abgebrochener Start keine halb gültige Senke hinterlässt.
+    fileSink.setFile(file);
+    return begin(fileSink);
+}
+
+bool GzipStream::begin(GzipSink& sink) {
+    end();
 
     // Der Kompressor gehört in den PSRAM. Er belegt rund 133 kB; im Heap
     // wären das bei mehreren Datenströmen mehr, als überhaupt frei ist.
@@ -67,7 +73,7 @@ bool GzipStream::begin(fs::File& file) {
         return false;
     }
 
-    target = &file;
+    target = &sink;
     crc = MZ_CRC32_INIT;
     sourceBytes = 0;
     writtenBytes = 0;
@@ -83,7 +89,7 @@ bool GzipStream::begin(fs::File& file) {
         return false;
     }
 
-    const size_t headerWritten = file.write(GZIP_HEADER, sizeof(GZIP_HEADER));
+    const size_t headerWritten = sink.write(GZIP_HEADER, sizeof(GZIP_HEADER));
     writtenBytes += headerWritten;
     if (headerWritten != sizeof(GZIP_HEADER)) {
         failed = true;

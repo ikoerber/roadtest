@@ -683,6 +683,13 @@ Buslast steht in [OPTIMIERUNGEN.md](OPTIMIERUNGEN.md).
 
 ## 📈 Version History
 
+### v1.5.43 - Daten übers Handy holen
+- ✅ `/files` gibt jede Sitzung als ein `.tar.gz` aus, komprimiert über den
+  ROM-Kompressor des ESP32-S3 (kostet keinen Flash)
+- ✅ Gesperrt während einer laufenden Messung, Löschen nur nach Anmeldung
+- ✅ `src/tar_writer.{h,cpp}` hardwarefrei und gegen das echte `tar` getestet;
+  Hosttests bei 70 von 70
+
 ### v1.5.42 - Aufzeichnung startet ohne Handgriff
 - ✅ Sobald die SD-Karte bereit ist, beginnt die Aufzeichnung von allein;
   zündungsgeschaltete Spannung ist das Startsignal

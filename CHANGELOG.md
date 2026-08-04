@@ -5,6 +5,52 @@ Alle wichtigen Änderungen am ESP32-S3 Straßenqualitäts-Messsystem werden in d
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt hält sich an [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.43] - 2026-08-04
+
+### Hinzugefügt: Daten übers Handy holen
+
+Die Karte zu ziehen ist bei einer Fahrt pro Woche gleichgültig und bei
+täglichen Fahrten der Grund, warum die Streckendatenbank nicht wächst - erst
+recht, wenn das Gerät hinter der Verkleidung sitzt. `/files` zeigt jetzt die
+Sitzungen auf der Karte und gibt jede als **ein `.tar.gz`** aus.
+
+- **Eine Sitzung ist ein Tippvorgang.** Sie besteht aus zehn Dateien; einzeln
+  geholt wären das zehn Bedienschritte je Fahrt, bei zweihundert Fahrten
+  zweitausend. `tar xzf` liefert am Rechner genau die Verzeichnisstruktur, die
+  `tools/export_geojson.py` und die Wiedergabetests erwarten.
+
+- **Komprimiert, nicht roh.** Genau daran scheiterte die früher entfernte
+  Downloadfunktion: rund 12 MB je Fahrtstunde. Der Kompressor stammt aus dem
+  ROM des ESP32-S3 und kostet kein Byte Flash; CSV komprimiert sich acht- bis
+  zwölffach. `GzipStream` konnte bisher nur in Dateien schreiben und hat dafür
+  eine austauschbare Senke bekommen - dieselbe Rahmung und dieselbe Prüfsumme
+  für Karte und HTTP-Antwort, statt eines zweiten Kompressionspfades.
+
+- **Gesperrt, solange gemessen wird**, wie beim Firmware-Update und aus
+  demselben Grund: Ein Download hält die Hauptschleife für seine ganze Dauer
+  an, die laufende Messung verlöre dabei Zeilen. Die Seite sagt das und
+  verweist auf die Statusseite.
+
+- **Löschen nur nach Anmeldung**, nur innerhalb von `/sessions` und nur mit
+  geprüfter Sitzungs-ID. Ohne diese Prüfung wäre `../` ein gültiger Parameter
+  gewesen.
+
+Der Task-Watchdog wird während der Übertragung bedient. Ohne das greift er
+mitten im Download, weil die Hauptschleife währenddessen nicht weiterläuft.
+
+### Hinzugefügt: Hosttest der tar-Rahmung
+
+`src/tar_writer.{h,cpp}` ist frei von Arduino, SD und Netzwerk und damit auf
+dem Entwicklungsrechner prüfbar - dieselbe Trennung wie bei `curve_detector`
+und `road_metrics`. `test/test_tar_writer/` erzeugt ein vollständiges Archiv
+und lässt es vom echten `tar` lesen und auspacken.
+
+Der Anlass ist die Prüfsumme im tar-Kopf: Sie zählt ihr eigenes Feld als acht
+Leerzeichen. Wer sie über den fertigen Kopf bildet, bekommt eine Summe, die
+kein `tar` annimmt - und das fiele erst am Handy im Auto auf, an einem Gerät,
+an das man nach dem Einbau nicht mehr herankommt. Die Hosttests laufen damit
+bei **70 von 70**.
+
 ## [1.5.42] - 2026-08-04
 
 ### Hinzugefügt: Aufzeichnung startet ohne Handgriff
