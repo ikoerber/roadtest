@@ -82,26 +82,72 @@ bool istGueltigeSitzungsId(const String& id) {
 // mit CONTENT_LENGTH_UNKNOWN und damit chunked. Ein Abbruch der Verbindung
 // bleibt hier unbemerkt - sendContent() meldet ihn nicht -, kostet aber nur
 // eine unvollständige Datei, die sich erneut holen lässt.
+// Größe eines HTTP-Chunks beim Download.
+//
+// Aus der Messung am Gerät am 04.08.2026: Ein `sendContent()` kostet 4,57 ms
+// Fixaufwand, unabhängig von der Datenmenge, plus rund 2 µs je Byte. Bei
+// 512 Byte je Aufruf ergab das 89,4 kB/s, bei 1.460 Byte 190,4 - fast dieselbe
+// Zeit je Aufruf bei dreifacher Menge. Der Kompressor gibt seine Blöcke aber
+// in der Größe aus, die ihm passt, und die ist kleiner.
+//
+// 4 kB sagt das Modell mit rund 313 kB/s voraus. Darüber flacht der Gewinn ab
+// - 8 kB brächten 382 -, und der Puffer liegt im knappen Heap.
+constexpr size_t HTTP_CHUNK_BYTES = 4096;
+
+// Der Puffer liegt bewusst statisch und nicht als Member: Die Senke entsteht
+// im Web-Handler, und dessen Stack ist der des Loop-Tasks mit typisch 8 kB.
+// Ein 4-kB-Feld darauf wäre knapp. Gleichzeitig laufen nie zwei Downloads
+// nebeneinander - die Hauptschleife ist einsträngig und steckt für die Dauer
+// der Übertragung im Handler.
+uint8_t httpChunkPuffer[HTTP_CHUNK_BYTES];
+
 class HttpChunkSink : public GzipSink {
 public:
     explicit HttpChunkSink(WebServer& server) : server(server) {}
+
     size_t write(const uint8_t* data, size_t length) override {
+        size_t uebernommen = 0;
+        while (uebernommen < length) {
+            if (abgebrochen) {
+                return 0;
+            }
+            const size_t platz = HTTP_CHUNK_BYTES - fuellstand;
+            const size_t menge =
+                (length - uebernommen) < platz ? (length - uebernommen) : platz;
+            memcpy(httpChunkPuffer + fuellstand, data + uebernommen, menge);
+            fuellstand += menge;
+            uebernommen += menge;
+            if (fuellstand == HTTP_CHUNK_BYTES) {
+                spuelen();
+            }
+        }
+        return abgebrochen ? 0 : length;
+    }
+
+    // Rest ausgeben. Muss nach dem letzten write() und nach finish() laufen,
+    // sonst fehlt das Ende des gzip-Stroms.
+    void spuelen() {
+        if (fuellstand == 0) {
+            return;
+        }
         // Bricht die Gegenseite ab, meldet sendContent() das nicht. Ohne diese
         // Prüfung schreibt die Schleife bis zum Dateiende in einen toten
         // Socket weiter - von außen sieht das aus wie ein Hänger.
         if (!server.client().connected()) {
             abgebrochen = true;
-            return 0;
+            fuellstand = 0;
+            return;
         }
         const unsigned long begonnen = millis();
-        server.sendContent(reinterpret_cast<const char*>(data), length);
+        server.sendContent(reinterpret_cast<const char*>(httpChunkPuffer),
+                           fuellstand);
         sendeMs += millis() - begonnen;
         bloecke++;
-        gesendet += length;
+        gesendet += fuellstand;
+        fuellstand = 0;
         // Ein langer Download hält die Hauptschleife an. Ohne diesen Reset
         // greift der Task-Watchdog mitten in der Übertragung.
         esp_task_wdt_reset();
-        return length;
     }
 
     bool wurdeAbgebrochen() const { return abgebrochen; }
@@ -111,6 +157,7 @@ public:
 
 private:
     WebServer& server;
+    size_t fuellstand = 0;
     unsigned long sendeMs = 0;
     uint32_t bloecke = 0;
     uint32_t gesendet = 0;
@@ -1124,6 +1171,10 @@ void WebManager::handleSessionDownload() {
 
     strom.finish();
     strom.end();
+    // Erst jetzt den Rest ausgeben: finish() schreibt den gzip-Nachspann noch
+    // durch die Senke, und ohne ihn meldet jedes Werkzeug beim Auspacken einen
+    // unvollständigen Strom.
+    senke.spuelen();
     server.sendContent("");
 
     // Aufschlüsselung auf die serielle Konsole. Ohne sie bliebe nur die

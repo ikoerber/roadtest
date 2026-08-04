@@ -638,6 +638,12 @@ Buslast steht in [OPTIMIERUNGEN.md](OPTIMIERUNGEN.md).
 
 ## 📈 Version History
 
+### v1.5.46 - Ausgabe des Downloads gepuffert
+- ✅ Gemessen: `sendContent()` kostet 4,57 ms Fixaufwand je Aufruf, unabhängig
+  vom Inhalt - 512-Byte-Blöcke ergaben 89,4 kB/s, 1.460 Byte 190,4
+- ✅ Die Senke sammelt jetzt auf 4 kB; Vorhersage rund 313 kB/s
+- ⏳ Offen bleibt der SD-Takt von 1 MHz als vermutete Hauptbremse
+
 ### v1.5.45 - Download messen statt vermuten
 - ✅ `/speedtest?kb=1024&bs=1460` misst das WLAN ohne Karte und Kompression
 - ✅ Der echte Download schlüsselt SD-Lesen, Komprimieren und Senden getrennt auf

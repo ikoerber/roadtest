@@ -5,6 +5,47 @@ Alle wichtigen Änderungen am ESP32-S3 Straßenqualitäts-Messsystem werden in d
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt hält sich an [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.46] - 2026-08-04
+
+### Behoben: Ausgabe des Downloads wird gepuffert
+
+Die Messung am Gerät hat die Ursache benannt. Zwei Läufe von `/speedtest` mit
+gleicher Datenmenge und verschiedener Blockgröße:
+
+| Blockgröße | Blöcke | Zeit je Aufruf | Rate |
+|---:|---:|---:|---:|
+| 512 B | 2.048 | 5,59 ms | 89,4 kB/s |
+| 1.460 B | 718 | 7,49 ms | 190,4 kB/s |
+
+Fast dieselbe Zeit je Aufruf bei dreifacher Datenmenge: **Ein `sendContent()`
+kostet rund 4,57 ms Fixaufwand**, unabhängig vom Inhalt, plus etwa 2 µs je
+Byte. Die Grenzrate liegt damit bei rund 500 kB/s - das WLAN ist schnell, der
+Aufwand je Aufruf frisst es auf.
+
+Der Kompressor gibt seine Blöcke aber in der Größe aus, die ihm passt, und
+jeder davon wurde bisher einzeln als HTTP-Chunk verschickt. Die Senke sammelt
+sie jetzt auf `HTTP_CHUNK_BYTES` (4 kB), bevor sie sendet. Das Modell sagt
+dafür rund 313 kB/s voraus; 8 kB brächten 382, wiegen aber schwerer im knappen
+Heap.
+
+Der Puffer liegt statisch und nicht als Member der Senke: Sie entsteht im
+Web-Handler, dessen Stack der des Loop-Tasks mit typisch 8 kB ist. Zwei
+Downloads nebeneinander kann es nicht geben, weil die Hauptschleife
+einsträngig für die Dauer der Übertragung im Handler steckt.
+
+`spuelen()` läuft ausdrücklich **nach** `finish()`, denn der gzip-Nachspann
+fließt noch durch die Senke. Ohne ihn meldet jedes Werkzeug beim Auspacken
+einen unvollständigen Strom.
+
+### Weiterhin offen: der SD-Takt
+
+Das WLAN trägt nur die gepackten Bytes, die Karte liest die rohen. 190 kB/s
+gepackt entsprechen rund 1,9 MB/s an Rohdaten; `SD_SPI_SPEED` mit 1 MHz
+begrenzt das Lesen dagegen auf real 60 bis 90 kB/s. Eine Fahrstunde mit 12 MB
+braucht damit allein zum Lesen zwei bis drei Minuten. Die Aufschlüsselung
+eines echten Downloads auf der seriellen Konsole muss das bestätigen, bevor
+daran etwas geändert wird.
+
 ## [1.5.45] - 2026-08-04
 
 ### Hinzugefügt: Messung statt Vermutung beim Download
