@@ -638,6 +638,11 @@ Buslast steht in [OPTIMIERUNGEN.md](OPTIMIERUNGEN.md).
 
 ## 📈 Version History
 
+### v1.5.47 - `bench` misst den Kompressionsdurchsatz
+- ✅ Kompression ohne Karte und ohne Netz messbar, dazu freier Speicher
+- ⚠️ 40 Byte/s wurden mit 1.5.46 gemessen - die Blockgröße war es also nicht
+- 🔍 Verdacht: Kompressor liegt im PSRAM, 128 Sondierungen je Zugriff
+
 ### v1.5.46 - Ausgabe des Downloads gepuffert
 - ✅ Gemessen: `sendContent()` kostet 4,57 ms Fixaufwand je Aufruf, unabhängig
   vom Inhalt - 512-Byte-Blöcke ergaben 89,4 kB/s, 1.460 Byte 190,4

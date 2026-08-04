@@ -5,6 +5,36 @@ Alle wichtigen Änderungen am ESP32-S3 Straßenqualitäts-Messsystem werden in d
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt hält sich an [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.47] - 2026-08-04
+
+### Hinzugefügt: `bench` misst den Kompressionsdurchsatz allein
+
+Der Download durchläuft drei Stufen, und zwei davon sind inzwischen gemessen:
+Das WLAN liefert 190 kB/s, der SD-Takt lässt real 60 bis 90 kB/s zu.
+Beobachtet wurden am Gerät aber **40 Byte/s** - und zwar mit 1.5.46, also
+bereits mit der Pufferung auf 4 kB. Damit ist die Blockgröße als Hauptursache
+widerlegt; sie war ein realer, aber kleiner Effekt.
+
+Zwei Größenordnungen fehlen, und die einzige Stufe ohne eigene Messung ist die
+Kompression. `bench` misst sie ohne Karte und ohne Netz: Nutzdaten aus dem
+Arbeitsspeicher im Format der Sensordatei, Ausgabe in eine Senke, die nur
+zählt. Übrig bleibt reine Rechenzeit. Ausgegeben werden zusätzlich freier
+interner Speicher und PSRAM.
+
+Der Verdacht steht im eigenen Code: Der Kompressor liegt mit rund 133 kB im
+**PSRAM**, weil er den knappen Heap nicht belasten sollte. Für das Logging mit
+ein paar hundert Byte je Sekunde ist das richtig. Beim Massenkomprimieren
+greift Deflate dagegen ständig und in zufälliger Reihenfolge auf Hashtabellen
+und Wörterbuch zu; über QSPI kostet jeder Cache-Fehlgriff ein Vielfaches eines
+Zugriffs auf internen Speicher. `TDEFL_DEFAULT_MAX_PROBES` mit 128
+Sondierungen je Wörterbuchzugriff vervielfacht genau diese Zugriffe -
+`gzip_stream.cpp` benennt diesen Wert selbst als „ersten Stellhebel", falls
+die Rechenzeit zu hoch wird.
+
+Gemessen wird mit repräsentativen Daten, nicht mit Zufallszahlen: Letztere
+sind unkomprimierbar, der Algorithmus sucht dann kaum Übereinstimmungen und
+das Ergebnis fiele zu gut aus.
+
 ## [1.5.46] - 2026-08-04
 
 ### Behoben: Ausgabe des Downloads wird gepuffert

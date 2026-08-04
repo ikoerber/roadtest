@@ -17,6 +17,8 @@
 #include "gps_manager.h"
 #include "runtime_diagnostics.h"
 #include "web_manager.h"
+#include "gzip_stream.h"
+#include <esp_heap_caps.h>
 
 // Pin-Definitionen sind nun in hardware_config.cpp zentralisiert
 
@@ -1166,6 +1168,79 @@ void setup() {
     Serial.println("Webseite bleibt erreichbar; CAN ist für Messfahrten nicht erforderlich.");
 }
 
+// Kompressionsdurchsatz allein messen.
+//
+// Der Download durchläuft drei Stufen. `/speedtest` hat das WLAN mit 190 kB/s
+// belegt und der SD-Takt lässt real 60 bis 90 kB/s zu - beobachtet wurden am
+// 04.08.2026 aber 40 Byte/s. Zwei Größenordnungen fehlen, und die einzige
+// Stufe ohne Messung ist die Kompression.
+//
+// Diese Messung nimmt weder Karte noch Netz: Nutzdaten aus dem
+// Arbeitsspeicher, Ausgabe in eine Senke, die nur zählt. Was übrig bleibt,
+// ist reine Rechenzeit.
+//
+// Der Verdacht steht im eigenen Code: Der Kompressor liegt im PSRAM, und
+// Deflate greift ständig in zufälliger Reihenfolge auf Hashtabellen und
+// Wörterbuch zu. Über QSPI kostet jeder Cache-Fehlgriff ein Vielfaches eines
+// Zugriffs auf internen Speicher, und TDEFL_DEFAULT_MAX_PROBES mit 128
+// Sondierungen vervielfacht genau diese Zugriffe.
+namespace {
+class ZaehlSenke : public GzipSink {
+public:
+    size_t write(const uint8_t*, size_t length) override {
+        bytes += length;
+        return length;
+    }
+    uint32_t bytes = 0;
+};
+}  // namespace
+
+void messeKompression() {
+    Serial.println("\n=== Kompressionsmessung ===");
+    Serial.printf("Interner Speicher frei: %u Byte\n",
+                  heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+    Serial.printf("PSRAM gesamt %u Byte, davon frei %u\n",
+                  heap_caps_get_total_size(MALLOC_CAP_SPIRAM),
+                  heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+
+    ZaehlSenke senke;
+    GzipStream strom;
+    if (!strom.begin(senke)) {
+        Serial.println("❌ Kompressor konnte nicht angelegt werden");
+        return;
+    }
+
+    // Eine Zeile im Format der Sensordatei. Repräsentativ ist wichtig:
+    // Zufallsdaten wären unkomprimierbar und ergäben ein zu gutes Ergebnis,
+    // weil der Algorithmus dann kaum Übereinstimmungen sucht.
+    static const char zeile[] =
+        "2026-08-04T18:59:12Z,240476,324.2,75.9,112.3,0.000,-0.110,-0.500,"
+        "7.625,0.438,-0.500,9.510,-2.200,-0.900,7.345,1,34.0,0,3,3,1\n";
+    const size_t zeilenLaenge = sizeof(zeile) - 1;
+    const uint32_t zielBytes = 64UL * 1024UL;
+
+    suspendWatchdog();
+    const unsigned long begonnen = millis();
+    uint32_t roh = 0;
+    while (roh < zielBytes) {
+        strom.write(reinterpret_cast<const uint8_t*>(zeile), zeilenLaenge);
+        roh += zeilenLaenge;
+    }
+    strom.finish();
+    const unsigned long dauer = millis() - begonnen;
+    resumeWatchdog();
+    strom.end();
+
+    const float rate = dauer > 0 ? (roh / 1024.0f) / (dauer / 1000.0f) : 0;
+    Serial.printf("%lu kB roh -> %lu kB gepackt in %lu ms\n",
+                  static_cast<unsigned long>(roh / 1024),
+                  static_cast<unsigned long>(senke.bytes / 1024), dauer);
+    Serial.printf("Durchsatz: %.1f kB/s roh, Faktor %.1f\n", rate,
+                  senke.bytes > 0 ? static_cast<float>(roh) / senke.bytes : 0);
+    Serial.println(
+        "Zum Vergleich: WLAN 190 kB/s gepackt, SD-Lesen 60 bis 90 kB/s roh.");
+}
+
 // Die Bestätigung eines frisch eingespielten Abbilds übernimmt diese Firmware
 // selbst, nicht der Arduino-Kern.
 //
@@ -1753,6 +1828,7 @@ void loop() {
             Serial.println("\n=== Test-Kommandos ===");
             Serial.println("hardware - Hardware-Test-Suite");
             Serial.println("buffer - Buffer-Sicherheits-Test");
+            Serial.println("bench - Kompressionsdurchsatz messen");
             Serial.println("calibration - BNO055 Kalibrierung speichern");
             Serial.println("clear_cal - BNO055 Kalibrierung löschen");
             Serial.println("start - Messfahrt starten");
@@ -1784,6 +1860,9 @@ void loop() {
         }
         else if (command == "buffer") {
             testBufferSafety();
+        }
+        else if (command == "bench") {
+            messeKompression();
         }
         else if (command == "calibration") {
             if (bnoManager.saveCalibration()) {
