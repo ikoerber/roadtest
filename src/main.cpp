@@ -14,10 +14,8 @@
 #include "sd_logger.h"
 #include "road_quality.h"
 #include "gps_manager.h"
-#include "integration_tests.h"
 #include "runtime_diagnostics.h"
 #include "web_manager.h"
-#include "vehicle_data_discovery.h"
 
 // Pin-Definitionen sind nun in hardware_config.cpp zentralisiert
 
@@ -1039,8 +1037,10 @@ void handleHardwareRecovery(unsigned long now) {
         canBusAvailable = true;
         const CANHardwareDiagnostics diagnostics =
             canReader.getHardwareDiagnostics();
-        const uint8_t expectedMode =
-            vehicleDataDiscovery.isPassiveCaptureActive() ? 3 : 0;
+        // Ohne die entfallene Datenerkennung gibt es nur noch den normalen
+        // Betriebsmodus 0; der frühere passive Mitschnitt mit Modus 3 ist
+        // entfallen.
+        const uint8_t expectedMode = 0;
         const bool controllerFault =
             !diagnostics.valid || diagnostics.transmitBusOff ||
             diagnostics.operatingMode != expectedMode;
@@ -1055,8 +1055,7 @@ void handleHardwareRecovery(unsigned long now) {
             now - lastCANRecoveryAttempt >=
                 CAN_RECOVERY_RETRY_INTERVAL) {
             lastCANRecoveryAttempt = now;
-            const bool passiveMode =
-                vehicleDataDiscovery.isPassiveCaptureActive();
+            const bool passiveMode = false;
             if (sdLogger.isLogging()) {
                 sdLogger.logEvent(
                     "CAN_RECOVERY",
@@ -1382,15 +1381,11 @@ void loop() {
     // Komponenten reagieren. Nach einem späteren Ausfall erscheint sie
     // automatisch erneut.
 
-    // Im normalen OBD-Betrieb genügt ein Frame pro 10-ms-Zyklus. Während
-    // des passiven Erkennungsmitschnitts wird der MCP2515 dagegen in jeder
-    // loop()-Runde bis zu 32-mal geleert, damit zyklischer Fahrzeugverkehr
-    // seine beiden kleinen Empfangspuffer nicht sofort überläuft.
-    if (canBusAvailable &&
-        (vehicleDataDiscovery.isActive() ||
-         currentTime - lastCANCheck >= 10)) {
-        const uint8_t receiveBudget =
-            vehicleDataDiscovery.isActive() ? 32 : 1;
+    // Im normalen OBD-Betrieb genügt ein Frame pro 10-ms-Zyklus. Das größere
+    // Empfangsbudget von 32 Frames galt allein dem passiven Mitschnitt der
+    // entfallenen Datenerkennung, die den Bus ungefiltert mitlas.
+    if (canBusAvailable && currentTime - lastCANCheck >= 10) {
+        const uint8_t receiveBudget = 1;
         uint8_t receivedThisCycle = 0;
 
         // hasMessage() puffert den Frame bereits; readMessage() liefert danach
@@ -1404,7 +1399,6 @@ void loop() {
             canMessageCount++;
             totalCANMessages++;
             lastCANMessage = msg;  // Für Zeitkorrelation speichern
-            vehicleDataDiscovery.onCANMessage(msg);
 
             // In SDLogger aufzeichnen
             if (sdLogger.isLogging()) {
@@ -1417,8 +1411,7 @@ void loop() {
                 }
 
                 // Zeitkorrelation: Wenn aktuelle Sensor-Daten vorhanden
-                if (!vehicleDataDiscovery.isActive() &&
-                    lastSensorData.timestamp > 0 &&
+                if (lastSensorData.timestamp > 0 &&
                     abs((long)(msg.timestamp - lastSensorData.timestamp)) < 1000) {
                     sdLogger.logCorrelatedData(lastSensorData, msg);
                 }
@@ -1441,16 +1434,11 @@ void loop() {
         canReader.updateOBDDiagnostics();
     }
 
-    // Die Discovery darf erst nach dem Empfang entscheiden, ob eine ECU
-    // erreichbar ist oder ob die nächste sichere Anfrage gesendet werden muss.
-    vehicleDataDiscovery.update();
-
     // Drei standardisierte Live-PIDs zyklisch abfragen. Das gemeinsame
     // Intervall begrenzt die gesamte Senderate auf höchstens zwei Frames pro
     // Sekunde; ein fehlendes ACK endet zusätzlich im MCP2515-Treiber nach
     // CAN_TX_TIMEOUT_MS.
     if (canBusAvailable && canReader.isOBDPollingEnabled() &&
-        !vehicleDataDiscovery.controlsOBDPolling() &&
         currentTime - lastOBDRequest >= CAN_OBD_REQUEST_INTERVAL_MS) {
         static const uint8_t obdPids[] = {0x0C, 0x0D, 0x11};
         canReader.requestOBDPid(obdPids[obdPidIndex]);
@@ -1628,10 +1616,6 @@ void loop() {
                                   (currentTime -
                                    vehicleTestSession.startedAt) / 1000);
                 }
-                if (vehicleDataDiscovery.isActive()) {
-                    Serial.printf(", Datenerkennung: %s",
-                                  vehicleDataDiscovery.getPhaseName());
-                }
                 Serial.println();
             }
         }
@@ -1658,14 +1642,7 @@ void loop() {
         if (command == "test") {
             Serial.println("\n=== Test-Kommandos ===");
             Serial.println("hardware - Hardware-Test-Suite");
-            Serial.println("integration - Vollständige Integration-Tests");
-            Serial.println("stress - Stress-Test-Suite");
-            Serial.println("recovery - Failure-Recovery-Tests");
-            Serial.println(
-                "sdrecovery - Fokussierter SD-Wiederanlauftest");
-            Serial.println("quick - Schnelle Integration-Tests");
             Serial.println("buffer - Buffer-Sicherheits-Test");
-            Serial.println("memory - Memory-Leak-Test (2 Min)");
             Serial.println("calibration - BNO055 Kalibrierung speichern");
             Serial.println("clear_cal - BNO055 Kalibrierung löschen");
             Serial.println("start - Messfahrt starten");
@@ -1675,10 +1652,6 @@ void loop() {
             Serial.println("test begin - passiven Fahrzeug-Test starten");
             Serial.println("test status - Zwischenbericht ausgeben");
             Serial.println("test end - Test mit PASS/WARN/FAIL abschließen");
-            Serial.println("discover begin - Fahrzeugdaten-Erkennung und SD-Log starten");
-            Serial.println("discover status - Phase und erkannte Daten anzeigen");
-            Serial.println("discover mark <Text> - Zeitpunkt im SD-Log markieren");
-            Serial.println("discover end - Erkennung sicher beenden");
             Serial.println("gps_mode - GPS Interrupt/Polling umschalten");
             Serial.println("diag - System-Diagnose");
         }
@@ -1691,21 +1664,6 @@ void loop() {
         else if (command == "test end" || command == "test_end") {
             endVehicleTest();
         }
-        else if (command == "discover begin" ||
-                 command == "discover_begin") {
-            vehicleDataDiscovery.begin();
-        }
-        else if (command == "discover status" ||
-                 command == "discover_status") {
-            vehicleDataDiscovery.printStatus();
-        }
-        else if (command == "discover end" ||
-                 command == "discover_end") {
-            vehicleDataDiscovery.end();
-        }
-        else if (command.startsWith("discover mark ")) {
-            vehicleDataDiscovery.addMarker(command.substring(14));
-        }
         else if (command == "hardware") {
             suspendWatchdog();
             i2cScanner();
@@ -1714,47 +1672,8 @@ void loop() {
             testBufferSafety();
             resumeWatchdog();
         }
-        else if (command == "integration") {
-            Serial.println("\n🚀 Starte umfassende Integration-Tests...");
-            Serial.println("Dies dauert etwa 5-10 Minuten.");
-            Serial.println("Achtung: einzelne Tests warten auf Eingaben an dieser Konsole.");
-            suspendWatchdog();
-            integrationTests.runAllTests();
-            resumeWatchdog();
-        }
-        else if (command == "stress") {
-            suspendWatchdog();
-            runStressTestSuite();
-            resumeWatchdog();
-        }
-        else if (command == "recovery") {
-            suspendWatchdog();
-            runFailureRecoveryTests();
-            resumeWatchdog();
-        }
-        else if (command == "sdrecovery") {
-            suspendWatchdog();
-            integrationTests = IntegrationTests();
-            integrationTests.testSDCardHotplug();
-            integrationTests.printDetailedReport();
-            resumeWatchdog();
-        }
-        else if (command == "quick") {
-            Serial.println("\n⚡ Starte schnelle Integration-Tests...");
-            suspendWatchdog();
-            integrationTests.testAllModulesConcurrent();
-            integrationTests.testSensorDataCorrelation();
-            integrationTests.testBufferOverflowRecovery();
-            integrationTests.printResults();
-            resumeWatchdog();
-        }
         else if (command == "buffer") {
             testBufferSafety();
-        }
-        else if (command == "memory") {
-            suspendWatchdog();
-            integrationTests.testMemoryLeakDetection();
-            resumeWatchdog();
         }
         else if (command == "calibration") {
             if (bnoManager.saveCalibration()) {
@@ -1769,42 +1688,24 @@ void loop() {
             }
         }
         else if (command == "start") {
-            if (vehicleDataDiscovery.isActive()) {
-                Serial.println(
-                    "ℹ️ Datenerkennung verwaltet die SD-Aufzeichnung bereits");
-            } else if (sdLogger.startLogging()) {
+            if (sdLogger.startLogging()) {
                 Serial.println("✅ Messfahrt gestartet");
             } else {
                 Serial.println("❌ Messfahrt konnte nicht gestartet werden");
             }
         }
         else if (command == "stop") {
-            if (vehicleDataDiscovery.isActive()) {
-                Serial.println(
-                    "ℹ️ Für diese Aufzeichnung 'discover end' verwenden");
-            } else {
-                sdLogger.stopLogging();
-            }
+            sdLogger.stopLogging();
         }
         else if (command == "obd off" || command == "obd_off") {
-            if (vehicleDataDiscovery.isActive()) {
-                Serial.println(
-                    "ℹ️ Der aktuelle Erkennungsablauf steuert den OBD-Zustand");
-            } else {
-                canReader.setOBDPollingEnabled(false);
-                Serial.println(
-                    "ℹ️ OBD-Abfragen pausiert; CAN-Adapter bleibt initialisiert");
-            }
+            canReader.setOBDPollingEnabled(false);
+            Serial.println(
+                "ℹ️ OBD-Abfragen pausiert; CAN-Adapter bleibt initialisiert");
         }
         else if (command == "obd on" || command == "obd_on") {
-            if (vehicleDataDiscovery.isActive()) {
-                Serial.println(
-                    "ℹ️ Der aktuelle Erkennungsablauf steuert den OBD-Zustand");
-            } else {
-                canReader.setOBDPollingEnabled(true);
-                Serial.println(
-                    "✅ OBD-Abfragen aktiviert (maximal zwei pro Sekunde)");
-            }
+            canReader.setOBDPollingEnabled(true);
+            Serial.println(
+                "✅ OBD-Abfragen aktiviert (maximal zwei pro Sekunde)");
         }
         else if (command == "gps_mode") {
             bool currentMode = gpsManager.isInterruptModeEnabled();

@@ -683,6 +683,14 @@ Buslast steht in [OPTIMIERUNGEN.md](OPTIMIERUNGEN.md).
 
 ## 📈 Version History
 
+### v1.5.41 - Ballast für den Einbau ins Fahrzeug entfernt
+- ✅ Interaktive Testsuite entfernt (59,3 kByte, größtes Modul der Firmware);
+  `hardware` und `buffer` bleiben, sie lagen nie in diesem Modul
+- ✅ Fahrzeugdaten-Erkennung entfernt (16,6 kByte), die PIDs sind bekannt
+- ✅ Beifahrerseite `/fahrbahn` entfernt, Urteile entstehen nach der Fahrt
+  am Rechner
+- ✅ Flash von 93,6 auf 88,2 Prozent, freier Platz von 83.486 auf 154.194 Byte
+
 ### v1.5.40 - Hardware-Test gibt die SD-Karte wieder frei
 - ✅ Der Test entzog dem Logger den SPI-Bus; die Karte war danach bis zum
   Neustart weg und der Test riet fälschlich zum Prüfen des MISO-Kabels

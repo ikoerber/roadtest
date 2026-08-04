@@ -1,7 +1,7 @@
 # ROADTEST Firmware
 
 ESP32-S3-Firmware zur Aufzeichnung von BNO055-, GPS-, Straßenqualitäts- und
-standardisierten OBD-II-Daten. Aktueller Firmwarestand: **1.5.40**.
+standardisierten OBD-II-Daten. Aktueller Firmwarestand: **1.5.41**.
 
 Der aktuelle Stand ist ein Hardware- und Fahrzeugteststand, nicht abschließend
 produktionsreif. Bekannte Einschränkungen stehen weiter unten.
@@ -70,7 +70,6 @@ src/gps_manager.{h,cpp}         BN-880-UART, TinyGPS++ und GPS-Zustand
 src/MCP2515.{h,cpp}             Lokaler MCP2515-Treiber
 src/CANController.{h,cpp}       Abstraktion des CAN-Controllers
 src/can_reader.{h,cpp}          CAN-Empfang und erlaubte OBD-Service-01-PIDs
-src/vehicle_data_discovery.*    Dreiphasige Fahrzeugdaten-Erkennung
 src/sd_logger.{h,cpp}           Sitzungsbezogene CSV-Aufzeichnung
 src/curve_detector.{h,cpp}      Kurvenerkennung, hardwarefrei und hosttestbar
 src/road_metrics.{h,cpp}        Vibration, Straßenqualität, Schlaglöcher;
@@ -78,7 +77,6 @@ src/road_metrics.{h,cpp}        Vibration, Straßenqualität, Schlaglöcher;
 src/road_quality.h              Datenstruktur RoadMetrics für Auswertungen
 src/web_manager.{h,cpp}         ROADTEST-WLAN, Statusseite und Browser-OTA
 src/runtime_diagnostics.{h,cpp} Laufzeit-, Web- und SD-Pausendiagnose
-src/integration_tests.{h,cpp}   Serielle Hardware- und Integrationstests
 ```
 
 Systemablauf:
@@ -90,8 +88,6 @@ Systemablauf:
    nicht mehr zu trennen.
 4. Die Hauptschleife bedient zuerst Web/OTA und anschließend Sensoren,
    Logging, CAN/OBD und Diagnose.
-5. `VehicleDataDiscovery` übernimmt während einer Discovery-Sitzung die
-   CAN-Modi, OBD-Anfragen und SD-Aufzeichnung.
 
 ## Verbindliche Hardware
 
@@ -143,23 +139,15 @@ Wichtige Invarianten:
 
 ## Fahrzeugdaten-Erkennung
 
-Serielle Befehle:
+**Mit 1.5.41 entfernt.** Die dreiphasige Suche - Listen-Only-Mitschnitt, Scan
+der Unterstützungsblöcke, Abfrage bestätigter PIDs - hat ihren Zweck erfüllt:
+Die unterstützten Standard-PIDs des Fahrzeugs sind bekannt und am Porsche
+Carrera S bestätigt. Die Befehle `discover begin`, `discover status`,
+`discover mark` und `discover end` gibt es nicht mehr.
 
-```text
-discover begin
-discover status
-discover mark <kurze Beschreibung>
-discover end
-```
-
-Der Ablauf besteht aus:
-
-1. 60 Sekunden echtem MCP2515-Listen-Only ohne ACKs oder Anfragen.
-2. Zwei Scanrunden der OBD-Unterstützungsblöcke `00/20/40/60`.
-3. Abfrage ausschließlich bestätigter Standard-PIDs bis `discover end`.
-
-Eine Discovery-Sitzung erzeugt nach Bedarf Sensor-, Straßen-, GPS-, Event-,
-CAN-, OBD- und Zusammenfassungsdateien mit gemeinsamer Sitzungs-ID.
+Die Firmware fragt im Betrieb zyklisch `0x0C`, `0x0D` und `0x11` ab. Wird
+einmal ein anderes Fahrzeug angeschlossen, ist die Erkennung aus der Historie
+zu holen, statt sie neu zu schreiben.
 
 ## Serielle Diagnose und Tests
 
@@ -169,13 +157,7 @@ besonders relevant:
 ```text
 diag
 hardware
-quick
-integration
-stress
-recovery
-sdrecovery
 buffer
-memory
 calibration
 clear_cal
 start
@@ -187,9 +169,13 @@ test status
 test end
 ```
 
-Die Integrationstests sind Firmwaretests mit realer Hardware und teilweise
-interaktiven Schritten. Es gibt derzeit keine belastbare automatisierte
-Coverage-Zahl. Keine erfundenen Qualitäts- oder Abdeckungswerte dokumentieren.
+`hardware` fasst I²C-Scanner, BNO055-Prüfung, SD-Test mit sicheren Pins und
+Puffersicherheit zusammen; diese Funktionen liegen in `main.cpp`. Die
+interaktive Testsuite ist mit 1.5.41 entfernt - sie war mit 59,3 kByte das
+größte Modul der Firmware und wartete teilweise auf Eingaben an der Konsole,
+was zu einem eingebauten Gerät nicht mehr passt. Es gibt keine belastbare
+automatisierte Coverage-Zahl. Keine erfundenen Qualitäts- oder
+Abdeckungswerte dokumentieren.
 
 ## Hosttests
 
@@ -326,8 +312,9 @@ Eigenschaften des Sitzungskopfes.
 
 ## Aktueller Teststand
 
-- Firmware 1.5.40 baut erfolgreich für `lolin_s3_mini`.
-- Letzter Build: 71.076 Byte RAM (21,7 %) und 1.227.234 Byte Flash (93,6 %).
+- Firmware 1.5.41 baut erfolgreich für `lolin_s3_mini`.
+- Letzter Build: 68.260 Byte RAM (20,8 %) und 1.156.526 Byte Flash (88,2 %).
+  1.5.41 gab 70.708 Byte frei; verfügbar sind damit 154.194 Byte.
 - Am 31.07.2026 liefen fünf Beifahrer-Referenzfahrten mit 1.5.28 und je zwölf
   markierten Referenzintervallen. Sie sind der Prüfstand der Kurvenerkennung.
 - 1.5.29 ist am Fahrzeug bestätigt: vier Fahrten am 01.08.2026 über 21 Minuten
@@ -469,42 +456,36 @@ Verbindliche Punkte:
   verschlechtert sie das Ergebnis von 0,74 auf 0,48. Bremsen, Beschleunigen
   und Kurven finden unabhängig von der Fahrbahnqualität statt.
 
-### Beifahrerseite `/fahrbahn`
+### Beifahrerurteile
 
-Vier Wertungsstufen und ein Knopf für den Belagswechsel. Die Marker heißen
-`FAHRBAHN_URTEIL` mit der Stufe 1 bis 4 in `Schwere` sowie
-`FAHRBAHN_BELAGSWECHSEL`.
+Die Beifahrerseite `/fahrbahn` ist mit 1.5.41 entfernt. Urteile entstehen nach
+`STRECKENDATENBANK.md` künftig nach der Fahrt am Rechner: Was während der Fahrt
+Aufmerksamkeit kostet, kommt nicht in die Datenbank, und ein Beifahrer ist bei
+einer alltäglichen Aufzeichnung nicht vorauszusetzen.
 
-Der Zweck ist die Kalibrierung der Notenskala, nicht die Bestätigung der
-Erkennung. Das ist der Unterschied zur früheren Seite `/curve-test`: Ein
-Kurvenwinkel ist objektiv, die Fahrbarkeit ist ein Urteil. Ohne
-Beifahrerurteil bleiben die beiden Notengrenzen Konvention.
+Die damit erhobenen 149 Urteile zweier Fahrtage bleiben die Grundlage der
+Notengrenzen `ROAD_DRIVEABILITY_RMS_GOOD_MPS2` und `_BAD_MPS2`. Ihre
+Auswertungsregeln gelten unverändert weiter, auch für die kommende Bewertung
+am Rechner:
 
-Verbindliche Punkte:
-
-- Angezeigt wird der **zuletzt abgeschlossene** Abschnitt, niemals der
-  laufende Wert. Der abgeschlossene liegt hinter dem Fahrzeug und kann das
-  Urteil über die Strecke unter den Rädern nicht vorwegnehmen.
-- Kein Seitenwechsel beim Drücken; jeder Marker wird einzeln quittiert, damit
-  ein Funkloch keine Wertung verschluckt.
-- Die Seite bleibt ohne Passwortschutz, weil der Beifahrer während der Fahrt
-  keine Zugangsdaten eingeben soll. Sie kann ausschließlich Marker setzen.
-- Ohne laufende Aufzeichnung antworten die Endpunkte mit 409, statt Marker
-  stillschweigend zu verwerfen.
-- **Die Aufzeichnung hängt nicht an der Bewertung.** `/fahrbahn` ruft
-  ausschließlich `logEvent()`; Start und Ende bleiben allein bei
-  `/ride/start` und `/ride/stop`. Bewerten ist jederzeit für beliebig lange
-  aussetzbar, auch mit geschlossener Seite.
 - **Ein Urteil gilt für seinen Abschnitt, nicht bis zum nächsten Marker.**
   Jedes Urteil trägt dafür die laufende Abschnittsnummer und den Weg im
-  offenen Abschnitt mit. Diese Regel ist verbindlich für jede Auswertung:
-  Andernfalls zöge eine Pause von zehn Minuten die letzte Wertung über zehn
-  Minuten unbewertete Straße. Nicht bewertete Abschnitte bleiben ohne
-  Urteil - das ist der gewollte Zustand, keine Lücke, die zu füllen wäre.
+  offenen Abschnitt mit. Andernfalls zöge eine Pause von zehn Minuten die
+  letzte Wertung über zehn Minuten unbewertete Straße. Nicht bewertete
+  Abschnitte bleiben ohne Urteil - das ist der gewollte Zustand, keine Lücke,
+  die zu füllen wäre.
+- Bewertet wird der **abgeschlossene** Abschnitt. Er liegt hinter dem Fahrzeug
+  und kann das Urteil über die Strecke unter den Rädern nicht vorwegnehmen.
+- Die Fahrbarkeit ist ein Urteil, kein Messwert. Ohne Urteilsdaten bleiben die
+  beiden Notengrenzen Konvention; sie sind nie nach Augenschein zu ändern.
+
+In Bestandsdaten heißen die Marker `FAHRBAHN_URTEIL` mit der Stufe 1 bis 4 in
+`Schwere` sowie `FAHRBAHN_BELAGSWECHSEL`. Neue Aufzeichnungen enthalten sie
+nicht mehr.
 
 ## Bekannte Einschränkungen
 
-### OBD-Discovery
+### CAN und OBD
 
 - **Die Temperatur-PIDs `0x46` und `0x5C` rechnen `A - 40` über ein Byte;
   `0xFF` bedeutet dort „Wert nicht verfügbar" und nicht 215 °C.** Bis 1.5.36
@@ -701,8 +682,12 @@ Positionssprungbewertung und ereignisorientiertes Logging bleiben offen.
   Fehlersuche braucht, hängt vorübergehend ein beliebiges I²C-Gerät an -
   der Scanner findet es ohne Codeänderung.
 - SD-Aufzeichnung über die vorhandene nicht blockierende Startlogik öffnen.
-- Die entfernte Web-Downloadfunktion für SD-Dateien nicht wieder einführen;
-  sie war auf dem Gerät zu langsam.
+- **Logdateien nicht unkomprimiert über das Netz ausgeben.** Genau daran
+  scheiterte die früher entfernte Web-Downloadfunktion. Der Zugriff übers
+  Handy kommt nach `STRECKENDATENBANK.md` zurück, aber ausschließlich
+  komprimiert über `src/gzip_stream.{h,cpp}`; die ROM-Implementierung des
+  ESP32-S3 kostet dafür kaum Flash. Ein eingebautes Gerät lässt sich sonst
+  nicht mehr auslesen, ohne die Verkleidung zu öffnen.
 - GPS- oder OBD-Werte nur als gültig ausgeben, wenn ihre Aktualität
   nachweisbar ist; unbekannte Werte nicht als Nullwert ausgeben.
 - Firmwareversion zentral in `src/hardware_config.h` sowie `CHANGELOG.md` und

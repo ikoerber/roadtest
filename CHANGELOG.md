@@ -5,6 +5,50 @@ Alle wichtigen Änderungen am ESP32-S3 Straßenqualitäts-Messsystem werden in d
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt hält sich an [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.41] - 2026-08-04
+
+### Entfernt: Ballast für den Einbau ins Fahrzeug
+
+Das Gerät soll künftig einmal eingebaut und nicht mehr angefasst werden. Drei
+Baugruppen sind damit gegenstandslos geworden und fallen weg. Der Flashbedarf
+sinkt von 93,6 auf **88,2 Prozent**, der freie Platz wächst von 83.486 auf
+154.194 Byte - Raum für den Datenzugriff übers Handy, der als Nächstes kommt.
+
+- **Die interaktive Testsuite `integration_tests`** war mit 59,3 kByte das
+  größte Modul der ganzen Firmware, größer als der SD-Logger. Ihre Tests
+  warten teilweise auf Eingaben an der seriellen Konsole - an einem Gerät
+  hinter der Verkleidung ist niemand mehr, der etwas eingibt. Entfallen sind
+  die Befehle `integration`, `stress`, `recovery`, `sdrecovery`, `quick` und
+  `memory`.
+
+  **`hardware` und `buffer` bleiben erhalten.** Ihre Funktionen - I²C-Scanner,
+  BNO055-Prüfung, SD-Test mit sicheren Pins, Puffersicherheit - liegen in
+  `main.cpp` und hingen nie an der Testsuite. Damit bleibt auch die Korrektur
+  aus 1.5.40 wirksam, die dem SD-Test die Karte wieder freigibt.
+
+- **Die Fahrzeugdaten-Erkennung `vehicle_data_discovery`** (16,6 kByte) hat
+  ihren Zweck erfüllt: Die unterstützten PIDs des Fahrzeugs sind bekannt und
+  bestätigt. Die dreiphasige Suche mit Listen-Only-Mitschnitt und
+  Unterstützungsblock-Scan ist damit Ballast. Entfallen sind die Befehle
+  `discover begin`, `discover status`, `discover mark` und `discover end`.
+
+  Der CAN-Empfangspfad wird dadurch einfacher: Das Empfangsbudget von 32
+  Frames je Schleifendurchlauf galt allein dem passiven Mitschnitt, der
+  Betriebsmodus des MCP2515 ist nur noch der normale, und die Sonderfälle in
+  `start`, `stop`, `obd on`, `obd off` sowie `/ride/start` und `/ride/stop`
+  fallen weg.
+
+- **Die Beifahrerseite `/fahrbahn`** ist mit `STRECKENDATENBANK.md` entfallen.
+  Urteile entstehen jetzt nach der Fahrt am Rechner: Was während der Fahrt
+  Aufmerksamkeit kostet, kommt nicht in die Datenbank. Die Notengrenzen
+  `ROAD_DRIVEABILITY_RMS_GOOD_MPS2` und `_BAD_MPS2` sind mit den 149 Urteilen
+  zweier Fahrtage bereits bestimmt und bleiben unberührt. Die Ereignisse
+  `FAHRBAHN_URTEIL` und `FAHRBAHN_BELAGSWECHSEL` entstehen nicht mehr;
+  Bestandsdaten behalten sie.
+
+Die Abschnittsbewertung selbst, das Ereignis `ABSCHNITT` und alle Messgrößen
+bleiben unverändert. Entfernt ist die Eingabe des Urteils, nicht die Messung.
+
 ## [1.5.40] - 2026-08-03
 
 ### Behoben

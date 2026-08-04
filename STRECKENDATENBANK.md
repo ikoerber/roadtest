@@ -52,9 +52,20 @@ manuell. Die Bausteine sind vorhanden - die getrennte Zündungs- und
 Motorlauferkennung ist am Fahrzeug bestätigt.
 
 Der zweite Engpass ist das Auslesen. Die Karte zu ziehen ist bei einer Fahrt
-pro Woche gleichgültig und bei täglichen Fahrten der Grund, warum die
-Datenbank nicht wächst. Die entfernte Web-Downloadfunktion war zu langsam und
-wird nicht wieder eingeführt; ein anderer Weg ist noch zu finden.
+pro Woche gleichgültig und bei täglichen Fahrten der Grund, warum die Datenbank
+nicht wächst - erst recht, wenn das Gerät hinter der Verkleidung sitzt.
+
+**Der Zugriff erfolgt deshalb über das ROADTEST-WLAN vom Handy aus**, mit
+Dateiliste, Download und anschließendem Löschen. Damit kommt eine Funktion
+zurück, die einmal als zu langsam entfernt wurde. Der Unterschied ist die
+Kompression: Eine Fahrstunde erzeugt rund 12 MB, CSV komprimiert sich acht- bis
+zwölffach, und `src/gzip_stream.{h,cpp}` liegt fertig im Repo, kostet über die
+ROM-Implementierung des ESP32-S3 kaum Flash und ist bislang nirgends
+verdrahtet. Roh übertragen war die alte Funktion zu Recht unbrauchbar;
+komprimiert ist ein Fahrtag eine Sache von Sekunden.
+
+Verbindlich bleibt der Grund, aus dem sie damals entfiel: **Unkomprimierte
+Übertragung ganzer Logdateien wird nicht wieder eingeführt.**
 
 ## Die Einheit: das Wegstück zwischen zwei Kreuzungen
 

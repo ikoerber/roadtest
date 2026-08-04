@@ -9,7 +9,6 @@
 #include "hardware_config.h"
 #include "runtime_diagnostics.h"
 #include "sd_logger.h"
-#include "vehicle_data_discovery.h"
 
 namespace {
 constexpr const char* WIFI_SSID = "ROADTEST";
@@ -185,14 +184,6 @@ bool WebManager::begin() {
         if (!authenticateOTA()) {
             return;
         }
-        if (vehicleDataDiscovery.isActive()) {
-            server.send(
-                409, "text/html; charset=utf-8",
-                "<!doctype html><meta charset='utf-8'><h1>Start nicht möglich</h1>"
-                "<p>Die Fahrzeugdaten-Erkennung verwaltet die laufende "
-                "Aufzeichnung bereits.</p><p><a href='/'>Zurück</a></p>");
-            return;
-        }
         if (!sdLogger.isReady()) {
             server.send(
                 503, "text/html; charset=utf-8",
@@ -225,11 +216,7 @@ bool WebManager::begin() {
         if (!authenticateOTA()) {
             return;
         }
-        if (vehicleDataDiscovery.isActive()) {
-            vehicleDataDiscovery.end();
-        } else {
-            sdLogger.stopLogging();
-        }
+        sdLogger.stopLogging();
         server.sendHeader("Location", "/", true);
         server.send(303, "text/plain; charset=utf-8", "");
     });
@@ -259,72 +246,12 @@ bool WebManager::begin() {
         },
         [this]() { handleUpdateUpload(); });
 
-    // Beifahrerseite zur Fahrbahnbewertung.
-    //
-    // Die Fahrbarkeitsnote ist ein Urteil, keine physikalische Größe: Ob
-    // 1,42 m/s² noch zügiges Fahren zulässt, kann die Messung nicht
-    // beantworten. Diese Seite liefert die Wertepaare aus menschlichem
-    // Urteil und gemessenem Effektivwert, mit denen sich
-    // ROAD_DRIVEABILITY_RMS_GOOD_MPS2 und _BAD_MPS2 bestimmen lassen,
-    // statt sie zu setzen.
-    server.on("/fahrbahn", HTTP_GET, [this]() {
-        server.sendHeader("Cache-Control", "no-store");
-        server.send(200, "text/html; charset=utf-8", buildRoadRatingPage());
-    });
-
-    server.on("/fahrbahn/urteil", HTTP_POST, [this]() {
-        const int stufe = server.arg("stufe").toInt();
-        if (stufe < 1 || stufe > 4 || !sdLogger.isLogging()) {
-            server.send(
-                sdLogger.isLogging() ? 400 : 409, "text/plain; charset=utf-8",
-                sdLogger.isLogging() ? "Stufe unbekannt"
-                                     : "Keine Aufzeichnung aktiv");
-            return;
-        }
-        static const char* namen[] = {"SEHR_GUT", "GUT", "MAESSIG", "SCHLECHT"};
-        // Abschnittsnummer und zurückgelegter Weg gehören ins Ereignis. Das
-        // Urteil gilt dadurch für genau diesen Abschnitt und nicht bis zum
-        // nächsten Marker; wer minutenlang aussetzt, hinterlässt eine Lücke
-        // statt einer fortgeschriebenen Wertung.
-        sdLogger.logEvent(
-            "FAHRBAHN_URTEIL",
-            String("Stufe=") + stufe + ";Wertung=" + namen[stufe - 1] +
-                ";Abschnitt=" + bnoManager.getCurrentSectionNumber() +
-                ";AbschnittWegM=" +
-                String(bnoManager.getOpenSectionDistanceM(), 0),
-            0, 0, static_cast<float>(stufe));
-        server.send(200, "text/plain; charset=utf-8", namen[stufe - 1]);
-    });
-
-    server.on("/fahrbahn/belag", HTTP_POST, [this]() {
-        if (!sdLogger.isLogging()) {
-            server.send(409, "text/plain; charset=utf-8",
-                        "Keine Aufzeichnung aktiv");
-            return;
-        }
-        sdLogger.logEvent(
-            "FAHRBAHN_BELAGSWECHSEL",
-            String("Abschnitt=") + bnoManager.getCurrentSectionNumber() +
-                ";AbschnittWegM=" +
-                String(bnoManager.getOpenSectionDistanceM(), 0));
-        server.send(200, "text/plain; charset=utf-8", "Belagswechsel");
-    });
-
-    server.on("/fahrbahn/status", HTTP_GET, [this]() {
-        String json = String("{\"aufzeichnung\":") +
-                      (sdLogger.isLogging() ? "true" : "false") +
-                      ",\"offen_m\":" +
-                      String(bnoManager.getOpenSectionDistanceM(), 0);
-        if (bnoManager.hasLastRoadSection()) {
-            const RoadSection& s = bnoManager.getLastRoadSection();
-            json += ",\"note\":" + String(s.driveability, 0) +
-                    ",\"rms\":" + String(s.rmsVertical, 2) +
-                    ",\"tempo\":" + String(s.meanSpeedKmh, 0);
-        }
-        json += "}";
-        server.sendHeader("Cache-Control", "no-store");
-        server.send(200, "application/json; charset=utf-8", json);
-    });
+    // Die Beifahrerseite /fahrbahn ist mit STRECKENDATENBANK.md entfallen.
+    // Urteile entstehen jetzt nach der Fahrt am Rechner, nicht mehr während
+    // der Fahrt am Gerät: Was Aufmerksamkeit kostet, kommt nicht in die
+    // Datenbank. Die Notengrenzen ROAD_DRIVEABILITY_RMS_GOOD_MPS2 und
+    // _BAD_MPS2 sind mit den 149 Urteilen zweier Fahrtage bestimmt und
+    // bleiben davon unberührt.
 
     server.onNotFound([this]() {
         server.send(404, "text/plain; charset=utf-8", "Nicht gefunden");
@@ -630,8 +557,7 @@ String WebManager::buildStatusPage() {
     }
 
     page += F("<p class='hint'>Start und Ende sind mit den Admin-Zugangsdaten geschützt.</p>"
-              "<a href='/fahrbahn'>Fahrbahn bewerten</a>"
-              " &nbsp; <a href='/calibration'>Kalibrierung</a>"
+              "<a href='/calibration'>Kalibrierung</a>"
               " &nbsp; <a href='/update'>Firmware aktualisieren</a>"
               "</body></html>");
     return page;
@@ -851,69 +777,6 @@ String WebManager::buildCalibrationPage(const String& message) {
     return page;
 }
 
-// Beifahrerseite: vier Wertungsstufen, Belagswechsel, Rückmeldung.
-//
-// Bewusst schlicht gehalten, weil sie im fahrenden Auto bedient wird: große
-// Flächen, keine Eingabefelder, kein Seitenwechsel. Jeder Druck schickt einen
-// Marker und quittiert ihn; die Seite lädt dabei nicht neu, damit ein
-// Funkloch keine Wertung verschluckt.
-//
-// Angezeigt wird der zuletzt abgeschlossene Abschnitt, nicht der laufende
-// Wert. Er liegt bereits hinter dem Fahrzeug und kann das Urteil über die
-// Strecke unter den Rädern damit nicht vorwegnehmen.
-String WebManager::buildRoadRatingPage() {
-    String page;
-    page.reserve(3600);
-    page += F(
-        "<!doctype html><html lang='de'><head><meta charset='utf-8'>"
-        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-        "<title>ROADTEST Fahrbahn</title>"
-        "<style>body{margin:0;padding:12px;background:#15221c;color:#f4f1e8;"
-        "font-family:system-ui,sans-serif;-webkit-text-size-adjust:100%}"
-        "h1{font-size:1.1rem;margin:0 0 10px;font-weight:600}"
-        "button{width:100%;border:0;border-radius:14px;padding:22px 12px;"
-        "font-size:1.35rem;font-weight:700;color:#15221c;margin-bottom:10px;"
-        "-webkit-tap-highlight-color:transparent}"
-        "button:active{transform:scale(0.98)}"
-        ".s1{background:#8fd14f}.s2{background:#cce34d}"
-        ".s3{background:#f0c24b}.s4{background:#e3734d}"
-        ".belag{background:#3d5147;color:#f4f1e8;font-size:1.1rem}"
-        "#quittung{min-height:2.6rem;text-align:center;font-size:1.05rem;"
-        "padding:8px;border-radius:10px;background:#22332b;margin-bottom:10px}"
-        "#mess{font-size:0.95rem;color:#9db3a6;text-align:center;"
-        "border-top:1px solid #2f4239;padding-top:10px}"
-        "#mess b{color:#f4f1e8;font-size:1.5rem}</style></head><body>"
-        "<h1>Wie faehrt sich die Strasse hier?</h1>"
-        "<div id='quittung'>Bereit</div>"
-        "<button class='s1' onclick='u(1)'>1 &middot; Sehr gut</button>"
-        "<button class='s2' onclick='u(2)'>2 &middot; Gut</button>"
-        "<button class='s3' onclick='u(3)'>3 &middot; Maessig</button>"
-        "<button class='s4' onclick='u(4)'>4 &middot; Schlecht</button>"
-        "<button class='belag' onclick='b()'>Belagswechsel hier</button>"
-        "<div id='mess'>&nbsp;</div>"
-        "<script>"
-        "var q=document.getElementById('quittung');"
-        "function sag(t){q.textContent=t;}"
-        "function post(p,t){fetch(p,{method:'POST'})"
-        ".then(function(r){return r.text().then(function(x){"
-        "sag(r.ok?t+' \\u2713':x);});})"
-        ".catch(function(){sag('Nicht gesendet \\u2717');});}"
-        "function u(s){post('/fahrbahn/urteil?stufe='+s,'Stufe '+s);}"
-        "function b(){post('/fahrbahn/belag','Belagswechsel');}"
-        "function m(){fetch('/fahrbahn/status').then(function(r){"
-        "return r.json();}).then(function(d){"
-        "var e=document.getElementById('mess');"
-        "if(!d.aufzeichnung){e.innerHTML='Keine Aufzeichnung aktiv';return;}"
-        "var s=d.note===undefined?'<b>&ndash;</b><br>erster Abschnitt laeuft':"
-        "'<b>'+d.note+'</b><br>letzte 200 m &middot; '+d.rms+' m/s\\u00b2 &middot; '"
-        "+d.tempo+' km/h';"
-        "e.innerHTML=s+'<br>aktueller Abschnitt: '+d.offen_m+' m';})"
-        ".catch(function(){});}"
-        "m();setInterval(m,3000);"
-        "</script></body></html>");
-    return page;
-}
-
 String WebManager::buildUpdatePage() {
     String page;
     page.reserve(3200);
@@ -952,7 +815,6 @@ String WebManager::buildUpdatePage() {
         "</code></div><p>Eine für das LOLIN S3 Mini erzeugte, versionierte "
         "<code>.bin</code>-Datei auswählen.</p>");
     const bool measurementActive =
-        vehicleDataDiscovery.isActive() ||
         sdLogger.isLogging() ||
         sdLogger.isLoggingStartPending();
     if (measurementActive) {
@@ -1032,7 +894,6 @@ void WebManager::handleUpdateUpload() {
         }
 
         otaBlockedByMeasurement =
-            vehicleDataDiscovery.isActive() ||
             sdLogger.isLogging() ||
             sdLogger.isLoggingStartPending();
         otaUploadRejected = otaBlockedByMeasurement;
