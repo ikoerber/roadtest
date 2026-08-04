@@ -624,11 +624,24 @@ Positionssprungbewertung und ereignisorientiertes Logging bleiben offen.
   Buchführung. Seit 1.5.31 prüft die Firmware am Sitzungsende jede Logdatei
   gegen die tatsächliche Größe auf der Karte und legt bei Abweichung
   `road_integritaet_<Sitzung>.csv` an. Die Prüfung erkennt den Verlust, sie
-  verhindert ihn nicht; die Ursache liegt unterhalb der Firmware und ist noch
-  offen. Der naheliegende Gegentest mit einer zweiten SD-Karte ist
-  zurückgestellt, weil keine Ersatzkarte vorhanden ist. Vorher lohnt keine
-  weitere Ursachensuche in der Firmware: Ihre Buchführung war in diesem Fall
-  nachweislich in sich schlüssig.
+  verhindert ihn nicht.
+
+  **Die Ursachensuche ist am 04.08.2026 abgeschlossen, ohne den Fall zu
+  erklären.** Der Verlust ist seit dem 01.08.2026 kein zweites Mal
+  aufgetreten: zwölf Sitzungen liefen seither mit aktiver Integritätsprüfung,
+  keine einzige erzeugte eine `road_integritaet`-Datei, und in allen deckten
+  sich die Zeilenzahlen mit den Zählern der Metadatendatei. Eine neue Karte
+  ist seit dem 04.08.2026 im Einsatz. Der damit mögliche Gegentest wurde
+  bewusst nicht als Beweis geführt: Ein Fehler, der in rund 30 Sitzungen
+  einmal auftrat, ist mit einer Fahrt weder zu bestätigen noch
+  auszuschließen. Der Fall bleibt ein unerklärter Einzelfall.
+
+  Verbindlich bleibt deshalb nicht ein Ergebnis, sondern ein Verfahren: Die
+  Integritätsprüfung aus 1.5.31 ist der stehende Melder. Taucht wieder eine
+  `road_integritaet`-Datei auf oder weicht eine Zeilenzahl von ihrem Zähler
+  ab, beginnt die Suche neu - dann aber mit einem zweiten Fall statt mit
+  einem. Ohne einen solchen Anlass keine weitere Ursachensuche in der
+  Firmware: Ihre Buchführung war nachweislich in sich schlüssig.
 - Bei Auswertungen jeder Sitzung zuerst die Zeilenzahl jeder Datei gegen die
   Zähler der Metadatendatei stellen. Vollständigkeit nicht aus dem Vorhandensein
   eines END-Records und einer Zusammenfassung schließen.
