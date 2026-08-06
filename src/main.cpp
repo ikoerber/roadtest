@@ -18,6 +18,26 @@
 #include "runtime_diagnostics.h"
 #include "web_manager.h"
 #include "gzip_stream.h"
+
+// Stapel des Loop-Tasks. Der Standard von 8 kB reicht für den Download nicht.
+//
+// Am 06.08.2026 endete jeder Download am Gerät mit
+// `Guru Meditation Error: Unhandled debug exception` und
+// `Debug exception reason: Stack canary watchpoint triggered (loopTask)`.
+// Im Backtrace stand `GzipStream::write()` und darunter der ROM-Kompressor.
+//
+// Die Ursache steckt in miniz selbst: Beim Abschluss eines Deflate-Blocks
+// legt `tdefl_optimize_huffman_table()` zwei Felder `tdefl_sym_freq
+// syms0[288]` und `syms1[288]` an - zusammen **2.304 Byte auf dem Stapel**.
+// Das geschieht erst, wenn der erste Block voll ist, also rund zwei Sekunden
+// und 200 kB in die Übertragung hinein. Genau dort brach sie ab. Dazu kommen
+// die Rahmen von WebServer, Handler und den Interrupts, die den Stapel des
+// unterbrochenen Tasks mitbenutzen.
+//
+// 16 kB lassen dafür reichlich Luft. Der Preis sind 8 kB RAM bei 24 Prozent
+// Auslastung. Diesen Wert nicht ohne Messung wieder senken: Der Fehler tritt
+// nicht beim Start auf, sondern erst mitten in einer großen Übertragung.
+SET_LOOP_TASK_STACK_SIZE(16 * 1024);
 #include <esp_heap_caps.h>
 
 // Pin-Definitionen sind nun in hardware_config.cpp zentralisiert

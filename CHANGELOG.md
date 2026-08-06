@@ -5,6 +5,161 @@ Alle wichtigen Änderungen am ESP32-S3 Straßenqualitäts-Messsystem werden in d
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt hält sich an [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.4] - 2026-08-06
+
+### Behoben: Der Download läuft - am Gerät bestätigt
+
+**Der Fehler war ein Stapelüberlauf des Loop-Tasks, nicht das Senden.**
+
+Die serielle Konsole benennt ihn eindeutig:
+
+```text
+Guru Meditation Error: Core 1 panic'ed (Unhandled debug exception).
+Debug exception reason: Stack canary watchpoint triggered (loopTask)
+```
+
+Die Ursache steckt in miniz selbst. Beim Abschluss eines Deflate-Blocks legt
+`tdefl_optimize_huffman_table()` zwei Felder `tdefl_sym_freq syms0[288]` und
+`syms1[288]` an - zusammen **2.304 Byte auf dem Stapel**. Das geschieht erst,
+wenn der erste Block voll ist, also rund zwei Sekunden und 200 kB in die
+Übertragung hinein. Genau dort brach jeder Versuch ab. Dazu kommen die Rahmen
+von WebServer und Handler sowie die Interrupts, die den Stapel des
+unterbrochenen Tasks mitbenutzen. Die vorgegebenen 8 kB reichen dafür nicht.
+
+`SET_LOOP_TASK_STACK_SIZE(16 * 1024)` in `main.cpp` behebt das. Diesen Wert
+nicht ohne Messung senken: Der Fehler tritt nicht beim Start auf, sondern erst
+mitten in einer großen Übertragung.
+
+### Verworfen: zwei falsche Erklärungen
+
+**Der TCP-Sendepuffer war es nicht.** 1.5.49 hatte den verworfenen
+Rückgabewert von `sendContent()` und den vollen Sendepuffer als Ursache
+benannt. `/speedtest` widerlegt das: 1 MB über denselben Sendepfad, 719
+Blöcke, 4,2 s, 248 kB/s, kein Absturz.
+
+**Und die Host-Messung war es auch nicht.** 1.5.49 hatte den Stapelüberlauf
+mit gemessenen „320 Byte" für die Kette von `tdefl_compress_buffer()` bis in
+den Rückruf ausgeschlossen. Die Messung betrachtete die falsche Hälfte: nur
+die tdefl-Aufrufkette, nicht den Blockflush mit seinen 2,3 kB und nicht die
+Interrupts. Eine Host-Messung auf x86 ersetzt hier keine Messung am Gerät.
+
+### Geändert: Senken und Puffer
+
+Die Senke nimmt jetzt ausschließlich entgegen; gesendet wird nur noch auf
+oberster Ebene der Downloadschleife. Ihr Puffer fasst dafür einen
+vollständigen Kompressorrückruf - `TDEFL_OUT_BUF_SIZE` plus eine Chunkgröße -
+und liegt im **PSRAM**, nur für die Dauer der Übertragung. Der interne RAM
+sinkt dadurch trotz des größeren Stapels auf 24,1 Prozent.
+
+Ein Zwischenstand (1.6.3) hatte diesen Umbau bereits, stürzte aber weiter ab -
+eben weil der Stapel die Ursache war und nicht die Senke.
+
+### Am Gerät bestätigt
+
+Sitzung `20260804_231644_CE01F092`, 3,9 MB roh:
+
+| Kennzahl | Wert |
+|---|---|
+| Übertragen | 445.125 Byte in 45 s |
+| Kompression | Faktor 8,8 |
+| `gzip -t` | OK |
+| tar-Einträge | 11 von 11, Größen korrekt |
+| Neustart | keiner, Laufzeit lief durch |
+
+Ausgepackt sind alle Dateien intakt: Kopfzeilen korrekt, letzte Zeilen
+vollständig, 17.556 Sensor- und 8.979 GPS-Zeilen.
+
+### Weiterhin offen: der SD-Takt
+
+Über WLAN kommen 9,9 kB/s an; roh gelesen sind das 87 kB/s. Der Engpass ist
+`SD_SPI_SPEED` mit 1 MHz. Eine Fahrstunde von 12 MB dauert damit gut zwei
+Minuten. Vor einer Änderung ist zu messen, ob der Lochrasteraufbau mehr
+verträgt - `hardware_config.h` nennt 4 MHz als Schwelle für Aussetzer.
+
+## [1.6.2] - 2026-08-06
+
+### Behoben: Die Dateiliste brauchte 91 Sekunden
+
+`/files` öffnete jede Datei jeder Sitzung einzeln, nur um Anzahl und Größe
+anzuzeigen. Jedes `openNextFile()` führt ein `f_open()` mit vollständiger
+Pfadauflösung aus. Am Gerät gemessen: **83 ms je Datei**, bei 1.103 Dateien
+auf der Karte 91,3 Sekunden für eine Seite.
+
+Die Liste läuft jetzt über `f_readdir()`. Name und Größe stehen im
+Verzeichniseintrag selbst; ein sequenzieller Durchlauf je Sitzung ersetzt das
+Öffnen jeder Datei.
+
+**Gemessen: 91,3 s auf 9,6 s**, Faktor 9,5. Inhaltlich gegengeprüft - über
+114 gemeinsame Sitzungen stimmen alle Datei- und Größenangaben mit der alten
+Fassung überein; abweichend war allein die Sitzung, die während der ersten
+Messung noch beschrieben wurde.
+
+Der FATFS-Laufwerkspfad wird durch Probieren bestimmt: Die Arduino-SD-
+Bibliothek mountet unter `"<pdrv>:"`, hält `_pdrv` aber privat, und
+`FF_FS_RPATH` ist 0 - ein Präfix ist zwingend.
+
+## [1.6.1] - 2026-08-06
+
+### Behoben: Die Dateiliste löste einen Watchdog-Reboot aus
+
+Am Gerät startete 1.6.0 neu, bevor ein Download überhaupt beginnen konnte.
+Der dekodierte Backtrace benennt die Stelle eindeutig - und es ist **nicht**
+der Download:
+
+```text
+loop() → WebManager::handleClient() → WebServer::_handleRequest()
+       → WebManager::buildFilesPage()   web_manager.cpp:1051
+       → File::openNextFile() → FAT → sdReadSector() → SPI
+```
+
+`/files` öffnet jede Datei jeder Sitzung einzeln, um Anzahl und Größe zu
+bestimmen. Bei `SD_SPI_SPEED` von 1 MHz dauert das länger als die fünf
+Sekunden aus `CONFIG_ESP_TASK_WDT_TIMEOUT_S` - und anders als der
+Downloadpfad enthielt diese Schleife **keinen** `esp_task_wdt_reset()`.
+
+Beide Schleifen setzen den Watchdog jetzt zurück. Dieselbe Lücke steckte im
+Löschen, das über dieselbe langsame Karte läuft; auch dort ist der Reset
+ergänzt.
+
+### Gemessen statt geschätzt
+
+Die Dateiliste schreibt ihre Dauer auf die serielle Konsole: Zahl der
+Dateien, Gesamtzeit und Zeit je Datei. Der Watchdog-Reset verhindert den
+Reboot, aber nicht die Wartezeit. Bleibt sie im Sekundenbereich, genügt er;
+wird sie zweistellig, muss das Öffnen jeder einzelnen Datei entfallen. Das
+entscheidet die Messung, nicht eine Schätzung.
+
+### Damit weiterhin offen
+
+Der Download aus 1.5.49 ist **immer noch nicht am Gerät bestätigt** - er kam
+bisher nicht zum Zuge, weil die Liste davor abstürzte.
+
+Der Sitzungsmitschnitt zeigt außerdem einen zweiten, unabhängigen Befund:
+71 OBD-Anfragen, 0 Antworten, 71 Sendefehler bei `REC=135` und
+`EFLG=0x0B [EWARN,RXWAR,RXEP]`. Das ist ein CAN-Thema und hat mit dem Reboot
+nichts zu tun.
+
+## [1.6.0] - 2026-08-06
+
+### Neue Versionsnummer für denselben Stand
+
+**Codegleich mit 1.5.49.** Es ist keine Zeile Firmware geändert; allein
+`ROADTEST_FIRMWARE_VERSION` steht jetzt auf `1.6.0`.
+
+Der Grund ist der Stand der Funktion, nicht der Umfang der Änderung: Mit dem
+geprüften Senden aus 1.5.49 ist der **Datenzugriff übers Handy erstmals
+durchgängig benutzbar**. 1.5.43 hatte ihn eingeführt, aber jede Sitzung über
+4 kB brach ab - also praktisch jede. Die 1.5er-Reihe ist über 49
+Korrekturstände gelaufen; dieser Schritt schließt sie ab.
+
+Eine dreiteilige Version ist zwingend: `scripts/version_firmware.py` liest
+`ROADTEST_FIRMWARE_VERSION` mit `[0-9]+\.[0-9]+\.[0-9]+` und bricht den Build
+sonst ab. Ein bloßes `1.6` ist deshalb nicht möglich.
+
+**Am Gerät ist der Download weiterhin nicht bestätigt.** Die Beweisführung aus
+1.5.49 ist der Host-Nachbau und die Quellenlage, nicht eine echte Übertragung.
+Die neue Nummer ändert daran nichts.
+
 ## [1.5.49] - 2026-08-06
 
 ### Behoben: Der Download bricht nicht mehr nach dem ersten Block ab

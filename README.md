@@ -640,6 +640,30 @@ Buslast steht in [OPTIMIERUNGEN.md](OPTIMIERUNGEN.md).
 
 ## 📈 Version History
 
+### v1.6.4 - Download läuft, am Gerät bestätigt
+- ✅ Ursache war ein **Stapelüberlauf des Loop-Tasks**: `tdefl_optimize_huffman_table()` legt beim Blockflush 2.304 Byte auf den Stapel
+- ✅ `SET_LOOP_TASK_STACK_SIZE(16 * 1024)` behebt es; die 8 kB des Standards reichen nicht
+- ✅ Senke sendet nur noch auf oberster Ebene, Puffer für einen vollen Kompressorrückruf im PSRAM
+- ✅ Bestätigt: 3,9 MB Sitzung → 445 kB in 45 s, `gzip -t` OK, 11 von 11 Dateien, kein Neustart
+- ❌ Verworfen: TCP-Sendepuffer und „320 Byte Stapel" als Erklärungen — beide widerlegt
+
+### v1.6.2 - Dateiliste von 91 s auf 9,6 s
+- ✅ `f_readdir()` statt `openNextFile()`; Name und Größe stehen im Verzeichniseintrag
+- ✅ Am Gerät gemessen: 83 ms je Datei × 1.103 Dateien waren 91,3 s, jetzt 9,6 s
+- ✅ Inhaltlich über 114 Sitzungen gegengeprüft, alle Angaben identisch
+
+### v1.6.1 - Dateiliste löste einen Watchdog-Reboot aus
+- ✅ `/files` öffnet jede Datei einzeln; bei 1 MHz SD-Takt dauert das länger als die 5 s des Task-Watchdogs
+- ✅ `esp_task_wdt_reset()` in beiden Schleifen der Dateiliste und im Löschen ergänzt
+- ✅ Dauer der Liste wird gemessen und seriell ausgegeben, statt sie zu schätzen
+- ⚠️ Der Download aus 1.5.49 kam dadurch bisher nie zum Zuge und ist weiterhin unbestätigt
+
+### v1.6.0 - Neue Versionsnummer für denselben Stand
+- ✅ Codegleich mit 1.5.49; nur `ROADTEST_FIRMWARE_VERSION` steht auf `1.6.0`
+- ✅ Mit dem geprüften Senden ist der Datenzugriff übers Handy erstmals durchgängig benutzbar
+- ℹ️ Eine dreiteilige Version ist zwingend, `scripts/version_firmware.py` bricht sonst ab
+- ⚠️ Am Gerät weiterhin nicht bestätigt
+
 ### v1.5.49 - Der Download sendet geprüft
 - ✅ `sendContent()` verwarf den Rückgabewert von `write()`; ein Teilschreibvorgang verfälschte die Chunk-Länge und die Gegenstelle wartete endlos
 - ✅ HTTP-Chunks werden jetzt selbst gerahmt und vollständig geschrieben oder als Abbruch gemeldet

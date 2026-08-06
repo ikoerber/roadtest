@@ -1,7 +1,7 @@
 # ROADTEST Firmware
 
 ESP32-S3-Firmware zur Aufzeichnung von BNO055-, GPS-, Straßenqualitäts- und
-standardisierten OBD-II-Daten. Aktueller Firmwarestand: **1.5.49**.
+standardisierten OBD-II-Daten. Aktueller Firmwarestand: **1.6.4**.
 
 Der aktuelle Stand ist ein Hardware- und Fahrzeugteststand, nicht abschließend
 produktionsreif. Bekannte Einschränkungen stehen weiter unten.
@@ -342,8 +342,31 @@ Eigenschaften des Sitzungskopfes.
 
 ## Aktueller Teststand
 
-- Firmware 1.5.49 baut erfolgreich für `lolin_s3_mini`.
-- Letzter Build: 82.092 Byte RAM (25,1 %) und 1.171.274 Byte Flash (89,4 %).
+- Firmware 1.6.4 baut erfolgreich für `lolin_s3_mini`.
+- Letzter Build: 78.860 Byte RAM (24,1 %) und 1.171.246 Byte Flash (89,4 %).
+- **Der Download ist am 06.08.2026 am Gerät bestätigt**: Sitzung
+  `20260804_231644_CE01F092`, 3,9 MB roh, 445.125 Byte in 45 s, `gzip -t` OK,
+  11 von 11 Dateien byteweise intakt, kein Neustart.
+- **Der Loop-Task braucht 16 kB Stapel** (`SET_LOOP_TASK_STACK_SIZE` in
+  `main.cpp`). Die vorgegebenen 8 kB reichen für den Download nicht:
+  `tdefl_optimize_huffman_table()` legt beim Abschluss eines Deflate-Blocks
+  `syms0[288]` und `syms1[288]` an, zusammen 2.304 Byte. Der Fehler tritt
+  nicht beim Start auf, sondern erst rund zwei Sekunden und 200 kB in eine
+  Übertragung hinein. Diesen Wert nicht ohne Messung am Gerät senken.
+- **Eine Host-Messung ersetzt hier keine Messung am Gerät.** 1.5.49 schloss
+  den Stapelüberlauf mit gemessenen 320 Byte aus - gemessen war aber nur die
+  tdefl-Aufrufkette, nicht der Blockflush und nicht die Interrupts, die den
+  Stapel des unterbrochenen Tasks mitbenutzen. Darauf sind zwei Fassungen
+  gebaut worden, die nichts behoben haben.
+- **Jede längere SD-Schleife im Webhandler braucht `esp_task_wdt_reset()`.**
+  Der Task-Watchdog steht auf fünf Sekunden.
+- **Verzeichnisse über `f_readdir()` lesen, nicht über `openNextFile()`.**
+  Letzteres führt je Eintrag ein `f_open()` mit voller Pfadauflösung aus und
+  kostete am Gerät 83 ms je Datei; die Dateiliste brauchte damit 91,3 s für
+  1.103 Dateien, mit `f_readdir()` sind es 9,6 s.
+- Der Engpass des Downloads ist jetzt `SD_SPI_SPEED` mit 1 MHz: 87 kB/s roh
+  gelesen, 9,9 kB/s gepackt über WLAN. Das WLAN selbst trägt 248 kB/s
+  (`/speedtest`, 1 MB in 4,2 s).
 - Am Gerät gemessen: `sendContent()` kostet 4,57 ms Fixaufwand je Aufruf plus
   2 µs je Byte; die Grenzrate des WLAN liegt bei rund 500 kB/s. Deshalb
   puffert die Downloadsenke seit 1.5.46 auf 4 kB. Der Fixaufwand steckte zum

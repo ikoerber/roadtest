@@ -7,7 +7,7 @@
 // Zentrale Pin-Konfiguration für das Straßenqualitäts-Messsystem
 // Alle Hardware-spezifischen Pin-Zuordnungen sind hier definiert
 
-#define ROADTEST_FIRMWARE_VERSION "1.5.49"
+#define ROADTEST_FIRMWARE_VERSION "1.6.4"
 #define ROADTEST_FIRMWARE_FILE_NAME \
     "roadtest_" ROADTEST_FIRMWARE_VERSION ".bin"
 // Die Metadatendatei trägt seit 1.5.38 zusätzlich `FlushMaxStep` hinter

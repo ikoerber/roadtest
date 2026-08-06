@@ -5,6 +5,18 @@
 #include <SD.h>
 #include <esp_task_wdt.h>
 
+// FATFS direkt, nicht über die Arduino-FS-Schicht.
+//
+// `File::openNextFile()` öffnet jede Datei einzeln: Für jeden Eintrag läuft
+// `f_open()` die Verzeichniskette neu ab. Am Gerät kostete das am 06.08.2026
+// **83 ms je Datei**; 1.103 Dateien auf der Karte ergaben 91 Sekunden für die
+// Dateiliste. `f_readdir()` liefert Name und Größe aus dem Verzeichniseintrag
+// selbst, in einem sequenziellen Durchlauf und ohne eine Datei zu öffnen.
+extern "C" {
+#include "ff.h"
+#include <miniz.h>
+}
+
 #include "gzip_stream.h"
 #include "tar_writer.h"
 
@@ -57,6 +69,28 @@ String escapeJSON(String value) {
 // Sitzungsverzeichnisse liegen unter /sessions/<Id> auf der Karte.
 constexpr const char* SESSION_ROOT = "/sessions";
 
+// FATFS-Pfad des Sitzungsverzeichnisses, also mit Laufwerkspräfix.
+//
+// Die Arduino-SD-Bibliothek mountet die Karte unter `"<pdrv>:"`, hält `_pdrv`
+// aber privat und bietet keinen Zugriff darauf. Die Nummer wird deshalb durch
+// Probieren bestimmt. `FF_FS_RPATH` ist 0, ein Präfix ist also zwingend -
+// ohne es findet FATFS das Verzeichnis nicht.
+//
+// Bewusst ohne Zwischenspeicher: Der Aufruf kostet ein `f_opendir()` und
+// bliebe nach einem Wiedereinbinden der Karte sonst womöglich falsch.
+const char* sitzungsWurzelFatfs() {
+    static char pfad[16];
+    for (int laufwerk = 0; laufwerk < FF_VOLUMES; ++laufwerk) {
+        snprintf(pfad, sizeof(pfad), "%d:%s", laufwerk, SESSION_ROOT);
+        FF_DIR probe;
+        if (f_opendir(&probe, pfad) == FR_OK) {
+            f_closedir(&probe);
+            return pfad;
+        }
+    }
+    return nullptr;
+}
+
 // Nur Zeichen, die die Firmware selbst in eine Sitzungs-ID schreibt. Ohne
 // diese Prüfung wäre "../" ein gültiger Parameter, und der Download gäbe
 // beliebige Dateien der Karte heraus.
@@ -84,86 +118,99 @@ bool istGueltigeSitzungsId(const String& id) {
 // eine unvollständige Datei, die sich erneut holen lässt.
 // Größe eines HTTP-Chunks beim Download.
 //
-// Aus der Messung am Gerät am 04.08.2026: Ein `sendContent()` kostet 4,57 ms
-// Fixaufwand, unabhängig von der Datenmenge, plus rund 2 µs je Byte. Bei
-// 512 Byte je Aufruf ergab das 89,4 kB/s, bei 1.460 Byte 190,4 - fast dieselbe
-// Zeit je Aufruf bei dreifacher Menge. Der Kompressor gibt seine Blöcke aber
-// in der Größe aus, die ihm passt, und die ist kleiner.
-//
-// 4 kB sagt das Modell mit rund 313 kB/s voraus. Darüber flacht der Gewinn ab
-// - 8 kB brächten 382 -, und der Puffer liegt im knappen Heap.
+// Aus der Messung am Gerät am 04.08.2026: Ein Sendeaufruf kostet rund 4,57 ms
+// Fixaufwand plus etwa 2 µs je Byte. 4 kB je Chunk liegt im flachen Teil der
+// Kurve; darüber bringt Vergrößern kaum noch etwas.
 constexpr size_t HTTP_CHUNK_BYTES = 4096;
 
-// Vor der Nutzlast bleibt Platz für die Chunk-Kopfzeile ("1000\r\n"), dahinter
-// für deren Abschluss. Kopf, Nutzlast und Abschluss gehen dadurch in **einem**
-// write() zur Gegenstelle statt in dreien - genau diese drei Socketaufrufe
-// waren der am 04.08.2026 mit 4,57 ms gemessene Fixaufwand von sendContent().
+// Platz für die Chunk-Kopfzeile ("1000\r\n") unmittelbar vor der Nutzlast.
+// Kopf und Nutzlast gehen dadurch in einem Schreibvorgang hinaus.
 constexpr size_t HTTP_KOPF_RESERVE = 12;
 
 // Kein Fortschritt über diese Zeit hinweg gilt als tote Verbindung.
 constexpr unsigned long HTTP_SENDE_TIMEOUT_MS = 10000;
 
-// Der Puffer liegt bewusst statisch und nicht als Member: Die Senke entsteht
-// im Web-Handler, und dessen Stack ist der des Loop-Tasks mit typisch 8 kB.
-// Ein 4-kB-Feld darauf wäre knapp. Gleichzeitig laufen nie zwei Downloads
-// nebeneinander - die Hauptschleife ist einsträngig und steckt für die Dauer
-// der Übertragung im Handler.
-uint8_t httpChunkPuffer[HTTP_KOPF_RESERVE + HTTP_CHUNK_BYTES + 2];
-uint8_t* const httpNutzlast = httpChunkPuffer + HTTP_KOPF_RESERVE;
+// **Der Puffer muss einen vollständigen Kompressorrückruf aufnehmen.**
+//
+// Der ROM-Kompressor sammelt intern und ruft seine Senke mit bis zu
+// `TDEFL_OUT_BUF_SIZE` = 31.948 Byte am Stück auf - nicht in der Größe der
+// hineingereichten Nutzdaten. An echten Sitzungen sind die ersten Rückrufe
+// 9,9 bis 16,7 kB groß. Ein Puffer, der auf die Eingabegröße baut, läuft
+// über; ein 8-kB-Versuch am 04.08.2026 brach deshalb bei jeder Sitzung schon
+// beim ersten Rückruf ab.
+constexpr size_t HTTP_SINK_PUFFER_BYTES =
+    TDEFL_OUT_BUF_SIZE + HTTP_CHUNK_BYTES + HTTP_KOPF_RESERVE;
 
 class HttpChunkSink : public GzipSink {
 public:
-    explicit HttpChunkSink(RoadtestWebServer& server) : server(server) {}
+    HttpChunkSink(RoadtestWebServer& server, uint8_t* puffer)
+        : server(server), puffer(puffer) {}
 
-    // Nimmt entgegen und spült bei vollem Puffer sofort - auch aus dem Rückruf
-    // des Kompressors heraus.
+    // Nimmt ausschließlich entgegen und sendet **nicht**.
     //
-    // Das ist ausdrücklich zulässig: Der Rückruf sitzt an genau einer Stelle,
-    // am Ende von `tdefl_flush_block()`, und die Kette von
-    // `tdefl_compress_buffer()` bis hierher kostet gemessene **320 Byte**
-    // Stapel. Die 2,3-kB-Rahmen der Huffman-Optimierung sind da längst
-    // zurückgegeben. Eine frühere Fassung verlegte das Senden auf die oberste
-    // Ebene, weil ein Stapelüberlauf vermutet wurde; die Vermutung war falsch,
-    // und der dafür nötige Puffer hätte 32 kB fassen müssen (siehe unten).
+    // Diese Methode läuft im Rückruf des Kompressors, tief im Aufrufstapel von
+    // `tdefl_compress_buffer()`. Von dort aus zu senden sprengt den Stapel des
+    // Loop-Tasks: Am 06.08.2026 endete jeder Download mit
+    // `Stack canary watchpoint triggered (loopTask)`, im Backtrace
+    // `GzipStream::write()` → ROM-Kompressor → Senke → lwIP. Der Loop-Task hat
+    // 8 kB, und der Sendepfad mit `select()`, lwIP-Nachrichten und dem
+    // Interrupt-Spielraum passt darunter nicht mehr hinein.
+    //
+    // Eine frühere Host-Messung hatte die Kette von `tdefl_compress_buffer()`
+    // bis in den Rückruf mit nur 320 Byte beziffert und daraus geschlossen,
+    // Senden aus dem Rückruf sei unbedenklich. Sie maß die falsche Hälfte -
+    // die tdefl-Rahmen, nicht den lwIP-Pfad darunter.
+    //
+    // Gesendet wird deshalb ausschließlich von der Downloadschleife über
+    // `spuelenAlles()`, auf oberster Ebene.
     size_t write(const uint8_t* data, size_t length) override {
-        size_t uebernommen = 0;
-        while (uebernommen < length) {
-            if (abgebrochen) {
-                return 0;
-            }
-            const size_t platz = HTTP_CHUNK_BYTES - fuellstand;
-            const size_t menge =
-                (length - uebernommen) < platz ? (length - uebernommen) : platz;
-            memcpy(httpNutzlast + fuellstand, data + uebernommen, menge);
-            fuellstand += menge;
-            uebernommen += menge;
-            if (fuellstand == HTTP_CHUNK_BYTES) {
-                spuelen();
-            }
+        if (abgebrochen) {
+            return 0;
         }
-        return abgebrochen ? 0 : length;
+        if (fuellstand + length > HTTP_SINK_PUFFER_BYTES - HTTP_KOPF_RESERVE) {
+            // Kann nur eintreten, wenn die Schleife das Spülen ausgelassen
+            // hat. Dann geht nichts verloren, sondern der Strom wird als
+            // gescheitert gemeldet.
+            Serial.printf(
+                "  ! Senkenpuffer zu klein: %u + %u > %u\n",
+                static_cast<unsigned>(fuellstand),
+                static_cast<unsigned>(length),
+                static_cast<unsigned>(HTTP_SINK_PUFFER_BYTES -
+                                      HTTP_KOPF_RESERVE));
+            abgebrochen = true;
+            return 0;
+        }
+        memcpy(nutzlast() + fuellstand, data, length);
+        fuellstand += length;
+        return length;
     }
 
-    // Rest ausgeben. Muss nach dem letzten write() und nach finish() laufen,
-    // sonst fehlt das Ende des gzip-Stroms.
-    void spuelen() {
-        if (fuellstand == 0 || abgebrochen) {
-            return;
+    // Alles Gepufferte hinausschreiben, in Scheiben von HTTP_CHUNK_BYTES.
+    //
+    // Gehört auf die oberste Ebene der Downloadschleife, niemals in den
+    // Rückruf. Muss auch nach `finish()` laufen, sonst fehlt das Ende des
+    // gzip-Stroms.
+    void spuelenAlles() {
+        while (fuellstand > 0 && !abgebrochen) {
+            const size_t menge =
+                fuellstand < HTTP_CHUNK_BYTES ? fuellstand : HTTP_CHUNK_BYTES;
+            const unsigned long begonnen = millis();
+            const bool ok = sendeScheibe(sendeOffset, menge);
+            sendeMs += millis() - begonnen;
+            if (!ok) {
+                abgebrochen = true;
+                break;
+            }
+            bloecke++;
+            gesendet += menge;
+            sendeOffset += menge;
+            fuellstand -= menge;
+            // Ein langer Download hält die Hauptschleife an. Ohne diesen Reset
+            // greift der Task-Watchdog mitten in der Übertragung.
+            esp_task_wdt_reset();
         }
-        const unsigned long begonnen = millis();
-        const bool ok = sendeBlock();
-        sendeMs += millis() - begonnen;
-        if (!ok) {
-            abgebrochen = true;
-            fuellstand = 0;
-            return;
-        }
-        bloecke++;
-        gesendet += fuellstand;
+        sendeOffset = 0;
         fuellstand = 0;
-        // Ein langer Download hält die Hauptschleife an. Ohne diesen Reset
-        // greift der Task-Watchdog mitten in der Übertragung.
-        esp_task_wdt_reset();
     }
 
     bool wurdeAbgebrochen() const { return abgebrochen; }
@@ -172,43 +219,48 @@ public:
     uint32_t gesendeteBytes() const { return gesendet; }
 
 private:
-    // Einen gefüllten Puffer als HTTP-Chunk hinausschreiben.
-    bool sendeBlock() {
-        const uint8_t* start = httpNutzlast;
-        size_t laenge = fuellstand;
+    uint8_t* nutzlast() const { return puffer + HTTP_KOPF_RESERVE; }
 
-        // Die Rahmung übernimmt bewusst nicht sendContent(), sondern diese
-        // Stelle - nur so lässt sich ein Teilschreibvorgang bemerken.
+    // Eine Scheibe als HTTP-Chunk hinausschreiben.
+    //
+    // Die Kopfzeile wird in die Bytes unmittelbar davor geschrieben. Für die
+    // erste Scheibe ist das die Reserve am Pufferanfang, für jede weitere
+    // bereits gesendete Nutzlast - beides gefahrlos überschreibbar.
+    bool sendeScheibe(size_t offset, size_t menge) {
+        const uint8_t* start = nutzlast() + offset;
+        size_t laenge = menge;
+
+        // Die Rahmung übernimmt bewusst nicht sendContent(): Nur hier lässt
+        // sich ein Teilschreibvorgang überhaupt bemerken.
         if (server.istChunked()) {
             char kopf[HTTP_KOPF_RESERVE];
-            const int kopflaenge =
-                snprintf(kopf, sizeof(kopf), "%x\r\n",
-                         static_cast<unsigned>(fuellstand));
+            const int kopflaenge = snprintf(kopf, sizeof(kopf), "%x\r\n",
+                                            static_cast<unsigned>(menge));
             if (kopflaenge <= 0 ||
                 static_cast<size_t>(kopflaenge) > HTTP_KOPF_RESERVE) {
                 return false;
             }
-            start = httpNutzlast - kopflaenge;
-            memcpy(httpNutzlast - kopflaenge, kopf,
+            start -= kopflaenge;
+            memcpy(const_cast<uint8_t*>(start), kopf,
                    static_cast<size_t>(kopflaenge));
-            httpNutzlast[fuellstand] = '\r';
-            httpNutzlast[fuellstand + 1] = '\n';
-            laenge = static_cast<size_t>(kopflaenge) + fuellstand + 2;
+            laenge += static_cast<size_t>(kopflaenge);
         }
-        return schreibeVollstaendig(start, laenge);
+        if (!schreibeVollstaendig(start, laenge)) {
+            return false;
+        }
+        if (server.istChunked()) {
+            static const uint8_t abschluss[2] = {'\r', '\n'};
+            return schreibeVollstaendig(abschluss, sizeof(abschluss));
+        }
+        return true;
     }
 
     // Schreibt vollständig oder meldet Fehlschlag.
     //
-    // Hier lag der Fehler, an dem der Download starb: `sendContent()` verwirft
-    // den Rückgabewert von `write()`. Der TCP-Sendepuffer fasst 5.760 Byte
-    // (`CONFIG_LWIP_TCP_SND_BUF_DEFAULT`), und ein einzelner Kompressorrückruf
-    // liefert 10 bis 17 kB am Stück - das sind zwei bis vier 4-kB-Blöcke
-    // unmittelbar hintereinander, ohne Rückkehr in die Hauptschleife. Der
-    // erste passt, der zweite nicht. `NetworkClient::write()` gibt dann eine
-    // Teilmenge zurück, die angekündigte Chunk-Länge stimmt nicht mehr, und
-    // die Gegenstelle wartet endlos auf den Rest. Von außen: 4.096 Byte
-    // angekommen, dann Stillstand.
+    // `WebServer::sendContent()` verwirft den Rückgabewert von `write()`; ein
+    // Teilschreibvorgang verfälschte damit die angekündigte Chunk-Länge. Hier
+    // wird jeder Rückgabewert ausgewertet und ab der erreichten Stelle
+    // weitergeschrieben.
     bool schreibeVollstaendig(const uint8_t* daten, size_t laenge) {
         size_t geschrieben = 0;
         unsigned long letzterFortschritt = millis();
@@ -234,7 +286,9 @@ private:
     }
 
     RoadtestWebServer& server;
+    uint8_t* puffer = nullptr;
     size_t fuellstand = 0;
+    size_t sendeOffset = 0;
     unsigned long sendeMs = 0;
     uint32_t bloecke = 0;
     uint32_t gesendet = 0;
@@ -1029,55 +1083,85 @@ String WebManager::buildFilesPage(const String& message) {
             "<p>Erst auf der Statusseite beenden.</p></div>");
     }
 
-    File wurzel = SD.open(SESSION_ROOT);
-    if (!wurzel || !wurzel.isDirectory()) {
+    // Anzahl und Größe je Sitzung stammen aus den Verzeichniseinträgen selbst.
+    // Keine Datei wird dafür geöffnet: `f_readdir()` liest die Einträge
+    // sequenziell, während `openNextFile()` für jeden ein `f_open()` mit
+    // vollständiger Pfadauflösung ausführte. Am 06.08.2026 kostete das am
+    // Gerät 83 ms je Datei und 91 Sekunden für 1.103 Dateien.
+    //
+    // Der Watchdog-Reset bleibt: Er verhinderte den Reboot der Dateiliste und
+    // ist auch hier die Absicherung, falls die Karte langsam antwortet.
+    const unsigned long listeBegonnen = millis();
+    uint16_t dateienGesamt = 0;
+
+    // FILINFO fasst mit aktivem LFN rund 270 Byte. Zwei davon auf dem Stapel
+    // des Loop-Tasks wären unnötig knapp; die Seite wird nie nebenläufig
+    // gebaut, weil die Hauptschleife einsträngig im Handler steckt.
+    static FILINFO eintrag;
+    static FILINFO datei;
+    static char sitzungsPfad[300];
+
+    const char* wurzelPfad = sitzungsWurzelFatfs();
+    FF_DIR wurzel;
+    if (wurzelPfad == nullptr || f_opendir(&wurzel, wurzelPfad) != FR_OK) {
         page += F("<p>Keine Sitzungen auf der Karte.</p>");
     } else {
         uint16_t anzahl = 0;
-        File eintrag = wurzel.openNextFile();
-        while (eintrag) {
-            if (eintrag.isDirectory()) {
-                const String id = String(eintrag.name()).substring(
-                    String(eintrag.name()).lastIndexOf('/') + 1);
-                uint32_t summe = 0;
-                uint16_t dateien = 0;
-                File datei = eintrag.openNextFile();
-                while (datei) {
-                    if (!datei.isDirectory()) {
-                        summe += datei.size();
+        while (f_readdir(&wurzel, &eintrag) == FR_OK && eintrag.fname[0] != '\0') {
+            esp_task_wdt_reset();
+            if (!(eintrag.fattrib & AM_DIR)) {
+                continue;
+            }
+            const String id(eintrag.fname);
+
+            uint32_t summe = 0;
+            uint16_t dateien = 0;
+            snprintf(sitzungsPfad, sizeof(sitzungsPfad), "%s/%s", wurzelPfad,
+                     eintrag.fname);
+            FF_DIR sitzung;
+            if (f_opendir(&sitzung, sitzungsPfad) == FR_OK) {
+                while (f_readdir(&sitzung, &datei) == FR_OK &&
+                       datei.fname[0] != '\0') {
+                    if (!(datei.fattrib & AM_DIR)) {
+                        summe += static_cast<uint32_t>(datei.fsize);
                         dateien++;
                     }
-                    datei.close();
-                    datei = eintrag.openNextFile();
                 }
-
-                anzahl++;
-                page += F("<div class='s'><div class='id'>");
-                page += escapeHTML(id);
-                page += F("</div><div class='m'>");
-                page += String(dateien);
-                page += F(" Dateien &middot; ");
-                page += String(summe / 1024);
-                page += F(" kB</div><a class='btn' href='/files/download?s=");
-                page += escapeHTML(id);
-                page += F("'>Holen</a>"
-                          "<form method='POST' action='/files/delete' "
-                          "style='display:inline'>"
-                          "<input type='hidden' name='s' value='");
-                page += escapeHTML(id);
-                page += F("'><button type='submit'>Löschen</button>"
-                          "</form></div>");
+                f_closedir(&sitzung);
+                esp_task_wdt_reset();
             }
-            eintrag.close();
-            eintrag = wurzel.openNextFile();
+            dateienGesamt += dateien;
+
+            anzahl++;
+            page += F("<div class='s'><div class='id'>");
+            page += escapeHTML(id);
+            page += F("</div><div class='m'>");
+            page += String(dateien);
+            page += F(" Dateien &middot; ");
+            page += String(summe / 1024);
+            page += F(" kB</div><a class='btn' href='/files/download?s=");
+            page += escapeHTML(id);
+            page += F("'>Holen</a>"
+                      "<form method='POST' action='/files/delete' "
+                      "style='display:inline'>"
+                      "<input type='hidden' name='s' value='");
+            page += escapeHTML(id);
+            page += F("'><button type='submit'>Löschen</button>"
+                      "</form></div>");
         }
+        f_closedir(&wurzel);
         if (anzahl == 0) {
             page += F("<p>Keine Sitzungen auf der Karte.</p>");
         }
     }
-    if (wurzel) {
-        wurzel.close();
-    }
+
+    // Messen statt schätzen: Die Dauer wächst mit der Zahl der Dateien auf der
+    // Karte. Bleibt sie im Sekundenbereich, genügt der Watchdog-Reset; wird
+    // sie zweistellig, muss das Öffnen jeder einzelnen Datei entfallen.
+    const unsigned long listeMs = millis() - listeBegonnen;
+    Serial.printf("Dateiliste: %u Dateien in %lu ms (%lu ms je Datei)\n",
+                  static_cast<unsigned>(dateienGesamt), listeMs,
+                  dateienGesamt > 0 ? listeMs / dateienGesamt : 0);
 
     page += F(
         "<p class='m'>Das Archiv enthält die Sitzung als Verzeichnis. Am "
@@ -1189,9 +1273,23 @@ void WebManager::handleSessionDownload() {
         return;
     }
 
-    HttpChunkSink senke(server);
+    // Der Senkenpuffer liegt im PSRAM, nicht im knappen internen RAM: Er fasst
+    // einen vollstaendigen Kompressorrueckruf und waere dort mit 36 kB ein
+    // dauerhafter Posten. Nur waehrend des Downloads belegt.
+    uint8_t* senkenPuffer = static_cast<uint8_t*>(
+        heap_caps_malloc(HTTP_SINK_PUFFER_BYTES, MALLOC_CAP_SPIRAM));
+    if (senkenPuffer == nullptr) {
+        verzeichnis.close();
+        Serial.println("  -> abgelehnt: kein PSRAM fuer den Senkenpuffer");
+        server.send(503, "text/plain; charset=utf-8",
+                    "Speicher nicht verfuegbar - Karte auslesen");
+        return;
+    }
+
+    HttpChunkSink senke(server, senkenPuffer);
     GzipStream strom;
     if (!strom.begin(senke)) {
+        heap_caps_free(senkenPuffer);
         verzeichnis.close();
         // Ohne PSRAM gibt es keinen Kompressor. Unkomprimiert auszuliefern ist
         // ausdrücklich ausgeschlossen; die Karte bleibt dann der Weg.
@@ -1226,6 +1324,7 @@ void WebManager::handleSessionDownload() {
 
             tarWriteHeader(block, (id + "/" + kurz).c_str(), groesse);
             strom.write(block, sizeof(block));
+            senke.spuelenAlles();
 
             Serial.printf("  Datei %s (%lu Byte)\n", kurz.c_str(),
                           static_cast<unsigned long>(groesse));
@@ -1242,6 +1341,9 @@ void WebManager::handleSessionDownload() {
                     break;
                 }
                 strom.write(puffer, gelesen);
+                // Senden gehoert auf diese Ebene, nicht in den Rueckruf des
+                // Kompressors: Dort reicht der Stapel des Loop-Tasks nicht.
+                senke.spuelenAlles();
                 uebertragen += gelesen;
                 rohBytes += gelesen;
                 esp_task_wdt_reset();
@@ -1267,6 +1369,7 @@ void WebManager::handleSessionDownload() {
             if (fuellbytes > 0) {
                 memset(block, 0, fuellbytes);
                 strom.write(block, fuellbytes);
+                senke.spuelenAlles();
             }
         }
         datei.close();
@@ -1277,14 +1380,16 @@ void WebManager::handleSessionDownload() {
     // Zwei Nullblöcke schließen ein tar-Archiv ab.
     memset(block, 0, sizeof(block));
     strom.write(block, sizeof(block));
+    senke.spuelenAlles();
     strom.write(block, sizeof(block));
+    senke.spuelenAlles();
 
     strom.finish();
     strom.end();
     // Erst jetzt den Rest ausgeben: finish() schreibt den gzip-Nachspann noch
     // durch die Senke, und ohne ihn meldet jedes Werkzeug beim Auspacken einen
     // unvollständigen Strom.
-    senke.spuelen();
+    senke.spuelenAlles();
 
     if (senke.wurdeAbgebrochen()) {
         // Verbindung hart schließen, statt mit dem Null-Chunk eine
@@ -1295,6 +1400,10 @@ void WebManager::handleSessionDownload() {
     } else {
         server.sendContent("");
     }
+
+    // Der Puffer wird nur für die Dauer der Übertragung gehalten. Erst nach
+    // dem letzten Spülen freigeben - die Senke zeigt bis hierher hinein.
+    heap_caps_free(senkenPuffer);
 
     // Aufschlüsselung auf die serielle Konsole. Ohne sie bliebe nur die
     // Gesamtdauer, und die benennt keine Ursache.
@@ -1366,6 +1475,9 @@ void WebManager::handleSessionDelete() {
             geloescht++;
         }
         datei = verzeichnis.openNextFile();
+        // Löschen läuft über dieselbe langsame Karte wie die Dateiliste und
+        // braucht denselben Schutz, sonst greift der Task-Watchdog.
+        esp_task_wdt_reset();
     }
     verzeichnis.close();
     SD.rmdir(pfad);
