@@ -94,17 +94,37 @@ bool istGueltigeSitzungsId(const String& id) {
 // - 8 kB brächten 382 -, und der Puffer liegt im knappen Heap.
 constexpr size_t HTTP_CHUNK_BYTES = 4096;
 
+// Vor der Nutzlast bleibt Platz für die Chunk-Kopfzeile ("1000\r\n"), dahinter
+// für deren Abschluss. Kopf, Nutzlast und Abschluss gehen dadurch in **einem**
+// write() zur Gegenstelle statt in dreien - genau diese drei Socketaufrufe
+// waren der am 04.08.2026 mit 4,57 ms gemessene Fixaufwand von sendContent().
+constexpr size_t HTTP_KOPF_RESERVE = 12;
+
+// Kein Fortschritt über diese Zeit hinweg gilt als tote Verbindung.
+constexpr unsigned long HTTP_SENDE_TIMEOUT_MS = 10000;
+
 // Der Puffer liegt bewusst statisch und nicht als Member: Die Senke entsteht
 // im Web-Handler, und dessen Stack ist der des Loop-Tasks mit typisch 8 kB.
 // Ein 4-kB-Feld darauf wäre knapp. Gleichzeitig laufen nie zwei Downloads
 // nebeneinander - die Hauptschleife ist einsträngig und steckt für die Dauer
 // der Übertragung im Handler.
-uint8_t httpChunkPuffer[HTTP_CHUNK_BYTES];
+uint8_t httpChunkPuffer[HTTP_KOPF_RESERVE + HTTP_CHUNK_BYTES + 2];
+uint8_t* const httpNutzlast = httpChunkPuffer + HTTP_KOPF_RESERVE;
 
 class HttpChunkSink : public GzipSink {
 public:
-    explicit HttpChunkSink(WebServer& server) : server(server) {}
+    explicit HttpChunkSink(RoadtestWebServer& server) : server(server) {}
 
+    // Nimmt entgegen und spült bei vollem Puffer sofort - auch aus dem Rückruf
+    // des Kompressors heraus.
+    //
+    // Das ist ausdrücklich zulässig: Der Rückruf sitzt an genau einer Stelle,
+    // am Ende von `tdefl_flush_block()`, und die Kette von
+    // `tdefl_compress_buffer()` bis hierher kostet gemessene **320 Byte**
+    // Stapel. Die 2,3-kB-Rahmen der Huffman-Optimierung sind da längst
+    // zurückgegeben. Eine frühere Fassung verlegte das Senden auf die oberste
+    // Ebene, weil ein Stapelüberlauf vermutet wurde; die Vermutung war falsch,
+    // und der dafür nötige Puffer hätte 32 kB fassen müssen (siehe unten).
     size_t write(const uint8_t* data, size_t length) override {
         size_t uebernommen = 0;
         while (uebernommen < length) {
@@ -114,7 +134,7 @@ public:
             const size_t platz = HTTP_CHUNK_BYTES - fuellstand;
             const size_t menge =
                 (length - uebernommen) < platz ? (length - uebernommen) : platz;
-            memcpy(httpChunkPuffer + fuellstand, data + uebernommen, menge);
+            memcpy(httpNutzlast + fuellstand, data + uebernommen, menge);
             fuellstand += menge;
             uebernommen += menge;
             if (fuellstand == HTTP_CHUNK_BYTES) {
@@ -127,21 +147,17 @@ public:
     // Rest ausgeben. Muss nach dem letzten write() und nach finish() laufen,
     // sonst fehlt das Ende des gzip-Stroms.
     void spuelen() {
-        if (fuellstand == 0) {
+        if (fuellstand == 0 || abgebrochen) {
             return;
         }
-        // Bricht die Gegenseite ab, meldet sendContent() das nicht. Ohne diese
-        // Prüfung schreibt die Schleife bis zum Dateiende in einen toten
-        // Socket weiter - von außen sieht das aus wie ein Hänger.
-        if (!server.client().connected()) {
+        const unsigned long begonnen = millis();
+        const bool ok = sendeBlock();
+        sendeMs += millis() - begonnen;
+        if (!ok) {
             abgebrochen = true;
             fuellstand = 0;
             return;
         }
-        const unsigned long begonnen = millis();
-        server.sendContent(reinterpret_cast<const char*>(httpChunkPuffer),
-                           fuellstand);
-        sendeMs += millis() - begonnen;
         bloecke++;
         gesendet += fuellstand;
         fuellstand = 0;
@@ -156,7 +172,68 @@ public:
     uint32_t gesendeteBytes() const { return gesendet; }
 
 private:
-    WebServer& server;
+    // Einen gefüllten Puffer als HTTP-Chunk hinausschreiben.
+    bool sendeBlock() {
+        const uint8_t* start = httpNutzlast;
+        size_t laenge = fuellstand;
+
+        // Die Rahmung übernimmt bewusst nicht sendContent(), sondern diese
+        // Stelle - nur so lässt sich ein Teilschreibvorgang bemerken.
+        if (server.istChunked()) {
+            char kopf[HTTP_KOPF_RESERVE];
+            const int kopflaenge =
+                snprintf(kopf, sizeof(kopf), "%x\r\n",
+                         static_cast<unsigned>(fuellstand));
+            if (kopflaenge <= 0 ||
+                static_cast<size_t>(kopflaenge) > HTTP_KOPF_RESERVE) {
+                return false;
+            }
+            start = httpNutzlast - kopflaenge;
+            memcpy(httpNutzlast - kopflaenge, kopf,
+                   static_cast<size_t>(kopflaenge));
+            httpNutzlast[fuellstand] = '\r';
+            httpNutzlast[fuellstand + 1] = '\n';
+            laenge = static_cast<size_t>(kopflaenge) + fuellstand + 2;
+        }
+        return schreibeVollstaendig(start, laenge);
+    }
+
+    // Schreibt vollständig oder meldet Fehlschlag.
+    //
+    // Hier lag der Fehler, an dem der Download starb: `sendContent()` verwirft
+    // den Rückgabewert von `write()`. Der TCP-Sendepuffer fasst 5.760 Byte
+    // (`CONFIG_LWIP_TCP_SND_BUF_DEFAULT`), und ein einzelner Kompressorrückruf
+    // liefert 10 bis 17 kB am Stück - das sind zwei bis vier 4-kB-Blöcke
+    // unmittelbar hintereinander, ohne Rückkehr in die Hauptschleife. Der
+    // erste passt, der zweite nicht. `NetworkClient::write()` gibt dann eine
+    // Teilmenge zurück, die angekündigte Chunk-Länge stimmt nicht mehr, und
+    // die Gegenstelle wartet endlos auf den Rest. Von außen: 4.096 Byte
+    // angekommen, dann Stillstand.
+    bool schreibeVollstaendig(const uint8_t* daten, size_t laenge) {
+        size_t geschrieben = 0;
+        unsigned long letzterFortschritt = millis();
+        while (geschrieben < laenge) {
+            if (!server.client().connected()) {
+                return false;
+            }
+            const size_t n = server.client().write(daten + geschrieben,
+                                                   laenge - geschrieben);
+            esp_task_wdt_reset();
+            if (n > 0) {
+                geschrieben += n;
+                letzterFortschritt = millis();
+                continue;
+            }
+            if (millis() - letzterFortschritt > HTTP_SENDE_TIMEOUT_MS) {
+                return false;
+            }
+            // Dem TCP-Stack Zeit geben, den Sendepuffer zu leeren.
+            delay(1);
+        }
+        return true;
+    }
+
+    RoadtestWebServer& server;
     size_t fuellstand = 0;
     unsigned long sendeMs = 0;
     uint32_t bloecke = 0;
@@ -1208,7 +1285,16 @@ void WebManager::handleSessionDownload() {
     // durch die Senke, und ohne ihn meldet jedes Werkzeug beim Auspacken einen
     // unvollständigen Strom.
     senke.spuelen();
-    server.sendContent("");
+
+    if (senke.wurdeAbgebrochen()) {
+        // Verbindung hart schließen, statt mit dem Null-Chunk eine
+        // vollständige Antwort vorzutäuschen. Nur so erkennt die Gegenstelle
+        // das Archiv als abgebrochen und legt keine halbe Datei als
+        // vollständig ab.
+        server.client().stop();
+    } else {
+        server.sendContent("");
+    }
 
     // Aufschlüsselung auf die serielle Konsole. Ohne sie bliebe nur die
     // Gesamtdauer, und die benennt keine Ursache.

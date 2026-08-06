@@ -58,7 +58,6 @@ Das System erfasst Bewegungsdaten, GPS-Position und CAN-Bus-Signale, um die Qual
 | Komponente | Modell | Schnittstelle | Pins | Funktion |
 |------------|--------|---------------|------|----------|
 | **IMU-Sensor** | BNO055 | I2C | GPIO 8/9 | NDOF-Sensorfusion |
-| **Display** | SSD1306 | I2C | GPIO 8/9 | verbaut, wird nicht angesteuert; dient der I²C-Diagnose |
 | **GPS-Modul** | BN-880 | UART2 | GPIO 15/16 | Position & Geschwindigkeit |
 | **CAN-Interface** | Joy-IT SBC-CAN01, MCP2515/MCP2562 | SPI | GPIO 1,2,3,11,13 | OBD-II, 11 Bit, 500 kbit/s |
 | **SD-Speicher** | MicroSD | SPI | GPIO 4,5,6,7 | Datenlogging |
@@ -67,17 +66,18 @@ Das System erfasst Bewegungsdaten, GPS-Position und CAN-Bus-Signale, um die Qual
 
 Die vollständige und verbindliche Beschreibung des vorhandenen
 Lochrasteraufbaus steht in [HARDWARE.md](HARDWARE.md). Eine kompakte grafische
-Übersicht enthält [schematic.md](schematic.md). Maßgeblich sind GPIO- und
-Signalnamen, nicht die Kabelfarben.
+Übersicht enthält [schematic.md](schematic.md), einen geprüften
+KiCad-Schaltplan der Ordner [kicad/roadtest_ref/](kicad/roadtest_ref/README.md).
+Maßgeblich sind GPIO- und Signalnamen, nicht die Kabelfarben.
 
-### I2C-Bus (BNO055 + OLED)
+### I2C-Bus (BNO055)
 ```
-ESP32-S3        BNO055          SSD1306 OLED
---------        ------          ------------
-GPIO 8    <-->  SDA      <-->   SDA
-GPIO 9    <-->  SCL      <-->   SCL  
-3.3V      -->   VIN      -->    VCC
-GND       -->   GND      -->    GND
+ESP32-S3        BNO055
+--------        ------
+GPIO 8    <-->  SDA
+GPIO 9    <-->  SCL
+3.3V      -->   VIN
+GND       -->   GND
 ```
 
 Am BNO055 bleiben `3Vo`, `RST`, `PS0`, `PS1` und `INT` unbeschaltet. `ADR`
@@ -211,14 +211,16 @@ in der Zeile "Pflichthardware bereit".
 Fehlt eine erforderliche Komponente, bleibt die Firmware trotzdem bedienbar
 und versucht alle fünf Sekunden automatisch eine Wiederverbindung.
 
-Das OLED wird seit 1.5.32 nicht mehr angesteuert. Es bleibt verbaut, weil die
-Firmware seine I²C-Adresse weiter anpingt und Aussetzer zählt: Als zweiter
-unabhängiger Busteilnehmer trennt es Sensorfehler von Bus- und
-Versorgungsfehlern. An- und abgesteckt wird nur bei ausgeschaltetem System.
+Das SSD1306-OLED ist seit dem 03.08.2026 ausgebaut; seine Ansteuerung entfiel
+mit 1.5.32, seine Überwachung mit 1.5.39. Damit ist der BNO055 der einzige
+I²C-Teilnehmer, und ein Sensorausfall lässt sich am Bus nicht mehr von einem
+Bus- oder Versorgungsfehler trennen. Für eine Fehlersuche genügt ein
+vorübergehend angehängtes beliebiges I²C-Gerät — der Scanner findet es ohne
+Codeänderung, angesteckt wird nur bei ausgeschaltetem System.
 
 Der serielle Fünf-Sekunden-Status enthält für mechanische Tests zusätzlich:
 
-- kumulierte I²C-Aussetzer von BNO055 und OLED
+- kumulierte I²C-Aussetzer des BNO055
 - getrennten CAN-Adapter- und ECU-Verbindungsstatus samt Antwortalter
 - SD-Schreibvorgänge, Schreibfehler und verworfene Datensätze
 - WLAN-Zustand; `diag` gibt dieselben Diagnosezähler auf Anforderung aus
@@ -314,8 +316,8 @@ test end
 
 Der Abschlussbericht bewertet neue SD-Fehler, verworfene Datensätze,
 BNO055-I²C-Aussetzer, CAN-Bus-Off und Empfangspufferüberläufe als `FAIL`.
-Vorübergehende CAN-Warnungen, Sendefehler, ein I²C-Aussetzer des OLED
-oder eine aktuell fehlende ECU-Antwort ergeben `WARN`. Ohne durchgeführten
+Vorübergehende CAN-Warnungen, Sendefehler oder eine aktuell fehlende
+ECU-Antwort ergeben `WARN`. Ohne durchgeführten
 SD-Schreibtest bleibt das Ergebnis ebenfalls `WARN`. `PASS` bedeutet, dass
 alle erforderlichen Module stabil blieben und der SD-Schreibtest erfolgreich
 war.
@@ -637,6 +639,12 @@ Der priorisierte Backlog für gleichmäßigere Sensorabtastung und geringere
 Buslast steht in [OPTIMIERUNGEN.md](OPTIMIERUNGEN.md).
 
 ## 📈 Version History
+
+### v1.5.49 - Der Download sendet geprüft
+- ✅ `sendContent()` verwarf den Rückgabewert von `write()`; ein Teilschreibvorgang verfälschte die Chunk-Länge und die Gegenstelle wartete endlos
+- ✅ HTTP-Chunks werden jetzt selbst gerahmt und vollständig geschrieben oder als Abbruch gemeldet
+- ✅ Kopf, Nutzlast und Abschluss gehen in **einem** `write()` statt in dreien
+- ✅ Abgebrochene Übertragung schließt die Verbindung, statt ein vollständiges Archiv vorzutäuschen
 
 ### v1.5.48 - Der Download meldet, was er tut
 - ✅ Jeder Ausgang meldet sich; vorher schrieb nur das Ende, ein Abbruch gar nichts

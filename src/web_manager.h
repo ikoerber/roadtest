@@ -4,9 +4,26 @@
 #include <Arduino.h>
 #include <WebServer.h>
 
+// WebServer, der seinen chunked-Zustand herausgibt.
+//
+// Der Download rahmt seine HTTP-Chunks selbst, weil
+// `WebServer::sendContent()` den Rückgabewert von `write()` verwirft: Bei
+// einem Teilschreibvorgang stimmt die angekündigte Chunk-Länge dann nicht
+// mehr mit den tatsächlich gesendeten Bytes überein, und die Gegenstelle
+// wartet endlos auf den Rest. Ob überhaupt chunked geantwortet wird,
+// entscheidet der WebServer anhand der HTTP-Version der Gegenstelle; dieser
+// Zustand liegt `protected` und wird hier zugänglich gemacht. Ohne ihn müsste
+// die Senke raten und würde einem HTTP/1.0-Client Chunk-Kopfzeilen mitten in
+// die Nutzdaten schreiben.
+class RoadtestWebServer : public WebServer {
+public:
+    using WebServer::WebServer;
+    bool istChunked() const { return _chunked; }
+};
+
 class WebManager {
 private:
-    WebServer server;
+    RoadtestWebServer server;
     bool initialized;
     bool otaAuthorized;
     bool otaInProgress;

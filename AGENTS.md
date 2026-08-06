@@ -1,7 +1,7 @@
 # ROADTEST Firmware
 
 ESP32-S3-Firmware zur Aufzeichnung von BNO055-, GPS-, Straßenqualitäts- und
-standardisierten OBD-II-Daten. Aktueller Firmwarestand: **1.5.48**.
+standardisierten OBD-II-Daten. Aktueller Firmwarestand: **1.5.49**.
 
 Der aktuelle Stand ist ein Hardware- und Fahrzeugteststand, nicht abschließend
 produktionsreif. Bekannte Einschränkungen stehen weiter unten.
@@ -101,7 +101,10 @@ Systemablauf:
 ## Verbindliche Hardware
 
 Die vollständigen Anschluss- und Sicherheitshinweise stehen in
-`HARDWARE.md`; `schematic.md` enthält den logischen Plan.
+`HARDWARE.md`; `schematic.md` enthält den logischen Plan und
+`kicad/roadtest_ref/` denselben Stand als geprüften KiCad-Schaltplan. Die
+drei sind gemeinsam zu pflegen: Der KiCad-Plan wird aus der Pinliste erzeugt,
+und seine Netzliste muss sich Pin für Pin mit ihr decken.
 
 | Funktion | Pin |
 |---|---:|
@@ -339,12 +342,20 @@ Eigenschaften des Sitzungskopfes.
 
 ## Aktueller Teststand
 
-- Firmware 1.5.48 baut erfolgreich für `lolin_s3_mini`.
-- Letzter Build: 82.076 Byte RAM (25,0 %) und 1.170.862 Byte Flash (89,3 %).
+- Firmware 1.5.49 baut erfolgreich für `lolin_s3_mini`.
+- Letzter Build: 82.092 Byte RAM (25,1 %) und 1.171.274 Byte Flash (89,4 %).
 - Am Gerät gemessen: `sendContent()` kostet 4,57 ms Fixaufwand je Aufruf plus
   2 µs je Byte; die Grenzrate des WLAN liegt bei rund 500 kB/s. Deshalb
-  puffert die Downloadsenke seit 1.5.46 auf 4 kB.
+  puffert die Downloadsenke seit 1.5.46 auf 4 kB. Der Fixaufwand steckte zum
+  großen Teil in den drei Socketaufrufen je Chunk; seit 1.5.49 ist es einer.
   1.5.41 gab 70.708 Byte frei; verfügbar sind damit 153.982 Byte.
+- **Der Kompressor ruft seine Senke mit bis zu `TDEFL_OUT_BUF_SIZE` = 31.948
+  Byte am Stück auf**, nicht in der Größe der hineingereichten Nutzdaten. An
+  echten Sitzungen aus `testdata/` sind die ersten Rückrufe 9,9 bis 16,7 kB
+  groß. Eine Senke, die auf die Größe der Eingabe baut, ist falsch
+  dimensioniert. Die Kette von `tdefl_compress_buffer()` bis in den Rückruf
+  kostet gemessene 320 Byte Stapel; aus dem Rückruf heraus zu senden ist
+  deshalb unbedenklich.
 - Am 31.07.2026 liefen fünf Beifahrer-Referenzfahrten mit 1.5.28 und je zwölf
   markierten Referenzintervallen. Sie sind der Prüfstand der Kurvenerkennung.
 - 1.5.29 ist am Fahrzeug bestätigt: vier Fahrten am 01.08.2026 über 21 Minuten

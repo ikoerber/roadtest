@@ -5,6 +5,72 @@ Alle wichtigen Änderungen am ESP32-S3 Straßenqualitäts-Messsystem werden in d
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt hält sich an [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.49] - 2026-08-06
+
+### Behoben: Der Download bricht nicht mehr nach dem ersten Block ab
+
+Der Download lieferte 4.096 Byte und blieb dann stehen. Die zuvor genannten
+„40 Byte/s" waren dieselbe Beobachtung: ein Block angekommen, danach
+Stillstand.
+
+Die Ursache liegt in `WebServer::sendContent()` - es **verwirft den
+Rückgabewert** von `write()`:
+
+```cpp
+_currentClientWrite(content, contentLength);   // Rückgabe ignoriert
+```
+
+Der TCP-Sendepuffer fasst 5.760 Byte (`CONFIG_LWIP_TCP_SND_BUF_DEFAULT`). Ein
+einzelner Kompressorrückruf liefert 10 bis 17 kB am Stück, also zwei bis vier
+4-kB-Blöcke unmittelbar hintereinander ohne Rückkehr in die Hauptschleife. Der
+erste passt hinein, der zweite nicht; `NetworkClient::write()` gibt dann eine
+Teilmenge zurück. Die Chunk-Kopfzeile hat aber 4.096 Byte angekündigt - ab da
+ist die chunked-Rahmung verschoben, und die Gegenstelle wartet endlos auf
+Bytes, die nie kommen.
+
+Das erklärt auch, warum die kleine Sitzung lief: 2.559 Byte gepackt, unter der
+4-kB-Schwelle, also genau ein Sendevorgang ganz am Ende.
+
+Die Rahmung übernimmt jetzt `HttpChunkSink` selbst und prüft jeden
+Schreibvorgang. Kopf, Nutzlast und Abschluss stehen dafür in einem gemeinsamen
+Puffer und gehen in **einem** `write()` hinaus statt in dreien - genau diese
+drei Socketaufrufe waren der mit 4,57 ms gemessene Fixaufwand je Chunk. Bleibt
+ein Schreibvorgang über zehn Sekunden ohne Fortschritt, gilt die Verbindung
+als tot und die Übertragung wird abgebrochen. Eine abgebrochene Übertragung
+schließt die Verbindung, statt mit dem Null-Chunk ein vollständiges Archiv
+vorzutäuschen.
+
+### Verworfen: die Stapelüberlauf-Erklärung
+
+Ein Zwischenstand verlegte das Senden aus dem Kompressorrückruf auf die
+oberste Ebene, weil dort ein Stapelüberlauf vermutet wurde. Die Vermutung ist
+widerlegt: Der Rückruf sitzt an genau einer Stelle, am Ende von
+`tdefl_flush_block()`, und die Kette von `tdefl_compress_buffer()` bis dorthin
+kostet gemessene **320 Byte**. Die 2,3-kB-Rahmen der Huffman-Optimierung sind
+zu diesem Zeitpunkt längst zurückgegeben.
+
+Schlimmer noch: Der Umbau war selbst fehlerhaft. Er nahm an, ein Rückruf trage
+„höchstens 1 kB Nutzdaten plus Deflate-Aufschlag", und puffert auf 8 kB.
+Tatsächlich ruft der ROM-Kompressor seine Senke mit bis zu
+`TDEFL_OUT_BUF_SIZE` = 31.948 Byte am Stück auf. An echten Sitzungen sind die
+ersten Rückrufe 9.921, 16.625 und 16.133 Byte groß - **jede** Sitzung wäre
+beim allerersten Rückruf abgebrochen.
+
+### Nachweis
+
+Der Downloadpfad wurde auf dem Rechner nachgebaut: gleiche Reihenfolge,
+gleiche Puffergrößen, miniz mit der ROM-Konfiguration (`TDEFL_LESS_MEMORY=1`,
+`OUT_BUF=31948`, `HASH_BITS=12`, 128 Sondierungen). Über echte Sitzungen aus
+`testdata/` erzeugt der neue Stand 488 korrekt gerahmte Chunks; entrahmt
+ergeben sie ein gültiges gzip, ein gültiges tar und nach dem Auspacken
+**byteidentische** Dateien - geprüft bis 10,9 MB.
+
+### Weiterhin offen: der SD-Takt
+
+`SD_SPI_SPEED` steht auf 1 MHz. Die 10,9-MB-Sitzung braucht damit allein zum
+Lesen zwei bis drei Minuten. Das ist die nächste Grenze, sobald das Senden
+steht, und vor einer Änderung am Gerät zu messen.
+
 ## [1.5.48] - 2026-08-04
 
 ### Behoben: Der Download meldet jetzt, was er tut
