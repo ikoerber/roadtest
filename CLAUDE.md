@@ -1,7 +1,7 @@
 # ROADTEST Firmware
 
 ESP32-S3-Firmware zur Aufzeichnung von BNO055-, GPS-, Straßenqualitäts- und
-standardisierten OBD-II-Daten. Aktueller Firmwarestand: **1.6.4**.
+standardisierten OBD-II-Daten. Aktueller Firmwarestand: **1.7.0**.
 
 Der aktuelle Stand ist ein Hardware- und Fahrzeugteststand, nicht abschließend
 produktionsreif. Bekannte Einschränkungen stehen weiter unten.
@@ -88,10 +88,13 @@ Systemablauf:
 
 1. WLAN und Webseite starten vor den externen Hardwareprüfungen.
 2. BNO055, GPS, SD und optionales CAN werden nicht blockierend geprüft.
-3. Die Aufzeichnung startet seit 1.5.42 selbsttätig, sobald die SD-Karte
-   bereit ist - einmal je Gerätestart, über die nicht blockierende
-   Startlogik. Zündungsgeschaltete Spannung ist das Startsignal; `stop` und
-   `/ride/stop` behalten das letzte Wort.
+3. Die Aufzeichnung startet selbsttätig, einmal je Gerätestart, über die
+   nicht blockierende Startlogik. **Seit 1.7.0 erst mit stehender
+   ECU-Verbindung** - das kehrt die frühere Festlegung "der Start ist bewusst
+   nicht an CAN gekoppelt" um und ist in `STRECKENDATENBANK.md` nachgezogen.
+   Der Preis ist angenommen: ohne ECU keine Aufzeichnung, auch im Auto.
+   `start` und `/ride/start` umgehen die Bedingung, `stop` und `/ride/stop`
+   behalten das letzte Wort.
 4. Das OLED ist seit dem 03.08.2026 ausgebaut. Der BNO055 ist damit der
    einzige I²C-Teilnehmer; Bus- und Sensorfehler sind über den Bus allein
    nicht mehr zu trennen.
@@ -342,7 +345,7 @@ Eigenschaften des Sitzungskopfes.
 
 ## Aktueller Teststand
 
-- Firmware 1.6.4 baut erfolgreich für `lolin_s3_mini`.
+- Firmware 1.7.0 baut erfolgreich für `lolin_s3_mini`.
 - Letzter Build: 78.860 Byte RAM (24,1 %) und 1.171.246 Byte Flash (89,4 %).
 - **Der Download ist am 06.08.2026 am Gerät bestätigt**: Sitzung
   `20260804_231644_CE01F092`, 3,9 MB roh, 445.125 Byte in 45 s, `gzip -t` OK,

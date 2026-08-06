@@ -7,7 +7,7 @@
 // Zentrale Pin-Konfiguration für das Straßenqualitäts-Messsystem
 // Alle Hardware-spezifischen Pin-Zuordnungen sind hier definiert
 
-#define ROADTEST_FIRMWARE_VERSION "1.6.4"
+#define ROADTEST_FIRMWARE_VERSION "1.7.0"
 #define ROADTEST_FIRMWARE_FILE_NAME \
     "roadtest_" ROADTEST_FIRMWARE_VERSION ".bin"
 // Die Metadatendatei trägt seit 1.5.38 zusätzlich `FlushMaxStep` hinter
@@ -92,6 +92,26 @@ extern const int GPS_BAUD_RATE;    // 9600    - GPS Baudrate
 #define CAN_OBD_VALUE_MAX_AGE_MS   5000 // Alte Livewerte nicht weiter anzeigen
 #define CAN_OBD_SLOW_VALUE_MAX_AGE_MS 30000 // Langsame Temperatur-/Verbrauchswerte
 #define CAN_TX_TIMEOUT_MS         25 // Fehlendes ACK darf die Hauptschleife nicht blockieren
+
+// Selbsttätiger Messstart nur bei stehender ECU-Verbindung.
+//
+// **Dies weicht bewusst von `STRECKENDATENBANK.md` ab.** Dort stand: "Der
+// Start ist bewusst nicht an CAN gekoppelt. Ein Busfehler kostet dann die
+// OBD-Werte, nicht die ganze Fahrt." Die Kopplung ist am 06.08.2026
+// ausdrücklich gewünscht worden, um Leerläufe auf dem Schreibtisch zu
+// vermeiden - 114 Sitzungen auf der Karte, davon 31 unter 200 kB.
+//
+// Der Preis ist benannt und angenommen: Antwortet der ECU nicht, entsteht
+// **keine** Aufzeichnung. Ein defekter OBD-Adapter kostet damit die ganze
+// Fahrt und nicht nur die OBD-Spalten. `start` und `/ride/start` bleiben als
+// Handweg und umgehen diese Bedingung.
+//
+// Auf `false` gesetzt gilt wieder der Stand aus 1.5.42: Start, sobald die
+// Karte bereit ist.
+#define LOGGING_AUTOSTART_REQUIRES_ECU        true
+// „Stabil" heißt: mehrere Antworten, nicht eine einzelne. Bei zwei Anfragen
+// je Sekunde sind drei Antworten nach rund zwei Sekunden erreicht.
+#define LOGGING_AUTOSTART_ECU_MIN_RESPONSES      3
 
 // GPS-Feldqualität. Position und abgeleitete Werte dürfen nicht allein auf
 // dem globalen TinyGPS++-Gültigkeitsbit beruhen, weil die NMEA-Felder

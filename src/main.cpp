@@ -1350,9 +1350,44 @@ void starteAufzeichnungSelbsttaetig() {
     if (bereitsVersucht) {
         return;
     }
-    if (!sdLogger.isReady() || sdLogger.isLogging() ||
-        sdLogger.isLoggingStartPending()) {
+    if (sdLogger.isLogging() || sdLogger.isLoggingStartPending()) {
+        // Eine von Hand gestartete Messung zählt als Versuch. Ohne diese
+        // Merkung würde nach ihrem Ende erneut selbsttätig gestartet, sobald
+        // die Bedingung erfüllt ist.
+        bereitsVersucht = true;
         return;
+    }
+    if (!sdLogger.isReady()) {
+        return;
+    }
+
+    // Seit dem 06.08.2026 wartet der selbsttätige Start auf eine stehende
+    // ECU-Verbindung. Die Begründung und der angenommene Preis stehen bei
+    // LOGGING_AUTOSTART_REQUIRES_ECU in hardware_config.h.
+    if (LOGGING_AUTOSTART_REQUIRES_ECU) {
+        const OBDLiveData obd = canReader.getOBDData();
+        const bool antwortFrisch =
+            obd.lastResponseMs > 0 &&
+            millis() - obd.lastResponseMs <= CAN_OBD_VALUE_MAX_AGE_MS;
+        const bool genugAntworten =
+            obd.responseCount >= LOGGING_AUTOSTART_ECU_MIN_RESPONSES;
+        if (!antwortFrisch || !genugAntworten) {
+            // Einmal melden, nicht in jedem Schleifendurchlauf. Ohne diesen
+            // Hinweis wäre am Gerät nicht zu unterscheiden, ob der Start
+            // wartet oder fehlgeschlagen ist.
+            static bool warteGemeldet = false;
+            if (!warteGemeldet) {
+                warteGemeldet = true;
+                Serial.printf(
+                    "⏳ Selbsttätiger Start wartet auf den ECU: %lu Antwort(en),"
+                    " nötig sind %d. 'start' beginnt sofort.\n",
+                    static_cast<unsigned long>(obd.responseCount),
+                    LOGGING_AUTOSTART_ECU_MIN_RESPONSES);
+            }
+            return;
+        }
+        Serial.printf("✅ ECU steht (%lu Antworten) - Aufzeichnung startet\n",
+                      static_cast<unsigned long>(obd.responseCount));
     }
 
     if (sdLogger.requestLoggingStart()) {

@@ -52,8 +52,26 @@ Spannung endet die Fahrt durch Wegfall der Versorgung. Dabei geht höchstens ein
 Flush-Umlauf von knapp fünf Sekunden verloren, und zwar genau der Abschnitt,
 in dem das Fahrzeug bereits steht.
 
-Der Start ist bewusst **nicht** an CAN gekoppelt. Ein Busfehler kostet dann die
-OBD-Werte, nicht die ganze Fahrt.
+**Seit 1.7.0 startet die Aufzeichnung erst mit stehender ECU-Verbindung.**
+Das kehrt eine frühere Festlegung um: Bis dahin war der Start bewusst nicht an
+CAN gekoppelt, damit ein Busfehler nur die OBD-Werte kostet und nicht die
+ganze Fahrt.
+
+Ausschlaggebend war der Bestand auf der Karte. Am 06.08.2026 lagen dort 114
+Sitzungen, 31 davon unter 200 kB - Leerläufe vom Schreibtisch, die bei jedem
+Anstecken der USB-Versorgung entstanden. Sie kosten kaum Platz, aber sie
+verstopfen die Liste und später die Segmentdatenbank. Zündungsgeschaltete
+Spannung allein trennt Fahrt und Werkbank nicht, ein antwortender ECU schon.
+
+Der Preis ist benannt und angenommen: **Antwortet der ECU nicht, entsteht
+keine Aufzeichnung** - auch im Auto, auch bei intakter Messkette. Ein defekter
+OBD-Adapter kostet damit die ganze Fahrt. `start` und `/ride/start` bleiben
+als Handweg und umgehen die Bedingung; `LOGGING_AUTOSTART_REQUIRES_ECU` in
+`hardware_config.h` stellt den alten Stand wieder her.
+
+Als „stehend" gilt die Verbindung nach `LOGGING_AUTOSTART_ECU_MIN_RESPONSES`
+Antworten, deren letzte nicht älter als `CAN_OBD_VALUE_MAX_AGE_MS` ist - eine
+einzelne Antwort genügt nicht.
 
 Der zweite Engpass ist das Auslesen. Die Karte zu ziehen ist bei einer Fahrt
 pro Woche gleichgültig und bei täglichen Fahrten der Grund, warum die Datenbank

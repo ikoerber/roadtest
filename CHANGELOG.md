@@ -5,6 +5,38 @@ Alle wichtigen Änderungen am ESP32-S3 Straßenqualitäts-Messsystem werden in d
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt hält sich an [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.0] - 2026-08-06
+
+### Geändert: Aufzeichnung startet erst mit stehender ECU-Verbindung
+
+**Dies kehrt eine Festlegung aus `STRECKENDATENBANK.md` um.** Dort stand: "Der
+Start ist bewusst nicht an CAN gekoppelt. Ein Busfehler kostet dann die
+OBD-Werte, nicht die ganze Fahrt." Die Kopplung ist ausdrücklich gewünscht
+worden; die Spezifikation ist entsprechend nachgezogen.
+
+Ausschlaggebend war der Bestand auf der Karte: 114 Sitzungen, davon 31 unter
+200 kB. Das sind Leerläufe vom Schreibtisch, die bei jedem Anstecken der
+USB-Versorgung entstehen. Sie kosten kaum Platz - 3 Prozent -, aber sie
+verstopfen die Dateiliste und später die Segmentdatenbank.
+
+Als stehend gilt die Verbindung nach `LOGGING_AUTOSTART_ECU_MIN_RESPONSES`
+Antworten (3), deren letzte nicht älter als `CAN_OBD_VALUE_MAX_AGE_MS` ist.
+Bei zwei Anfragen je Sekunde ist das nach rund zwei Sekunden erreicht. Eine
+einzelne Antwort genügt bewusst nicht.
+
+**Der Preis ist benannt und angenommen:** Antwortet der ECU nicht, entsteht
+keine Aufzeichnung - auch im Auto und auch bei intakter Messkette. Ein
+defekter OBD-Adapter kostet damit die ganze Fahrt statt nur der OBD-Spalten.
+
+Ausgenommen bleiben die Handwege: `start` und `/ride/start` starten sofort und
+umgehen die Bedingung. Eine von Hand gestartete Messung zählt als Versuch, es
+gibt also weiterhin höchstens einen selbsttätigen Start je Gerätestart.
+`LOGGING_AUTOSTART_REQUIRES_ECU` auf `false` stellt den Stand aus 1.5.42 her.
+
+Bleibt der Start aus, meldet die serielle Konsole das einmalig mit der Zahl
+der bisherigen Antworten - sonst wäre "wartet" nicht von "fehlgeschlagen" zu
+unterscheiden.
+
 ## [1.6.4] - 2026-08-06
 
 ### Behoben: Der Download läuft - am Gerät bestätigt

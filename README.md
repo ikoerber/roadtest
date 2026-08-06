@@ -640,6 +640,12 @@ Buslast steht in [OPTIMIERUNGEN.md](OPTIMIERUNGEN.md).
 
 ## 📈 Version History
 
+### v1.7.0 - Aufzeichnung startet erst mit ECU-Verbindung
+- ✅ Kehrt eine Festlegung aus `STRECKENDATENBANK.md` um; die Spezifikation ist nachgezogen
+- ✅ Grund: 114 Sitzungen auf der Karte, 31 davon Leerläufe unter 200 kB
+- ✅ Stehend heißt 3 Antworten, die letzte frisch — eine einzelne genügt nicht
+- ⚠️ Ohne ECU entsteht **keine** Aufzeichnung; `start` und `/ride/start` bleiben der Handweg
+
 ### v1.6.4 - Download läuft, am Gerät bestätigt
 - ✅ Ursache war ein **Stapelüberlauf des Loop-Tasks**: `tdefl_optimize_huffman_table()` legt beim Blockflush 2.304 Byte auf den Stapel
 - ✅ `SET_LOOP_TASK_STACK_SIZE(16 * 1024)` behebt es; die 8 kB des Standards reichen nicht
