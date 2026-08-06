@@ -81,3 +81,9 @@ testdata/**/*.csv
 
 # Third-party libraries (embedded git repos)
 arduino-CAN/
+
+# KiCad: lokaler Sitzungszustand, Sicherungen und Caches
+*.kicad_prl
+*.wbk
+*-backups/
+fp-info-cache

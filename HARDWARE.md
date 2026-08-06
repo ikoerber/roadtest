@@ -10,7 +10,6 @@ Signalbezeichnungen auf den Modulen. Kabelfarben sind nicht verbindlich.
 |---|---|---|
 | Controller | ESP32-S3-Board, genaue Variante per `diag` prüfen | Firmware, WLAN und OTA |
 | Bewegungssensor | Adafruit BNO055 Breakout | NDOF-Sensorfusion |
-| Display, ungenutzt | SSD1306 OLED, 128 × 64 | Verbaut, softwareseitig nicht angesteuert; dient der I²C-Diagnose |
 | GPS | Beitian BN-880 | NMEA über UART, 9600 Baud |
 | Speicher | PZSMOCN Micro-SD-Modul | SPI-Datenaufzeichnung |
 | CAN/OBD | Joy-IT SBC-CAN01: MCP2515 + MCP2562, 16-MHz-Quarz | Nur lesende OBD-II-Liveabfrage |
@@ -52,8 +51,8 @@ Diese Tabelle entspricht `src/hardware_config.cpp`:
 
 | ESP32-S3 GPIO | Richtung | Modulanschluss | Funktion |
 |---|---:|---|---|
-| GPIO 8 | ↔ | BNO055 SDA und OLED SDA | I²C-Daten |
-| GPIO 9 | → | BNO055 SCL und OLED SCL | I²C-Takt, 100 kHz |
+| GPIO 8 | ↔ | BNO055 SDA | I²C-Daten |
+| GPIO 9 | → | BNO055 SCL | I²C-Takt, 100 kHz |
 | GPIO 16 | ← | BN-880 TX | GPS-NMEA zum ESP32 |
 | GPIO 15 | → | BN-880 RX | ESP32 zum GPS |
 | GPIO 4 | → | SD CS | SD Chip Select |
@@ -75,7 +74,6 @@ TX und RX werden beim GPS gekreuzt: **GPS-TX geht an ESP32-RX (GPIO 16)** und
 |---|---|
 | ESP32-S3-Controller | Zündungsgeschaltete 12 V über Abwärtswandler; am Arbeitsplatz USB-C |
 | BNO055 | geregelte 3,3 V an `VIN`, GND an GND |
-| OLED, optional | geregelte 3,3 V an `VCC`, GND an GND |
 | BN-880 | geregelte 3,3 V an `VCC`, GND an GND |
 | PZSMOCN SD-Modul | **3,3 V** an den mit `3.3V` beschrifteten Eingang |
 | MCP2515 `VCC` | geregelte 3,3 V für Logik und MCP2515 |
@@ -141,23 +139,27 @@ Verkleidung wird er teuer.** Vor dem festen Einbau gehört deshalb eine
 externe aktive GNSS-Antenne mit ordentlichem Stecker und freier Sicht an das
 Modul. Das behebt den Verdachtsfall und verbessert nebenbei den Empfang.
 
-## BNO055 und OLED am gemeinsamen I²C-Bus
+## BNO055 am I²C-Bus
 
-Das OLED ist steckbar und für Messung und Aufzeichnung nicht erforderlich.
-**Seit Firmware 1.5.32 wird es nicht mehr angesteuert.** Es bleibt bewusst
-gesteckt, weil es als zweiter unabhängiger I²C-Teilnehmer die Diagnose des
-Busses trägt: Fällt es zusammen mit dem BNO055 aus, liegt die Ursache am Bus
-oder an der Versorgung und nicht am Sensor. Die Firmware pingt seine Adresse
-weiterhin an und zählt Aussetzer. Wegen des gemeinsamen Busses darf der
-Stecker nur bei ausgeschaltetem System betätigt werden.
+Der BNO055 ist seit dem 03.08.2026 der **einzige I²C-Teilnehmer**. Das
+SSD1306-OLED war bis dahin gesteckt und trug als zweiter, unabhängiger
+Teilnehmer die Diagnose des Busses; es ist ausgebaut, seine Ansteuerung mit
+1.5.32 und seine Überwachung mit 1.5.39 entfernt.
+
+**Damit ist eine Fehlerunterscheidung verlorengegangen:** Fällt der BNO055
+aus, lässt sich am Bus allein nicht mehr feststellen, ob Sensor, Bus oder
+Versorgung die Ursache ist. Wer das für eine Fehlersuche braucht, hängt
+vorübergehend ein beliebiges I²C-Gerät an — der Scanner in `main.cpp` findet
+es ohne Codeänderung. Wegen des gemeinsamen Busses darf ein solcher Stecker
+nur bei ausgeschaltetem System betätigt werden.
 
 ```text
-ESP32-S3 GPIO       BNO055                 SSD1306 OLED
--------------       ------                 ------------
-GPIO 8              SDA                    SDA
-GPIO 9              SCL                    SCL
-3,3 V               VIN                    VCC
-GND                  GND                    GND
+ESP32-S3 GPIO       BNO055
+-------------       ------
+GPIO 8              SDA
+GPIO 9              SCL
+3,3 V               VIN
+GND                 GND
 ```
 
 ### Weitere BNO055-Pins
@@ -181,7 +183,6 @@ Die erwarteten I²C-Adressen sind:
   Frühere Fassungen dieser Datei nannten fälschlich 0x28.
   Die Firmware verwendet ausschließlich `0x29` und bestätigt den Sensor über
   die Chip-ID `0xA0`. `diag` gibt die feste Adresse aus.
-- OLED: `0x3C`, alternativ wird `0x3D` geprüft
 
 Das Adafruit-BNO055-Breakout besitzt bereits je einen **10-kΩ-Pull-up an SDA
 und SCL** sowie einen **10-kΩ-Pull-up an RST**. Die parallelen Pull-ups der
@@ -193,11 +194,11 @@ I²C-Spezifikation. **Zusätzliche externe Pull-ups sind nicht erforderlich.**
 
 Zur Flankenreserve: Die Anstiegszeit beträgt näherungsweise 2,2 · R · C. Bei
 2,54 kΩ bleibt der Bus bis etwa 180 pF innerhalb der 1000 ns, die der Basistakt
-von 100 kHz zulässt — reichlich Reserve. Die 400 kHz, mit denen der
-SSD1306-Treiber seine Bildtransfers fährt (`I2C_DISPLAY_SPEED`), verlangen
-dagegen 300 ns und damit unter etwa 54 pF. Auf Lochraster ist das knapp. Das
-Display arbeitet zwar einwandfrei; sollten dort je Artefakte auftreten, ist
-`I2C_DISPLAY_SPEED` der Stellhebel und nicht `I2C_CLOCK_SPEED`.
+von 100 kHz zulässt — reichlich Reserve. Der Bus läuft ausschließlich mit
+diesem Basistakt aus `I2C_CLOCK_SPEED`; das frühere `I2C_DISPLAY_SPEED` mit
+400 kHz für die Bildtransfers des SSD1306 ist mit dem Display entfallen. Damit
+ist die knappste Anforderung an den Lochrasteraufbau weggefallen — 400 kHz
+hätten 300 ns und damit unter etwa 54 pF verlangt.
 
 ## GPS BN-880
 
@@ -356,7 +357,6 @@ Für einen späteren Fahrzeuganschluss:
 - [ ] Alle Module teilen dieselbe Masse.
 - [ ] I²C: GPIO 8 = SDA und GPIO 9 = SCL.
 - [ ] BNO055 antwortet auf `0x29` (ADR liegt auf 3,3 V).
-- [ ] Optionales OLED: nur ausgeschaltet stecken; verbunden antwortet es auf `0x3C` oder `0x3D`.
 - [ ] GPS-TX ist mit GPIO 16 verbunden und liefert NMEA-Daten.
 - [ ] GPS-RX ist mit GPIO 15 verbunden; die BN-880-Leitungen SCL und SDA bleiben frei.
 - [ ] SD: CS 4, MOSI 5, MISO 6 und SCLK 7.
@@ -369,19 +369,16 @@ Für einen späteren Fahrzeuganschluss:
 
 ## Fehlersuche
 
-### BNO055 oder optionales OLED wird nicht erkannt
+### BNO055 wird nicht erkannt
 
 1. Gemeinsame Masse und 3,3-V-Versorgung prüfen.
 2. SDA an GPIO 8 und SCL an GPIO 9 kontrollieren.
-3. Im seriellen I²C-Scan nach `0x29` und `0x3C`/`0x3D` suchen.
+3. Im seriellen I²C-Scan nach `0x29` suchen.
    Antwortet stattdessen `0x28`, ist die ADR-Brücke nach 3,3 V offen.
 4. Steckverbindungen und Lötstellen bewegen beziehungsweise auf Durchgang
    prüfen.
 5. Spannungsfrei den Widerstand von SDA und SCL gegen 3,3 V prüfen. Erwartet
    werden im fertigen Aufbau etwa 2,54 kΩ; keine weiteren Pull-ups ergänzen.
-
-Fehlt ausschließlich das OLED, darf die Webseite trotzdem `System: bereit`
-anzeigen und die Aufzeichnung muss funktionieren.
 
 ### SD-Karte wird nicht erkannt
 

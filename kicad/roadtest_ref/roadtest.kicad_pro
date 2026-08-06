@@ -1,0 +1,7 @@
+{
+  "board": {"design_settings": {}},
+  "meta": {"filename": "roadtest.kicad_pro", "version": 1},
+  "schematic": {"legacy_lib_dir": "", "legacy_lib_list": []},
+  "sheets": [["dcaac152-27d3-4555-8f82-6b136672ce3b", "Root"]],
+  "text_variables": {}
+}

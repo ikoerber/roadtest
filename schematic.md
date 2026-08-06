@@ -5,13 +5,22 @@ Lochrasteraufbaus. Es ist kein maßstäblicher Bestückungsplan und bildet keine
 einzelnen Lochraster-Lötpunkte oder Kabelfarben ab. Die ausführlichen
 elektrischen Hinweise stehen in [HARDWARE.md](HARDWARE.md).
 
+Dieselbe Verdrahtung liegt als geprüfter KiCad-Schaltplan unter
+[`kicad/roadtest_ref/`](kicad/roadtest_ref/README.md). Er wird aus dieser
+Pinliste erzeugt; seine Netzliste deckt sich Pin für Pin mit ihr.
+
+> **Das SSD1306-OLED ist seit dem 03.08.2026 ausgebaut** und in diesem Plan
+> nicht mehr enthalten. Der BNO055 ist damit der einzige I²C-Teilnehmer:
+> Fällt er aus, lässt sich am Bus nicht mehr feststellen, ob Sensor oder Bus
+> die Ursache ist. Wer das für eine Fehlersuche braucht, hängt vorübergehend
+> ein beliebiges I²C-Gerät an — der Scanner findet es ohne Codeänderung.
+
 ## Aktiver Aufbau
 
 ```mermaid
 flowchart TB
     MCU["ESP32-S3 Controller<br/>Boardtyp per diag prüfen"]
     BNO["Adafruit BNO055 Breakout<br/>NDOF, Adresse 0x29<br/>onboard: 10 kΩ an SDA, SCL und RST"]
-    OLED["SSD1306 OLED<br/>steckbar, optional<br/>Adresse 0x3C/0x3D"]
     GPS["BN-880 GPS<br/>UART, 9600 Baud"]
     SD["PZSMOCN Micro-SD<br/>SPI, 3,3 V"]
     CAN["SBC-CAN01<br/>MCP2515 + MCP2562<br/>OBD nur lesend"]
@@ -21,8 +30,6 @@ flowchart TB
 
     MCU -->|"GPIO 8 · SDA"| BNO
     MCU -->|"GPIO 9 · SCL"| BNO
-    MCU -->|"GPIO 8 · SDA"| OLED
-    MCU -->|"GPIO 9 · SCL"| OLED
 
     GPS -->|"TX → GPIO 16 · RX"| MCU
     MCU -->|"GPIO 15 · TX → RX"| GPS
@@ -39,7 +46,6 @@ flowchart TB
     CAN -->|"MISO · GPIO 11"| MCU
 
     V33 --> BNO
-    V33 --> OLED
     V33 --> GPS
     V33 --> SD
     V33 -->|"VCC"| CAN
@@ -47,7 +53,6 @@ flowchart TB
 
     GND --> MCU
     GND --> BNO
-    GND --> OLED
     GND --> GPS
     GND --> SD
     GND --> CAN
@@ -68,8 +73,8 @@ Fahrzeug offen; CAN-H geht an OBD-Pin 6, CAN-L an OBD-Pin 14.
 | 5 | SD MOSI | PZSMOCN SD-Modul |
 | 6 | SD MISO | PZSMOCN SD-Modul |
 | 7 | SD SCLK | PZSMOCN SD-Modul |
-| 8 | I²C SDA | BNO055 und OLED |
-| 9 | I²C SCL | BNO055 und OLED |
+| 8 | I²C SDA | BNO055 |
+| 9 | I²C SCL | BNO055 |
 | 11 | CAN MISO | MCP2515 |
 | 13 | CAN MOSI | MCP2515 |
 | 15 | UART TX | BN-880 RX |
@@ -85,7 +90,7 @@ Fahrzeug offen; CAN-H geht an OBD-Pin 6, CAN-L an OBD-Pin 14.
 ## Versorgung
 
 - ESP32-S3-Controller: USB-C oder vorhandener LiPo-Akkuanschluss
-- BNO055, OLED, BN-880 und PZSMOCN SD-Modul: geregelte 3,3 V
+- BNO055, BN-880 und PZSMOCN SD-Modul: geregelte 3,3 V
 - Alle Baugruppen: gemeinsame Masse
 - Keine 5-V-Signale an ESP32-S3-GPIOs
 - CAN-Modul: `VCC` 3,3 V, `VCC1` 5 V, gemeinsame Masse
